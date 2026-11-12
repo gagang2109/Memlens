@@ -1,0 +1,90 @@
+import { describe, expect, it } from "vitest";
+import { renderModel } from "./model";
+
+describe("memory visualization model", () => {
+  it("lays out next-linked heap nodes as a singly linked list", () => {
+    const model = renderModel({
+      index: 0, line: 1, stdout: "", pointers: [
+        { from: "main.head", to: 4096, label: "head", dangling: false },
+        { from: "0x1000.next", to: 4112, label: "next", dangling: false },
+      ],
+      memory: { bytes: [], shadows: [], allocations: [
+        { address: 4096, size: 16, allocStep: 0, line: 1 },
+        { address: 4112, size: 16, allocStep: 0, line: 1 },
+      ] }, frames: [],
+    });
+    expect(model.shape).toBe("singly-linked-list"); expect(model.nodes[0].x).toBeLessThan(model.nodes[1].x); expect(model.nodes[0].y).toBe(model.nodes[1].y);
+  });
+  it("places unreachable list blocks on a separate row and models raw allocations", () => {
+    const model = renderModel({
+      index: 0, line: 1, stdout: "", pointers: [
+        { from: "main.head", to: 4096, label: "head", dangling: false },
+        { from: "0x1000.next", to: 4112, label: "next", dangling: false },
+      ],
+      memory: { bytes: [], shadows: [], allocations: [
+        { address: 4096, size: 16, allocStep: 0, line: 1, type: "Node" },
+        { address: 4112, size: 16, allocStep: 0, line: 1, type: "Node" },
+        { address: 4128, size: 10, allocStep: 0, line: 1, type: "int" },
+      ] }, frames: [],
+    });
+    expect(model.nodes.find(node => node.address === 4128)?.raw).toBe(true);
+    expect(model.nodes.find(node => node.address === 4128)?.y).toBeGreaterThan(model.nodes.find(node => node.address === 4096)?.y ?? 0);
+  });
+  it("lays out left/right edges as a tree", () => {
+    const model = renderModel({
+      index: 0, line: 1, stdout: "", pointers: [
+        { from: "main.root", to: 4096, label: "root", dangling: false },
+        { from: "0x1000.left", to: 4112, label: "left", dangling: false },
+        { from: "0x1000.right", to: 4128, label: "right", dangling: false },
+      ],
+      memory: { bytes: [], shadows: [], allocations: [
+        { address: 4096, size: 16, allocStep: 0, line: 1 },
+        { address: 4112, size: 16, allocStep: 0, line: 1 },
+        { address: 4128, size: 16, allocStep: 0, line: 1 },
+      ] }, frames: [],
+    });
+    expect(model.shape).toBe("tree");
+    expect(model.nodes[1].y).toBeGreaterThan(model.nodes[0].y);
+    expect(model.nodes[2].y).toBeGreaterThan(model.nodes[0].y);
+  });
+  it("does not mark a heap child orphan when reachable through another heap node", () => {
+    const model = renderModel({
+      index: 0, line: 1, stdout: "", pointers: [
+        { from: "main.head", to: 4096, label: "head", dangling: false },
+        { from: "0x1000.next", to: 4112, label: "next", dangling: false },
+      ],
+      heap: [
+        { address: 4096, fields: { val: "10", next: "4112" } },
+        { address: 4112, fields: { val: "20", next: "NULL" } },
+      ],
+      memory: { bytes: [], shadows: [], allocations: [
+        { address: 4096, size: 16, allocStep: 0, line: 1 },
+        { address: 4112, size: 16, allocStep: 0, line: 1 },
+      ] }, frames: [],
+    });
+    expect(model.nodes.every(node => !node.orphaned)).toBe(true);
+  });
+  it("keeps freed blocks as ghost nodes and preserves dangling arrows", () => {
+    const model = renderModel({
+      index: 2, line: 4, stdout: "", pointers: [
+        { from: "main.dead", to: 4096, label: "dead", dangling: true },
+      ],
+      heap: [{ address: 4096, fields: { val: "20", next: "NULL" } }],
+      memory: { bytes: [], shadows: [], allocations: [{ address: 4096, size: 16, allocStep: 0, freeStep: 2, line: 1 }] },
+      frames: [],
+    });
+    expect(model.nodes[0].freed).toBe(true);
+    expect(model.nodes[0].freedAtStep).toBe(2);
+    expect(model.arrows).toHaveLength(1);
+    expect(model.arrows[0].dangling).toBe(true);
+  });
+  it("uses arbitrary non-pointer struct field names as node values", () => {
+    const model = renderModel({
+      index: 0, line: 1, stdout: "", pointers: [{ from: "main.head", to: 4096, label: "head", dangling: false }],
+      heap: [{ address: 4096, fields: { data: "42", next: "NULL" } }],
+      memory: { bytes: [], shadows: [], allocations: [{ address: 4096, size: 16, allocStep: 0, line: 1, type: "struct node" }] }, frames: [],
+    });
+    expect(model.nodes[0].value).toBe("42");
+    expect(model.nodes[0].fields).toEqual(["data: 42"]);
+  });
+});
