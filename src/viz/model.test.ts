@@ -96,7 +96,7 @@ describe("memory visualization model", () => {
 it("keeps the default example's freed/orphaned lower row inside the canvas", () => {
   const result = run(samples.requested.code);
   const models = result.trace.steps.map(renderModel);
-  expect(models.some(model => model.nodes.some(node => node.y === 215))).toBe(true);
+  expect(models.some(model => model.nodes.some(node => node.y > 105))).toBe(true);
   for (const model of models) {
     for (const node of model.nodes) expect(model.canvasHeight).toBeGreaterThanOrEqual(node.y + 78 + 20);
   }
@@ -132,4 +132,18 @@ it("keeps tree-root pointer labels inside the top of the canvas", () => {
   expect(root.y - 40).toBeGreaterThanOrEqual(20);
   expect(child.y - root.y).toBe(92);
   for (const node of model.nodes) expect(model.canvasHeight).toBeGreaterThanOrEqual(node.y + 98);
+});
+
+it("keeps dangling-pointer labels clear of the preceding list row", () => {
+  const result = run(samples["requested-uaf"].code);
+  const model = renderModel(result.trace.steps.at(-1)!);
+  const dead = model.arrows.find(arrow => arrow.label === "dead")!;
+  expect(dead.dangling).toBe(true);
+  const target = model.nodes.find(node => node.address === dead.to)!;
+  const preceding = model.nodes.filter(node => node.y < target.y);
+  expect(preceding.length).toBeGreaterThan(0);
+  // StructureDiagram places the tag 40px above its target. Keep it below
+  // the previous 78px node with 20px clearance for strokes and shadows.
+  for (const node of preceding) expect(target.y - 40).toBeGreaterThanOrEqual(node.y + 78 + 20);
+  expect(model.canvasHeight).toBeGreaterThanOrEqual(target.y + 98);
 });

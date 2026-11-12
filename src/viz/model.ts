@@ -77,7 +77,9 @@ export function renderModel(step: TraceStep): RenderModel {
     const reachableNodes = ordered.filter(node => reachable.has(node.address));
     const otherNodes = ordered.filter(node => !reachable.has(node.address));
     reachableNodes.forEach((node, index) => { node.x = 20 + index * 145; node.y = 105; });
-    otherNodes.forEach((node, index) => { node.x = 20 + index * 145; node.y = 215; });
+    // Leave room for the lower row's variable tags (40px above each node),
+    // plus clearance below the preceding 78px node.
+    otherNodes.forEach((node, index) => { node.x = 20 + index * 145; node.y = 245; });
     canvasWidth = Math.max(520, (ordered.length ? Math.max(...ordered.map(node => node.x)) : 0) + 146);
   } else if (shape === "stack") {
     ordered.forEach((node, index) => { node.x = 175; node.y = 55 + index * 76; });

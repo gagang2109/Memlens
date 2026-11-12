@@ -164,7 +164,63 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
         return 0;
       }
       if (expression.name === "memset") { const destination = asNum(evaluate(args[0])); const value = asNum(evaluate(args[1])); const length = asNum(evaluate(args[2])); for (let i = 0; i < length; i++) { cells.set(destination + i, value); memory.write(destination + i, value, steps, expression.line); } return destination; }
-      if (expression.name === "scanf") { const format = String(evaluate(args[0])); let input = stdin.slice(stdinCursor); for (const argument of args.slice(1)) { const token = input.trim().split(/\s+/)[0] ?? ""; const leadingWhitespace = input.length - input.trimStart().length; stdinCursor += leadingWhitespace + token.length; input = stdin.slice(stdinCursor); const variable = argument.kind === "name" ? findVariable(argument.name) : undefined; if (format.includes("%s") && variable?.array) token.split("").forEach((character, index) => { if (index < variable.array!.length) variable.array![index] = character; }); else if (variable) variable.value = format.includes("%c") ? token[0] ?? "" : format.includes("%s") ? token : Number(token); else if (argument.kind === "unary" && argument.op === "&") ref(argument.expr).set(format.includes("%c") ? token[0] ?? "" : format.includes("%s") ? token : Number(token)); else runtimeError("scanf target is not assignable", expression.line); } record(expression.line); return args.length - 1; }
+      if (expression.name === "scanf") {
+        const format = readString(evaluate(args[0]));
+        // Evaluate every destination once, before scanning, as with ordinary calls.
+        const destinations = args.slice(1).map(argument => asNum(evaluate(argument)));
+        let assigned = 0; let destinationIndex = 0; let inputFailure = false;
+        const write = (address: number, value: Value) => {
+          const allocation = memory.find(address);
+          if (allocation?.freeStep !== undefined) runtimeError("use-after-free", expression.line, allocation);
+          const location = locations.get(address);
+          if (location) { location.set(value); return; }
+          for (const [base, array] of arrayRefs) {
+            const offset = address - base;
+            const size = elementSize(array.type);
+            if (offset >= 0 && offset < array.values.length * size && offset % size === 0) {
+              array.values[offset / size] = value; return;
+            }
+          }
+          memory.write(address, typeof value === "string" ? value.charCodeAt(0) : asNum(value), steps, expression.line);
+          cells.set(address, value);
+        };
+        for (let i = 0; i < format.length; i++) {
+          if (/\s/.test(format[i])) { while (/\s/.test(stdin[stdinCursor] ?? "") && stdinCursor < stdin.length) stdinCursor++; continue; }
+          if (format[i] !== "%" || format[i + 1] === "%") {
+            const literal = format[i] === "%" ? format[++i] : format[i];
+            if (stdinCursor >= stdin.length) { inputFailure = true; break; }
+            if (stdin[stdinCursor] !== literal) break;
+            stdinCursor++; continue;
+          }
+          const conversion = format.slice(i).match(/^%(\*)?(\d*)([dcs])/);
+          if (!conversion) runtimeError("unsupported scanf conversion", expression.line);
+          const [, suppressed, widthText, specifier] = conversion!;
+          i += conversion![0].length - 1;
+          const width = widthText ? Number(widthText) : specifier === "c" ? 1 : Infinity;
+          if (width < 1) runtimeError("invalid scanf field width", expression.line);
+          if (specifier !== "c") while (stdinCursor < stdin.length && /\s/.test(stdin[stdinCursor])) stdinCursor++;
+          if (stdinCursor >= stdin.length) { inputFailure = true; break; }
+          const remaining = stdin.slice(stdinCursor, Number.isFinite(width) ? stdinCursor + width : undefined);
+          const token = specifier === "d" ? remaining.match(/^[+-]?\d+/)?.[0] : specifier === "s" ? remaining.match(/^\S+/)?.[0] : remaining;
+          if (!token) {
+            // A sign is a valid prefix of a decimal input item, even if no digit follows.
+            if (specifier === "d" && /^[+-]/.test(remaining)) stdinCursor++;
+            break;
+          }
+          stdinCursor += token.length;
+          if (suppressed) continue;
+          const destination = destinations[destinationIndex++];
+          if (destination === undefined) runtimeError("missing scanf destination", expression.line);
+          if (specifier === "d") write(destination, Number(token));
+          else {
+            for (let offset = 0; offset < token.length; offset++) write(destination + offset, token[offset]);
+            if (specifier === "s") write(destination + token.length, "\0");
+          }
+          assigned++;
+        }
+        record(expression.line);
+        return inputFailure && assigned === 0 ? -1 : assigned;
+      }
       if (expression.name === "getchar") { const character = stdin[stdinCursor] ?? "\0"; stdinCursor++; record(expression.line); return character; }
       if (expression.name === "exit") { record(expression.line); throw new ExitSignal(); }
       if (expression.name === "printf") { const format = String(evaluate(args[0])).replace(/\\n/g, "\n"); const values = args.slice(1).map(argument => evaluate(argument)); let index = 0; stdout += format.replace(/%([-+0-9.]*)([dcspf%]|lf)/g, (_match, flags: string, specifier: string) => { if (specifier === "%") return "%"; const value = values[index++]; if (specifier === "s") return readString(value); if (specifier === "f" || specifier === "lf") { const precision = flags.match(/\.([0-9]+)/)?.[1]; return Number(value ?? 0).toFixed(precision ? Number(precision) : 6); } const text = specifier === "c" ? String(value ?? "") : String(value ?? ""); const width = Number(flags.replace(/[^0-9]/g, "")) || 0; return width > text.length ? " ".repeat(width - text.length) + text : text; }); record(expression.line); return null; }

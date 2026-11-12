@@ -1,44 +1,75 @@
-# Memlens
+<p align="center">
+  <img src="public/memlens-mark.svg" alt="Memlens memory lens logo" width="80" height="80">
+</p>
 
-Memlens is a local-first teaching debugger for a small, executable subset of C.
+<h1 align="center">Memlens</h1>
+<p align="center"><strong>Step through your C code. See the pointers. Rewind the mistake.</strong></p>
 
-> Step through your C code and watch memory rewind.
+**Main demo:** [memlensc.vercel.app](https://memlensc.vercel.app)  
+**Alternate demo:** [memlens-six.vercel.app](https://memlens-six.vercel.app)
 
-## Live demo
+Memlens is a browser-based learning tool for C data structures and memory. Edit a program, run it, then explore its recorded execution one change at a time: stack frames, heap allocations, pointer arrows, and memory errors.
 
-- **Main:** [memlensc.vercel.app](https://memlensc.vercel.app)
-- **Alternate:** [memlens-six.vercel.app](https://memlens-six.vercel.app)
+> **A teaching tool, not a full C compiler.** Memlens interprets a supported subset of C using simulated memory. It does not compile or execute native C, and its diagnostics can differ from gcc/clang or real hardware.
 
-## Why it exists
+[Quick start](#try-it-in-a-minute) · [What you can explore](#what-you-can-explore) · [Controls](#controls) · [C support](#supported-c-subset) · [Run locally](#run-locally)
 
-Pointers and memory bugs are invisible in ordinary C source. Memlens makes them visible by showing execution as a reversible trace with stack values, heap objects, pointer relationships, freed blocks, and memory errors.
+## See memory, not just output
 
-## Features
+![Memlens showing C source beside a linked list, stack variables, and pointer arrows](docs/screenshot-list.jpg)
 
-- Editable C source editor powered by CodeMirror 6.
-- Reversible stepping and a timeline with alloc, free, call, return, and error event ticks.
-- Play/pause playback with 0.5x, 1x, 2x, and 4x speeds.
-- Keyboard shortcuts: Left/Right step, Space play/pause, Home jump to the beginning, End jump to the end.
-- Stack and heap memory canvas with hexadecimal pointer addresses.
-- Linked-list and binary-tree layouts with pointer arrows and NULL stubs.
-- Freed-block ghost nodes with dangling-pointer arrows.
-- Detection of use-after-free, double free, invalid free, NULL free, NULL dereference, invalid dereference, and uninitialized reads.
-- Leak reporting and orphaned-allocation reporting.
-- Predict mode, with pointer-target questions, score, streak, and localStorage persistence.
-- Bundled samples for linked lists, binary trees, an array-style stack example, a linked queue, factorial recursion, and memory errors.
+*The list example at step 29: source, active stack frames, four allocated nodes, and the reversible timeline. Later, this sample deliberately accesses a freed node so you can trace how the bug happens.*
 
-## Try it
+## Try it in a minute
 
-These commands are for Windows PowerShell or Command Prompt:
+1. Open the [main demo](https://memlensc.vercel.app) and choose a sample, or edit the C source.
+2. If your program uses `scanf`, enter its values in **Program input**.
+3. Click **Run** to record execution.
+4. Step forward and backward. Watch the current explanation, console, call stack, and heap change together.
+5. Zoom or pan the memory view to follow pointers. When an error appears, step backward to find what caused it.
 
-```powershell
-npm install
-npm run dev
-```
+## What you can explore
 
-Open [http://localhost:5173](http://localhost:5173) in a browser.
+| Learn by doing | What Memlens shows |
+| --- | --- |
+| **Follow pointers** | Linked-list and binary-tree layouts, heap addresses, pointer arrows, and NULL targets. |
+| **Understand execution** | Reversible steps, a timeline, call frames, console output, and playback speeds from 0.5× to 4×. |
+| **Investigate memory bugs** | Diagnostics for invalid memory operations, freed-block markers, and reports of leaked or orphaned allocations. |
+| **Practice data structures** | Bundled list, tree, stack, queue, recursion, and memory-error examples. |
+| **Predict the next state** | Pointer-target questions with a locally saved score and streak. |
+| **Write code here** | CodeMirror syntax highlighting, bracket matching, find/replace, undo/redo, and familiar editing shortcuts. |
+
+<details>
+<summary><strong>Explore a binary search tree</strong></summary>
+
+![Binary search tree with all five nodes, root pointers, source code, and traversal output](docs/screenshot-tree.jpg)
+
+The bundled BST sample during inorder traversal, with the diagram zoomed out to show every node. The amber warning is a whole-run summary: this sample does not free its five allocations before exit, even while you inspect an earlier step.
+
+</details>
+
+## Controls
+
+| Where | Shortcut or control | Action |
+| --- | --- | --- |
+| Editor | Ctrl / ⌘ + `/` | Toggle comments on selected lines |
+| Editor | Ctrl / ⌘ + `F` | Find and replace |
+| Editor | Ctrl / ⌘ + `Z` / Ctrl / ⌘ + Shift + `Z` | Undo / redo |
+| Editor | **Keyboard shortcuts** button | Open the full editing guide |
+| Playback | `←` / `→` | Step backward / forward |
+| Playback | `Space` | Play / pause |
+| Playback | `Home` / `End` | Jump to the first / last step |
+| Memory view | `−` / `+`, **Fit width**, **Reset view** | Adjust the diagram from 25% to 300% zoom |
+| Memory view | Drag empty space, scroll, or swipe | Move around the diagram |
+
+Playback shortcuts stay out of the editor and interactive controls. **Tab** moves focus between controls rather than trapping it inside the editor.
 
 ## Supported C subset
+
+Designed for small C and data-structures exercises: functions and recursion, structs and pointers, fixed-size arrays (including two-dimensional arrays), loops, branching, and a selection of memory and input/output functions.
+
+<details>
+<summary><strong>Expand the language and library support reference</strong></summary>
 
 The interpreter currently supports:
 
@@ -64,67 +95,71 @@ It does not currently support:
 - Function pointers, unions, variadic functions, general pointer arithmetic beyond supported element indexing, and preprocessor directives other than numeric/string `#define` and ignored `#include`.
 - The full C standard library or compilation with gcc/clang.
 
-## How memory is simulated
+</details>
 
-Memlens runs an interpreter over a byte-addressable simulated memory model. Allocations begin at `0x1000`, pointer values are numeric simulated addresses, and each byte has shadow state such as unallocated, allocated-uninitialized, initialized, or freed. Every trace step stores memory, stack frames, heap fields, stdout, and pointer edges so the UI can move through the trace in either direction.
+### Important limits
 
-This is not gcc and it does not execute native machine code. It is an interpreter on a simulated memory model, so undefined behavior and diagnostics may differ from real hardware or a production compiler.
+- This is a **subset interpreter**, not a standards-complete C implementation. Unsupported syntax or library calls may need a simpler equivalent.
+- Variable-length arrays, function pointers, unions, and the full C preprocessor/library are not supported.
+- Addresses and object sizes are simulated; the app is not a substitute for a native debugger or sanitizer.
+- Diagram layouts infer structure from pointer fields and heap edges. Not every possible graph has a specialized layout.
+- Source and Predict progress use browser localStorage, not an account or cloud sync. Browser storage can be cleared or unavailable.
+- The production JavaScript bundle includes CodeMirror and currently triggers Vite's large-chunk warning.
 
-## Architecture
+## Run locally
 
-```text
-src/
-  lang/   Lexer and parser for the supported C subset
-  vm/     Simulated memory, interpreter, trace model, and prediction logic
-  viz/    Heap reachability, structure detection, and layout models
-  ui/     React application shell, editor, diagrams, controls, and styles
-  samples.ts  Bundled runnable sample programs
+Requires **Node.js compatible with Vite 6** and npm. Clone the repository, then run:
+
+```sh
+git clone https://github.com/gagang2109/Memlens.git
+cd Memlens
+npm ci
+npm run dev
 ```
 
-## Development commands
+Open the local URL printed by Vite, usually [http://localhost:5173](http://localhost:5173).
 
-```powershell
+On Windows PowerShell, use `npm.cmd` in place of `npm` if your execution policy blocks `npm.ps1`.
+
+### Check a change
+
+```sh
 npm test
 npm run typecheck
 npm run build
 ```
 
-`npm test` runs the Vitest suite. `npm run typecheck` runs TypeScript without emitting files. `npm run build` type-checks and creates the Vite production build.
+- **Tests:** Vitest regression tests, including C lab fixtures in [`tests/labs`](tests/labs).
+- **Typecheck:** TypeScript checks without emitting files.
+- **Build:** Type-checks and creates the production site in `dist/`.
 
-## Known limitations
+For Vercel, use the **Vite** preset, repository root `./`, build command `npm run build`, and output directory `dist`. The app has no backend, database, or server-side C execution.
 
-- The supported language is intentionally small and is not a C compiler.
-- Multidimensional arrays, variable-length arrays, and several common C type features are not implemented.
-- The visualizer infers linked-list, queue, stack-like, and binary-tree shapes from pointer names and heap edges; it is not a general-purpose debugger layout engine.
-- The memory model uses simulated addresses and simplified object sizes.
-- Browser localStorage is used for the edited source and Predict score/streak; there is no backend or account synchronization.
-- The production bundle currently includes CodeMirror in a large JavaScript chunk.
+## Under the hood
 
-## Roadmap
+```text
+C source → lexer/parser → interpreter + simulated memory → recorded trace → React visualizer
+```
 
-- Function pointers
-- Unions
-- Bit-level memory view
-- Shareable links
-- Export a memory bug as an image or GIF
+| Location | Responsibility |
+| --- | --- |
+| [`src/lang`](src/lang) | Lexer and parser for the supported C subset |
+| [`src/vm`](src/vm) | Memory model, interpreter, trace data, and prediction logic |
+| [`src/viz`](src/viz) | Heap reachability, structure detection, and layouts |
+| [`src/ui`](src/ui) | Editor, explanations, diagrams, playback, and styles |
+| [`src/samples.ts`](src/samples.ts) | Bundled sample programs |
+| [`tests/labs`](tests/labs) | C exercises and regression coverage |
 
-## Screenshots
+The byte-addressable memory model tracks initialized, uninitialized, and freed memory. Recorded steps retain the state needed to revisit stack frames, heap fields, output, and pointer relationships without executing native code.
 
-The bundled push/reverse-list example intentionally reads a node after freeing it. These screenshots show Memlens identifying that error in the example C program, not an application failure.
+## Found an example that behaves incorrectly?
 
-### Linked-list memory view
+[Open an issue](https://github.com/gagang2109/Memlens/issues) with the smallest C program that reproduces it, any program input, the expected result, and what Memlens actually shows. Mention your browser and include a screenshot when the problem is visual. Remove personal data before sharing.
 
-Stack variables and pointer arrows show the list, with a freed node marked by diagonal shading.
+## Possible future directions
 
-![Linked-list memory view with a freed node and pointer arrows](docs/screenshot-list.jpg)
-
-### Use-after-free diagnostic
-
-The error identifies the invalid access, and the trace controls let you step backward to inspect how it happened.
-
-![Use-after-free diagnostic and reversible execution timeline](docs/screenshot-uaf.jpg)
+Function pointers, unions, a bit-level memory view, shareable links, and image/GIF export are ideas for future work, **not current features**.
 
 ## License
 
-MIT. See [LICENSE](./LICENSE).
-
+[MIT](LICENSE) · Copyright © 2026 Gagan Ganesh Devadiga
