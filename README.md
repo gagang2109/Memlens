@@ -102,6 +102,7 @@ It does not currently support:
 - This is a **subset interpreter**, not a standards-complete C implementation. Unsupported syntax or library calls may need a simpler equivalent.
 - Variable-length arrays, function pointers, unions, and the full C preprocessor/library are not supported.
 - Addresses and object sizes are simulated; the app is not a substitute for a native debugger or sanitizer.
+- Local-array `memset` supports byte ranges in `char` arrays and zero-filling whole `int` elements. Partial-byte or nonzero fills of local integer arrays, and other local object representations, report an unsupported-operation error rather than guessing a machine layout.
 - Diagram layouts infer structure from pointer fields and heap edges. Not every possible graph has a specialized layout.
 - Source and Predict progress use browser localStorage, not an account or cloud sync. Browser storage can be cleared or unavailable.
 - The production JavaScript bundle includes CodeMirror and currently triggers Vite's large-chunk warning.

@@ -27,7 +27,9 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
   const frames: { name: string; vars: Map<string, RuntimeVariable> }[] = [{ name: "main", vars: new Map() }];
   let stdout = ""; let stdinCursor = 0; let steps = 0; let error: MemoryFault | undefined;
   const current = () => frames[frames.length - 1].vars;
-  const asNum = (value: Value) => typeof value === "number" ? value : value === null ? 0 : Number(value);
+  // Character values use one-character strings in the existing VM representation.
+  // Promote these to basic execution-character codes, including digits and NUL.
+  const asNum = (value: Value) => typeof value === "number" ? value : value === null ? 0 : value.length === 1 ? value.charCodeAt(0) : Number(value);
   const findVariable = (name: string) => [...frames].reverse().map(frame => frame.vars.get(name)).find(Boolean);
   const pointerMeta = (expression: Expr) => expression.kind === "name" ? findVariable(expression.name) : undefined;
   const record = (line: number, event: "step" | "alloc" | "free" | "error" | "call" | "return" = "step", message?: string) => {
@@ -80,8 +82,8 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
           return { get: () => outerVariable.array![flat], set: value => { outerVariable.array![flat] = value; }, address: (outerVariable.arrayBase ?? 0) + flat * (outerVariable.elementSize ?? 4) };
         }
       }
-      if (array) { if (index < 0 || index >= array.length) runtimeError(`array index out of bounds (${index})`, expression.line); return { get: () => array[index], set: value => { array[index] = value; }, address: (findVariable(expression.object.kind === "name" ? expression.object.name : "")?.arrayBase ?? 0) + index * (variable?.elementSize ?? 4) }; }
-      const baseArray = arrayRefs.get(base); if (baseArray) { if (index < 0 || index >= baseArray.values.length) runtimeError(`pointer index out of bounds (${index})`, expression.line); return { get: () => baseArray.values[index], set: value => { baseArray.values[index] = value; }, address: base + index * (variable?.elementSize ?? elementSize(baseArray.type)) }; }
+      if (array) { if (!Number.isInteger(index) || index < 0 || index >= array.length) runtimeError(`array index out of bounds (${index})`, expression.line); return { get: () => array[index], set: value => { array[index] = value; }, address: (findVariable(expression.object.kind === "name" ? expression.object.name : "")?.arrayBase ?? 0) + index * (variable?.elementSize ?? 4) }; }
+      const baseArray = arrayRefs.get(base); if (baseArray) { if (!Number.isInteger(index) || index < 0 || index >= baseArray.values.length) runtimeError(`pointer index out of bounds (${index})`, expression.line); return { get: () => baseArray.values[index], set: value => { baseArray.values[index] = value; }, address: base + index * (variable?.elementSize ?? elementSize(baseArray.type)) }; }
       const size = variable?.elementSize ?? memory.allocationAt(base)?.elementSize ?? 1; const address = base + index * size; const allocation = memory.allocationAt(address);
       if (!allocation || address < allocation.address || address + size > allocation.address + allocation.size) runtimeError(`pointer index out of bounds (${index})`, expression.line, allocation);
       return {
@@ -105,8 +107,8 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
   const readString = (value: Value) => {
     if (typeof value === "string") return value;
     const variable = [...frames].reverse().flatMap(frame => [...frame.vars.values()]).find(candidate => candidate.arrayBase === value);
-    if (variable?.array) return variable.array.map(item => String(item ?? "\0")).join("").replace(/\0.*$/, "");
-    if (typeof value === "number") { let result = ""; for (let index = 0; index < 256; index++) { const cell = cells.get(value + index); if (cell === undefined || cell === 0 || cell === "\0") break; result += String(cell); } return result; }
+    if (variable?.array) return variable.array.map(item => typeof item === "number" ? String.fromCharCode(item & 255) : String(item ?? "\0")).join("").replace(/\0.*$/, "");
+    if (typeof value === "number") { let result = ""; for (let index = 0; index < 256; index++) { const cell = cells.get(value + index); if (cell === undefined || cell === 0 || cell === "\0") break; result += typeof cell === "number" ? String.fromCharCode(cell & 255) : String(cell); } return result; }
     return "";
   };
   const evaluate = (expression: Expr): Value => {
@@ -163,7 +165,38 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
         }
         return 0;
       }
-      if (expression.name === "memset") { const destination = asNum(evaluate(args[0])); const value = asNum(evaluate(args[1])); const length = asNum(evaluate(args[2])); for (let i = 0; i < length; i++) { cells.set(destination + i, value); memory.write(destination + i, value, steps, expression.line); } return destination; }
+      if (expression.name === "memset") {
+        const destination = asNum(evaluate(args[0]));
+        const value = asNum(evaluate(args[1]));
+        const length = asNum(evaluate(args[2]));
+        if (!Number.isSafeInteger(length) || length < 0) runtimeError("invalid memset length", expression.line);
+        if (length === 0) return destination;
+        if (!Number.isSafeInteger(destination)) runtimeError("invalid pointer dereference", expression.line);
+        const byte = value & 255;
+        // Preserve heap dispatch when simulated stack and heap ranges overlap.
+        const heapDestination = memory.allocationAt(destination);
+        for (const [base, array] of heapDestination ? [] : arrayRefs) {
+          const size = elementSize(array.type);
+          const offset = destination - base;
+          if (offset < 0 || offset >= array.values.length * size) continue;
+          if (length > array.values.length * size - offset) runtimeError("memset exceeds local array bounds", expression.line);
+          // Local arrays store values, not object-representation bytes. Do not
+          // guess endian/float/struct layouts for partial or nonzero fills.
+          if (size === 1) {
+            for (let i = 0; i < length; i++) array.values[offset + i] = String.fromCharCode(byte);
+          } else if (array.type === "int" && byte === 0 && offset % size === 0 && length % size === 0) {
+            for (let i = offset / size; i < (offset + length) / size; i++) array.values[i] = 0;
+          } else {
+            runtimeError("unsupported memset on local array: use char bytes or whole int elements with zero fill", expression.line);
+          }
+          return destination;
+        }
+        for (let i = 0; i < length; i++) {
+          memory.write(destination + i, value, steps, expression.line);
+          cells.set(destination + i, value);
+        }
+        return destination;
+      }
       if (expression.name === "scanf") {
         const format = readString(evaluate(args[0]));
         // Evaluate every destination once, before scanning, as with ordinary calls.
@@ -223,7 +256,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       }
       if (expression.name === "getchar") { const character = stdin[stdinCursor] ?? "\0"; stdinCursor++; record(expression.line); return character; }
       if (expression.name === "exit") { record(expression.line); throw new ExitSignal(); }
-      if (expression.name === "printf") { const format = String(evaluate(args[0])).replace(/\\n/g, "\n"); const values = args.slice(1).map(argument => evaluate(argument)); let index = 0; stdout += format.replace(/%([-+0-9.]*)([dcspf%]|lf)/g, (_match, flags: string, specifier: string) => { if (specifier === "%") return "%"; const value = values[index++]; if (specifier === "s") return readString(value); if (specifier === "f" || specifier === "lf") { const precision = flags.match(/\.([0-9]+)/)?.[1]; return Number(value ?? 0).toFixed(precision ? Number(precision) : 6); } const text = specifier === "c" ? String(value ?? "") : String(value ?? ""); const width = Number(flags.replace(/[^0-9]/g, "")) || 0; return width > text.length ? " ".repeat(width - text.length) + text : text; }); record(expression.line); return null; }
+      if (expression.name === "printf") { const format = String(evaluate(args[0])).replace(/\\n/g, "\n"); const values = args.slice(1).map(argument => evaluate(argument)); let index = 0; stdout += format.replace(/%([-+0-9.]*)([dcspf%]|lf)/g, (_match, flags: string, specifier: string) => { if (specifier === "%") return "%"; const value = values[index++]; if (specifier === "s") return readString(value); if (specifier === "f" || specifier === "lf") { const precision = flags.match(/\.([0-9]+)/)?.[1]; return Number(value ?? 0).toFixed(precision ? Number(precision) : 6); } const text = specifier === "c" ? (typeof value === "number" ? String.fromCharCode(value & 255) : String(value ?? "")) : specifier === "d" ? String(asNum(value)) : String(value ?? ""); const width = Number(flags.replace(/[^0-9]/g, "")) || 0; return width > text.length ? " ".repeat(width - text.length) + text : text; }); record(expression.line); return null; }
       const fn = program.functions.get(expression.name); if (!fn) throw new Error(`line ${expression.line}: unsupported function '${expression.name}'`);
       if (frames.length >= recursionLimit) runtimeError("stack overflow", expression.line);
       const values = args.map(argument => evaluate(argument)); frames.push({ name: fn.name, vars: new Map(fn.params.map((parameter, index) => [parameter.name, { value: values[index] ?? null, type: parameter.type, pointer: parameter.pointer, elementSize: elementSize(parameter.type) }])) }); record(expression.line, "call");

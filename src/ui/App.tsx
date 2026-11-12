@@ -43,7 +43,9 @@ function StructureDiagram({ model, highlighted, onHighlight }: { model: ReturnTy
 }
 
 export function App() {
-  const [sample, setSample] = useState("requested"); const [code, setCode] = useState(samples.requested.code);
+  const [sample, setSample] = useState<keyof typeof samples>("requested"); const [code, setCode] = useState(samples.requested.code);
+  // Preserve an explicitly chosen alias, otherwise identify the actual editor content.
+  const selectedSample = code === samples[sample].code ? sample : (Object.keys(samples) as (keyof typeof samples)[]).find(key => samples[key].code === code) ?? "custom";
   const [stdin, setStdin] = useState("");
   const [lastRun, setLastRun] = useState<{ code: string; stdin: string }>();
   const stale = Boolean(lastRun && (code !== lastRun.code || stdin !== lastRun.stdin));
@@ -74,7 +76,7 @@ export function App() {
   const lines = useMemo(() => code.split(/\r?\n/), [code]);
   return <main>
     <header><div className="brand"><img className="brand-mark" src="/memlens-mark.svg" width="36" height="36" alt="" aria-hidden="true" /> MEMLENS</div><div className="tag">Step through your C code and watch memory rewind.</div>
-      <select aria-label="Samples" value={sample} onChange={e => { const key = e.target.value as keyof typeof samples; setSample(key); setLastRun(undefined); setCode(samples[key].code); setTrace(undefined); setFault(undefined); setError(""); setLeaks([]); setPlaying(false); setPrediction(undefined); setPredictionResult(undefined); setCursor(0); }}><option value="requested">Push/reverse list — intentional use-after-free</option><option value="requested-uaf">Push/reverse use-after-free — same intentional error example</option><option value="tree">BST insert and inorder — traverse a binary tree</option><option value="tree-menu">Tree menu — insert, traverse, and delete a leaf</option><option value="stack">Array stack — push/pop/display with MAX</option><option value="queue">Linked queue — enqueue/dequeue with front and rear</option><option value="factorial">Factorial recursion — watch frames stack</option><option value="use-after-free">Use after free — raw block fault</option></select>
+      <select aria-label="Samples" value={selectedSample} onChange={e => { if (e.target.value === "custom") return; const key = e.target.value as keyof typeof samples; setSample(key); setLastRun(undefined); setCode(samples[key].code); setTrace(undefined); setFault(undefined); setError(""); setLeaks([]); setPlaying(false); setPrediction(undefined); setPredictionResult(undefined); setCursor(0); }}><option value="custom" disabled>Custom code — choose a sample to replace it</option><option value="requested">Push/reverse list — intentional use-after-free</option><option value="requested-uaf">Push/reverse use-after-free — same intentional error example</option><option value="tree">BST insert and inorder — traverse a binary tree</option><option value="tree-menu">Tree menu — insert, traverse, and delete a leaf</option><option value="stack">Array stack — push/pop/display with MAX</option><option value="queue">Linked queue — enqueue/dequeue with front and rear</option><option value="factorial">Factorial recursion — watch frames stack</option><option value="use-after-free">Use after free — raw block fault</option></select>
       <button className="run" onClick={runCode}>Run</button></header>
     {code === samples.requested.code && <p className="step-explanation" role="note">This example intentionally reads a node after freeing it. Run it and step through the trace to see why this causes a use-after-free error. The error is in the example C program, not Memlens.</p>}
     {stale && <p className="step-explanation stale-results" role="status">Code or input changed. Memory, console, errors and trace below are from the previous run. Run again to update them.</p>}
