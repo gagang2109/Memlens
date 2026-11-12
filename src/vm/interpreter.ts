@@ -108,6 +108,18 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
     if (typeof value === "string") return value;
     const variable = [...frames].reverse().flatMap(frame => [...frame.vars.values()]).find(candidate => candidate.arrayBase === value);
     if (variable?.array) return variable.array.map(item => typeof item === "number" ? String.fromCharCode(item & 255) : String(item ?? "\0")).join("").replace(/\0.*$/, "");
+    // Interior pointers into live local char buffers refer to their suffix, not
+    // the unrelated heap-cell map. Use live variables rather than stale refs.
+    if (typeof value === "number" && !memory.allocationAt(value)) {
+      for (const frame of [...frames].reverse()) {
+        for (const candidate of frame.vars.values()) {
+          if (!candidate.array || candidate.arrayBase === undefined || candidate.type !== "char") continue;
+          const offset = value - candidate.arrayBase;
+          if (Number.isInteger(offset) && offset >= 0 && offset < candidate.array.length)
+            return candidate.array.slice(offset).map(item => typeof item === "number" ? String.fromCharCode(item & 255) : String(item ?? "\0")).join("").replace(/\0.*$/, "");
+        }
+      }
+    }
     if (typeof value === "number") { let result = ""; for (let index = 0; index < 256; index++) { const cell = cells.get(value + index); if (cell === undefined || cell === 0 || cell === "\0") break; result += typeof cell === "number" ? String.fromCharCode(cell & 255) : String(cell); } return result; }
     return "";
   };
@@ -150,7 +162,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
         return address;
       }
       if (expression.name === "realloc") { const old = asNum(evaluate(args[0])); const size = asNum(evaluate(args[1])); const address = allocate(size, expression.line); const oldAllocation = memory.find(old); if (oldAllocation) for (let i = 0; i < Math.min(size, oldAllocation.size); i++) cells.set(address + i, cells.get(old + i) ?? 0); if (old) { memory.free(old, steps, expression.line); record(expression.line, "free"); } return address; }
-      if (expression.name === "free") { const address = asNum(evaluate(args[0])); memory.free(address, steps, expression.line); record(expression.line, "free"); return null; }
+      if (expression.name === "free") { const address = asNum(evaluate(args[0])); memory.free(address, steps, expression.line); record(expression.line, address === 0 ? "step" : "free"); return null; }
       if (expression.name === "strlen") return readString(evaluate(args[0])).length;
       if (expression.name === "strcpy" || expression.name === "strcat") { const destination = asNum(evaluate(args[0])); const source = readString(evaluate(args[1])); const existing = expression.name === "strcat" ? readString(destination) : ""; const result = existing + source; const destinationArray = arrayRefs.get(destination); for (let i = 0; i < result.length; i++) { cells.set(destination + i, result[i]); if (destinationArray && i < destinationArray.values.length) destinationArray.values[i] = result[i]; } cells.set(destination + result.length, 0); if (destinationArray && result.length < destinationArray.values.length) destinationArray.values[result.length] = "\0"; return destination; }
       if (expression.name === "strcmp") {

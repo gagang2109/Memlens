@@ -30,8 +30,10 @@ export class Memory {
     this.bytes[address] = value & 255; this.shadows[address] = "initialized";
   }
   free(address: number, step: number, line: number) {
+    // C defines free(NULL) as a no-op, including repeated cleanup calls.
+    if (address === 0) return;
     const a = this.allocations.find(x => x.address === address);
-    if (!a) { if (address === 0) throw new MemoryFault("invalid free of NULL", line, step); throw new MemoryFault("invalid free", line, step); }
+    if (!a) throw new MemoryFault("invalid free", line, step);
     if (a.freeStep !== undefined) throw new MemoryFault("double free", line, step, a);
     this.snapshotData = undefined;
     a.freeStep = step; for (let i = a.address; i < a.address + a.size; i++) this.shadows[i] = "freed";
