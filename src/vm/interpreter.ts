@@ -314,6 +314,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       if (expression.op === "||") return asNum(evaluate(expression.left)) ? 1 : (asNum(evaluate(expression.right)) ? 1 : 0);
       const left = evaluate(expression.left); const right = evaluate(expression.right); const a = asNum(left); const b = asNum(right); if (["+", "-"].includes(expression.op)) { const pointer = pointerMeta(expression.left); if (pointer?.pointer) return a + (expression.op === "+" ? b : -b) * (pointer.elementSize ?? 1); }
       if (expression.op === "/" && b === 0) runtimeError("division by zero", expression.line);
+      if (expression.op === "%" && b === 0) runtimeError("remainder by zero", expression.line);
       if (expression.op === "==" || expression.op === "!=") { const equal = typeof left === "string" || typeof right === "string" ? left === right : a === b; return expression.op === "==" ? (equal ? 1 : 0) : (equal ? 0 : 1); }
       return ({ "+": a + b, "-": a - b, "*": a * b, "/": Math.trunc(a / b), "%": a % b, "<": a < b ? 1 : 0, ">": a > b ? 1 : 0, "<=": a <= b ? 1 : 0, ">=": a >= b ? 1 : 0 } as Record<string, number>)[expression.op] ?? 0;
     }

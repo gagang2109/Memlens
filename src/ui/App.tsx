@@ -70,7 +70,21 @@ export function App() {
     return () => window.clearTimeout(timer);
   }, [prediction, predictionResult, predictionTarget, trace, stale]);
   useEffect(() => { if (!playing || !trace || prediction) return; const timer = window.setInterval(() => { if (cursor >= trace.steps.length - 1) { setPlaying(false); return; } moveTo(cursor + 1); }, 1000 / speed); return () => window.clearInterval(timer); }, [playing, trace, cursor, speed, predictMode, prediction, stale]);
-  useEffect(() => { const onKey = (event: KeyboardEvent) => { if (!shouldHandlePlaybackShortcut(event)) return; if (event.key === "ArrowLeft") moveTo(cursor - 1); else if (event.key === "ArrowRight") moveTo(cursor + 1); else if (event.key === " ") { event.preventDefault(); setPlaying(value => !value); } else if (event.key === "Home") moveTo(0); else if (event.key === "End" && trace) moveTo(trace.steps.length - 1); }; window.addEventListener("keydown", onKey); return () => window.removeEventListener("keydown", onKey); }, [trace, cursor, predictMode, stale]);
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (!trace?.steps.length || !shouldHandlePlaybackShortcut(event)) return;
+      if (!["ArrowLeft", "ArrowRight", " ", "Home", "End"].includes(event.key)) return;
+      // A playback action replaces the key's native page-scroll behavior.
+      event.preventDefault();
+      if (event.key === "ArrowLeft") moveTo(cursor - 1);
+      else if (event.key === "ArrowRight") moveTo(cursor + 1);
+      else if (event.key === " ") setPlaying(value => !value);
+      else if (event.key === "Home") moveTo(0);
+      else if (event.key === "End") moveTo(trace.steps.length - 1);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [trace, cursor, predictMode, stale]);
   useEffect(() => { try { const saved = localStorage.getItem("memlens-code"); if (saved) setCode(saved); } catch { /* storage is optional */ } }, []);
   useEffect(() => { try { localStorage.setItem("memlens-code", code); } catch { /* storage is optional */ } }, [code]);
   const lines = useMemo(() => code.split(/\r?\n/), [code]);
