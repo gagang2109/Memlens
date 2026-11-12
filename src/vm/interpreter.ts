@@ -196,7 +196,20 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
     if (statement.kind === "for") { if (statement.init) execute(statement.init); let guard = 0; while (!statement.test || asNum(evaluate(statement.test))) { try { execute(statement.body); } catch (caught) { if (caught instanceof BreakSignal) break; if (!(caught instanceof ContinueSignal)) throw caught; } if (statement.update) evaluate(statement.update); if (++guard > stepLimit) runtimeError("step limit reached", statement.line); } return; }
     if (statement.kind === "break") throw new BreakSignal();
     if (statement.kind === "continue") throw new ContinueSignal();
-    if (statement.kind === "switch") { const value = asNum(evaluate(statement.test)); let active = false; for (const branch of statement.cases) { if (branch.value === undefined || asNum(evaluate(branch.value)) === value) active = true; if (active) for (const child of branch.body) { try { execute(child); } catch (caught) { if (caught instanceof BreakSignal) return; throw caught; } } } return; }
+    if (statement.kind === "switch") {
+      const value = asNum(evaluate(statement.test));
+      // Default is a fallback entry point, not a match encountered in source order.
+      let start = statement.cases.findIndex(branch => branch.value !== undefined && asNum(evaluate(branch.value)) === value);
+      if (start < 0) start = statement.cases.findIndex(branch => branch.value === undefined);
+      if (start < 0) return;
+      for (const branch of statement.cases.slice(start)) {
+        for (const child of branch.body) {
+          try { execute(child); }
+          catch (caught) { if (caught instanceof BreakSignal) return; throw caught; }
+        }
+      }
+      return;
+    }
   };
   try { if (program.body.length) execute({ kind: "block", body: program.body, line: program.body[0].line }); const main = program.functions.get("main"); if (main) { record(main.line, "call"); execute(main.body); record(main.line, "return"); } else if (!program.body.length) execute({ kind: "block", body: [], line: 1 }); }
   catch (caught) { if (caught instanceof MemoryFault) { error = caught; record(caught.line, "error", caught.reason); } else if (!(caught instanceof ReturnSignal) && !(caught instanceof ExitSignal)) { const message = caught instanceof Error ? caught.message : "unsupported construct"; const match = message.match(/line (\d+)/); const line = match ? Number(match[1]) : 1; error = new MemoryFault(message, line, steps); record(line, "error", message); } }
