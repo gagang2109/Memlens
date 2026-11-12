@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { run } from "../vm/interpreter";
+import { samples } from "../samples";
 import { renderModel } from "./model";
 
 describe("memory visualization model", () => {
@@ -87,4 +89,47 @@ describe("memory visualization model", () => {
     expect(model.nodes[0].value).toBe("42");
     expect(model.nodes[0].fields).toEqual(["data: 42"]);
   });
+});
+
+// Zoom cannot recover content outside the SVG viewBox. Check model bounds
+// rather than jsdom layout (which cannot measure actual SVG clipping).
+it("keeps the default example's freed/orphaned lower row inside the canvas", () => {
+  const result = run(samples.requested.code);
+  const models = result.trace.steps.map(renderModel);
+  expect(models.some(model => model.nodes.some(node => node.y === 215))).toBe(true);
+  for (const model of models) {
+    for (const node of model.nodes) expect(model.canvasHeight).toBeGreaterThanOrEqual(node.y + 78 + 20);
+  }
+});
+it("expands the canvas for tall stacks instead of clipping later allocations", () => {
+  const model = renderModel({
+    index: 0, line: 1, stdout: "", frames: [],
+    pointers: [{ from: "main.stack", to: 4096, label: "stack", dangling: false }],
+    memory: { bytes: [], shadows: [], allocations: Array.from({ length: 8 }, (_, index) => ({
+      address: 4096 + index * 16, size: 16, allocStep: 0, line: 1,
+    })) },
+  });
+  expect(model.shape).toBe("stack");
+  expect(model.canvasHeight).toBe(685);
+  for (const node of model.nodes) expect(model.canvasHeight).toBeGreaterThanOrEqual(node.y + 98);
+});
+
+it("keeps tree-root pointer labels inside the top of the canvas", () => {
+  const model = renderModel({
+    index: 0, line: 1, stdout: "", frames: [],
+    pointers: [
+      { from: "main.root", to: 4096, label: "root", dangling: false },
+      { from: "0x1000.left", to: 4112, label: "left", dangling: false },
+    ],
+    memory: { bytes: [], shadows: [], allocations: [4096, 4112].map(address => ({
+      address, size: 16, allocStep: 0, line: 1,
+    })) },
+  });
+  expect(model.shape).toBe("tree");
+  const root = model.nodes.find(node => node.address === 4096)!;
+  const child = model.nodes.find(node => node.address === 4112)!;
+  // StructureDiagram draws variable tags 40px above their target node.
+  expect(root.y - 40).toBeGreaterThanOrEqual(20);
+  expect(child.y - root.y).toBe(92);
+  for (const node of model.nodes) expect(model.canvasHeight).toBeGreaterThanOrEqual(node.y + 98);
 });

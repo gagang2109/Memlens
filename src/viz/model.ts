@@ -99,7 +99,8 @@ export function renderModel(step: TraceStep): RenderModel {
       const right = childOf(node.address, "right");
       if (left) place(left, depth + 1);
       const x = left && right ? (left.x + right.x) / 2 : left ? left.x + 82 : right ? right.x - 82 : 48 + leaf++ * 164;
-      node.x = x; node.y = 35 + depth * 92;
+      // Variable-pointer tags sit 40px above nodes; leave 20px of top padding.
+      node.x = x; node.y = 60 + depth * 92;
       if (right) place(right, depth + 1);
       return x;
     };
@@ -112,5 +113,9 @@ export function renderModel(step: TraceStep): RenderModel {
       canvasHeight = 55 + depth * 92;
     }
   }
+  // The SVG clips at its viewBox even when the outer viewport is scrollable.
+  // Include every row (especially freed/orphaned blocks and tall stacks), plus
+  // room for the 78px node, its address label, stroke and drop shadow.
+  for (const node of nodes) canvasHeight = Math.max(canvasHeight, node.y + 78 + 20);
   return { nodes, arrows: pointers.filter(pointer => nodes.some(node => node.address === pointer.to)), shape, canvasWidth, canvasHeight };
 }

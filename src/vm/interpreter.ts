@@ -151,7 +151,18 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       if (expression.name === "free") { const address = asNum(evaluate(args[0])); memory.free(address, steps, expression.line); record(expression.line, "free"); return null; }
       if (expression.name === "strlen") return readString(evaluate(args[0])).length;
       if (expression.name === "strcpy" || expression.name === "strcat") { const destination = asNum(evaluate(args[0])); const source = readString(evaluate(args[1])); const existing = expression.name === "strcat" ? readString(destination) : ""; const result = existing + source; const destinationArray = arrayRefs.get(destination); for (let i = 0; i < result.length; i++) { cells.set(destination + i, result[i]); if (destinationArray && i < destinationArray.values.length) destinationArray.values[i] = result[i]; } cells.set(destination + result.length, 0); if (destinationArray && result.length < destinationArray.values.length) destinationArray.values[result.length] = "\0"; return destination; }
-      if (expression.name === "strcmp") return readString(evaluate(args[0])).localeCompare(readString(evaluate(args[1])));
+      if (expression.name === "strcmp") {
+        // C compares unsigned bytes, not language-dependent collation.
+        // Compare UTF-8 encoded strings, stopping at their first NUL.
+        const encoder = new TextEncoder();
+        const left = encoder.encode(readString(evaluate(args[0])).split("\0", 1)[0]);
+        const right = encoder.encode(readString(evaluate(args[1])).split("\0", 1)[0]);
+        for (let i = 0; i <= Math.min(left.length, right.length); i++) {
+          const difference = (left[i] ?? 0) - (right[i] ?? 0);
+          if (difference !== 0) return difference;
+        }
+        return 0;
+      }
       if (expression.name === "memset") { const destination = asNum(evaluate(args[0])); const value = asNum(evaluate(args[1])); const length = asNum(evaluate(args[2])); for (let i = 0; i < length; i++) { cells.set(destination + i, value); memory.write(destination + i, value, steps, expression.line); } return destination; }
       if (expression.name === "scanf") { const format = String(evaluate(args[0])); let input = stdin.slice(stdinCursor); for (const argument of args.slice(1)) { const token = input.trim().split(/\s+/)[0] ?? ""; const leadingWhitespace = input.length - input.trimStart().length; stdinCursor += leadingWhitespace + token.length; input = stdin.slice(stdinCursor); const variable = argument.kind === "name" ? findVariable(argument.name) : undefined; if (format.includes("%s") && variable?.array) token.split("").forEach((character, index) => { if (index < variable.array!.length) variable.array![index] = character; }); else if (variable) variable.value = format.includes("%c") ? token[0] ?? "" : format.includes("%s") ? token : Number(token); else if (argument.kind === "unary" && argument.op === "&") ref(argument.expr).set(format.includes("%c") ? token[0] ?? "" : format.includes("%s") ? token : Number(token)); else runtimeError("scanf target is not assignable", expression.line); } record(expression.line); return args.length - 1; }
       if (expression.name === "getchar") { const character = stdin[stdinCursor] ?? "\0"; stdinCursor++; record(expression.line); return character; }
