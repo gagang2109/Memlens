@@ -24,6 +24,9 @@ it("does not steal editor/control keys while keeping canvas playback shortcuts",
   const root = createRoot(container);
   cleanup = () => { act(() => root.unmount()); container.remove(); };
   act(() => root.render(createElement(App)));
+  const projectLink = container.querySelector<HTMLAnchorElement>("footer a")!;
+  expect(projectLink.href).toBe("https://github.com/gagang2109/Memlens");
+  expect(projectLink.rel).toContain("noopener");
   act(() => container.querySelector<HTMLButtonElement>("button.run")!.click());
   const timeline = container.querySelector<HTMLInputElement>('[aria-label="Timeline"]')!;
   const play = container.querySelector<HTMLButtonElement>(".controls button")!;

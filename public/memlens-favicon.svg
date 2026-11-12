@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <title>Memlens memory lens</title>
+  <rect width="64" height="64" rx="16" fill="#101821"/>
+  <!-- A single larger cell keeps the selected memory-lens mark readable at 16px. -->
+  <circle cx="28" cy="28" r="16" stroke="#f6bd63" stroke-width="7"/>
+  <path d="m40 40 12 12" stroke="#f6bd63" stroke-width="8" stroke-linecap="round"/>
+  <rect x="22" y="22" width="12" height="12" rx="2" fill="#62d4d0"/>
+</svg>

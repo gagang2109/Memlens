@@ -1,7 +1,7 @@
 :root{font-family:Inter,ui-sans-serif,system-ui,sans-serif;color:#f4efe6;background:#0d1117;font-size:14px;--ink:#f4efe6;--muted:#8d9aaa;--line:#273242;--panel:#151e2a;--panel-2:#101821;--amber:#f6bd63;--cyan:#62d4d0;--blue:#8eb8ff;--red:#ff817f;--green:#83d6a5}
 *{box-sizing:border-box}body{margin:0;min-width:1050px}main{min-height:100vh;background:radial-gradient(circle at 85% -10%,#263246 0,#111a25 34%,#0d1117 70%)}
 header{height:78px;padding:20px 30px;display:flex;align-items:center;gap:20px;border-bottom:1px solid var(--line);background:#101822cc;backdrop-filter:blur(10px)}
-.brand{font:800 18px ui-monospace,monospace;letter-spacing:2px}.brand span{color:var(--amber);border:1px solid var(--amber);padding:3px 5px;margin-right:7px;box-shadow:0 0 18px #f6bd6333}.tag,small{color:var(--muted);font-size:11px;letter-spacing:.5px}
+.brand{display:flex;align-items:center;gap:10px;flex-shrink:0;font:800 18px ui-monospace,monospace;letter-spacing:2px}.brand-mark{display:block;width:36px;height:36px;flex-shrink:0}.tag,small{color:var(--muted);font-size:11px;letter-spacing:.5px}
 select{margin-left:auto;background:#182332;border:1px solid #3a4b60;color:var(--ink);padding:10px 12px;border-radius:7px}.run,button{background:var(--amber);border:0;color:#17120b;padding:10px 16px;font-weight:800;border-radius:7px;cursor:pointer;transition:transform .15s,filter .15s}.run:hover,button:hover{filter:brightness(1.08);transform:translateY(-1px)}button:focus,select:focus,textarea:focus,input:focus{outline:2px solid var(--amber);outline-offset:2px}
 .workspace{display:grid;grid-template-columns:37% 63%;min-height:610px}.code-panel,.memory-panel,.console,.timeline{padding:24px 28px;border-right:1px solid var(--line)}.panel-title{font:800 11px ui-monospace,monospace;letter-spacing:1.5px;color:#c7d1dc;margin-bottom:15px}.panel-title small{float:right;font:11px ui-monospace,monospace}
 .code-editor{height:540px;border:1px solid #2c3b4e;border-radius:10px;overflow:auto;box-shadow:inset 0 0 24px #0005}.cm-editor{height:100%;font-size:14px}.cm-scroller{font-family:ui-monospace,monospace}.cm-memlens-current{background:#f6bd6322;border-left:3px solid var(--amber)}.memory-panel{border:0}.columns{display:grid;grid-template-columns:190px minmax(390px,1fr);gap:22px;min-height:515px}.columns h3{font:800 10px ui-monospace,monospace;color:#93a4b8;letter-spacing:1.5px;border-bottom:1px solid var(--line);padding-bottom:10px;margin:0 0 14px}.heap-column{min-width:0}
@@ -17,3 +17,63 @@ select{margin-left:auto;background:#182332;border:1px solid #3a4b60;color:var(--
 .stdin-label{flex-wrap:wrap;line-height:1.5}
 .stdin-label input{max-width:100%}
 @media(max-width:600px){.step-explanation{padding:10px 12px}.controls span{flex-basis:100%;margin-left:0;line-height:1.5}}
+
+/* Editor chrome stays local to the code pane, including on small screens. */
+.editor-shell{min-width:0;border:1px solid #33455d;border-radius:12px;overflow:hidden;background:#111c2c}
+.editor-toolbar,.editor-status{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;flex-wrap:wrap}
+.editor-toolbar{border-bottom:1px solid var(--line);background:#192638}
+.editor-file{font:600 13px ui-monospace,monospace;color:#e4edf8}.editor-file small{color:#a7b7cb;font-weight:400;margin-left:10px}
+.editor-toolbar button,.editor-status button,.editor-shortcuts button{font-size:12px;padding:6px 10px;min-height:32px}
+.editor-shell .code-editor{border:0;border-radius:0;box-shadow:none;overflow:auto}
+.editor-shell .cm-editor{font-size:14px}.editor-shell .cm-content{padding:12px 0;min-height:100%}.editor-shell .cm-line{padding:0 12px;line-height:1.65}
+.editor-shell .cm-gutters{background:#142031;color:#8495ab;border-right:1px solid #2c3b4e}.editor-shell .cm-activeLineGutter{color:#f6bd63}
+.editor-shell:focus-within{border-color:#77cddd;box-shadow:0 0 0 2px #77cddd22}
+.editor-status{font:11px ui-monospace,monospace;color:#a7b7cb;border-top:1px solid var(--line)}
+.editor-shortcuts{padding:14px;background:#192638;border-bottom:1px solid var(--line);font-size:13px;color:#d6e2f0}.editor-shortcuts p{color:#b0bfd1;line-height:1.5}.editor-shortcuts dl{margin:12px 0}.editor-shortcuts dl>div{display:flex;flex-wrap:wrap;gap:5px 14px;margin:9px 0}.editor-shortcuts dt{min-width:185px}.editor-shortcuts dd{margin:0}.editor-shortcuts kbd{font:12px ui-monospace,monospace;color:#9fe1ec}
+
+/* Pan and zoom remain confined to the memory diagram, not the page/editor. */
+.diagram-tools{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin:10px 0}
+.diagram-tools button{min-height:34px;min-width:34px;padding:6px 10px;font-size:12px}
+.diagram-tools output{min-width:45px;text-align:center;font:12px ui-monospace,monospace;color:var(--ink)}
+.diagram-view-hint{font-size:11px;color:var(--muted);margin:6px 0 10px}
+.diagram-viewport{height:350px;max-width:100%;overflow:auto;border:1px solid var(--line);border-radius:8px;cursor:grab;overscroll-behavior:contain}
+.diagram-viewport:focus-visible{outline:2px solid var(--cyan);outline-offset:3px}
+.diagram-viewport.is-dragging{cursor:grabbing;user-select:none}
+.structure-diagram .diagram-scaled-content svg{width:100%;height:100%;min-height:0;max-width:none}
+.diagram-viewport .diagram-node{cursor:pointer}
+
+/* Let content shrink inside grids; keep wide data scrollable locally. */
+.workspace,.bottom{grid-template-columns:minmax(0,37fr) minmax(0,63fr)}
+.workspace>*,.bottom>*,.columns>*{min-width:0}
+.stack-slot{min-width:0;gap:6px}
+.stack-slot>span:first-child{min-width:0;overflow-wrap:anywhere}
+.stack-slot .array-cells{min-width:0;max-width:100%;overflow-x:auto}
+.stack-slot .array-cell{flex-shrink:0}
+.console pre{overflow-wrap:anywhere;max-width:100%;overflow-x:auto}
+.crime,.leak-report{overflow-wrap:anywhere}
+@media(max-width:1200px){
+  .workspace,.bottom{grid-template-columns:minmax(0,1fr)}
+}
+@media(max-width:700px){
+  header{height:auto;min-height:78px;flex-wrap:wrap;gap:12px;padding:16px}
+  header .brand{flex:1 1 auto;white-space:nowrap}
+  header .tag{flex:1 1 100%;order:1}
+  header select{order:2;flex:1 1 0;min-width:0;max-width:100%;margin-left:0}
+  header .run{order:3;flex:0 0 auto}
+  .columns{grid-template-columns:minmax(0,1fr);min-height:0}
+  .memory-panel{min-height:0}
+  .stack-visual{min-height:0}
+  .panel-title{display:flex;flex-wrap:wrap;gap:8px;justify-content:space-between}
+  .panel-title small{float:none}
+  .stack-slot{flex-wrap:wrap}
+  .stack-slot .array-cells{flex-basis:100%}
+}
+@media(max-width:600px){
+  .code-panel,.memory-panel,.console,.timeline{padding:16px}
+  .code-editor{height:360px}
+  footer{padding:16px}
+}
+
+
+
+footer a{color:var(--cyan);text-underline-offset:3px}footer a:focus-visible{outline:2px solid var(--cyan);outline-offset:3px}

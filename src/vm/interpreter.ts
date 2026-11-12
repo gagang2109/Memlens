@@ -139,7 +139,14 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
         return 16;
       }
       if (expression.name === "malloc") return allocate(asNum(evaluate(args[0])), expression.line);
-      if (expression.name === "calloc") { const address = allocate(asNum(evaluate(args[0])) * asNum(evaluate(args[1])), expression.line); for (let i = 0; i < asNum(evaluate(args[0])) * asNum(evaluate(args[1])); i++) memory.write(address + i, 0, steps, expression.line); return address; }
+      if (expression.name === "calloc") {
+        const count = asNum(evaluate(args[0]));
+        const elementBytes = asNum(evaluate(args[1]));
+        const size = count * elementBytes;
+        const address = allocate(size, expression.line);
+        for (let i = 0; i < size; i++) memory.write(address + i, 0, steps, expression.line);
+        return address;
+      }
       if (expression.name === "realloc") { const old = asNum(evaluate(args[0])); const size = asNum(evaluate(args[1])); const address = allocate(size, expression.line); const oldAllocation = memory.find(old); if (oldAllocation) for (let i = 0; i < Math.min(size, oldAllocation.size); i++) cells.set(address + i, cells.get(old + i) ?? 0); if (old) { memory.free(old, steps, expression.line); record(expression.line, "free"); } return address; }
       if (expression.name === "free") { const address = asNum(evaluate(args[0])); memory.free(address, steps, expression.line); record(expression.line, "free"); return null; }
       if (expression.name === "strlen") return readString(evaluate(args[0])).length;
