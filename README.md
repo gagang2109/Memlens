@@ -4,6 +4,11 @@ Memlens is a local-first teaching debugger for a small, executable subset of C.
 
 > Step through your C code and watch memory rewind.
 
+## Live demo
+
+- **Main:** [memlensc.vercel.app](https://memlensc.vercel.app)
+- **Alternate:** [memlens-six.vercel.app](https://memlens-six.vercel.app)
+
 ## Why it exists
 
 Pointers and memory bugs are invisible in ordinary C source. Memlens makes them visible by showing execution as a reversible trace with stack values, heap objects, pointer relationships, freed blocks, and memory errors.
@@ -105,15 +110,21 @@ npm run build
 
 ## Screenshots
 
-The following files are placeholders for screenshots and a demo recording:
+The bundled push/reverse-list example intentionally reads a node after freeing it. These screenshots show Memlens identifying that error in the example C program, not an application failure.
 
-![Linked-list visualization](docs/screenshot-list.png)
+### Linked-list memory view
 
-![Use-after-free visualization](docs/screenshot-uaf.png)
+Stack variables and pointer arrows show the list, with a freed node marked by diagonal shading.
 
-![Binary-tree visualization](docs/screenshot-tree.png)
+![Linked-list memory view with a freed node and pointer arrows](docs/screenshot-list.jpg)
 
+### Use-after-free diagnostic
+
+The error identifies the invalid access, and the trace controls let you step backward to inspect how it happened.
+
+![Use-after-free diagnostic and reversible execution timeline](docs/screenshot-uaf.jpg)
 
 ## License
 
 MIT. See [LICENSE](./LICENSE).
+
