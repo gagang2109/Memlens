@@ -61,7 +61,7 @@ export function App() {
     }, 500);
     return () => window.clearTimeout(timer);
   }, [prediction, predictionResult, predictionTarget, trace]);
-  useEffect(() => { if (!playing || !trace) return; const timer = window.setInterval(() => { if (cursor >= trace.steps.length - 1) { setPlaying(false); return; } moveTo(cursor + 1); }, 1000 / speed); return () => window.clearInterval(timer); }, [playing, trace, cursor, speed, predictMode]);
+  useEffect(() => { if (!playing || !trace || prediction) return; const timer = window.setInterval(() => { if (cursor >= trace.steps.length - 1) { setPlaying(false); return; } moveTo(cursor + 1); }, 1000 / speed); return () => window.clearInterval(timer); }, [playing, trace, cursor, speed, predictMode, prediction]);
   useEffect(() => { const onKey = (event: KeyboardEvent) => { if (!shouldHandlePlaybackShortcut(event)) return; if (event.key === "ArrowLeft") moveTo(cursor - 1); else if (event.key === "ArrowRight") moveTo(cursor + 1); else if (event.key === " ") { event.preventDefault(); setPlaying(value => !value); } else if (event.key === "Home") moveTo(0); else if (event.key === "End" && trace) moveTo(trace.steps.length - 1); }; window.addEventListener("keydown", onKey); return () => window.removeEventListener("keydown", onKey); }, [trace, cursor, predictMode]);
   useEffect(() => { try { const saved = localStorage.getItem("memlens-code"); if (saved) setCode(saved); } catch { /* storage is optional */ } }, []);
   useEffect(() => { try { localStorage.setItem("memlens-code", code); } catch { /* storage is optional */ } }, [code]);

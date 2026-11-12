@@ -75,3 +75,25 @@ it("shows incorrect feedback once without awarding a point", () => {
   expect(localStorage.getItem('memlens-predict-streak')).toBe('0');
   tick(); expect(cursor()).toBe(5);
 });
+
+it("preserves answered feedback when Play is pressed at 4x", () => {
+  const speed = container.querySelector<HTMLSelectElement>('select[aria-label="Playback speed"]')!;
+  act(() => { speed.value = '4'; speed.dispatchEvent(new Event('change', { bubbles: true })); });
+  askAndAnswer(); click('.controls button');
+  act(() => { vi.advanceTimersByTime(250); });
+  expect(container.querySelector('.correct')?.textContent).toBe('Correct!');
+  expect(cursor()).toBe(0);
+  act(() => { vi.advanceTimersByTime(250); });
+  expect(cursor()).toBe(5);
+  expect(container.querySelector('.prediction')).toBeNull();
+  act(() => { vi.advanceTimersByTime(250); });
+  expect(container.querySelector('.prediction')).not.toBeNull();
+  click('.prediction button'); tick(); expect(cursor()).toBe(6);
+});
+it("honors Pause pressed while waiting for prediction feedback", () => {
+  askAndAnswer(); click('.controls button'); click('.controls button');
+  tick(); expect(cursor()).toBe(5);
+  act(() => { vi.advanceTimersByTime(1500); });
+  expect(cursor()).toBe(5);
+  expect(container.querySelector('.prediction')).toBeNull();
+});
