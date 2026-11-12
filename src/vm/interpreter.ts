@@ -150,10 +150,13 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
     if (expression.kind === "binary") {
       if (["=", "+=", "-="].includes(expression.op)) { const reference = ref(expression.left); const right = evaluate(expression.right); const old = asNum(reference.get()); const pointer = pointerMeta(expression.left); const delta = pointer?.pointer ? (pointer.elementSize ?? 1) : 1; const value = expression.op === "=" ? right : old + (expression.op === "+=" ? asNum(right) * delta : -asNum(right) * delta); reference.set(value); record(expression.line); return value; }
       if (expression.op === ",") { evaluate(expression.left); return evaluate(expression.right); }
+      // C logical operators evaluate the right operand only when needed.
+      if (expression.op === "&&") return asNum(evaluate(expression.left)) ? (asNum(evaluate(expression.right)) ? 1 : 0) : 0;
+      if (expression.op === "||") return asNum(evaluate(expression.left)) ? 1 : (asNum(evaluate(expression.right)) ? 1 : 0);
       const left = evaluate(expression.left); const right = evaluate(expression.right); const a = asNum(left); const b = asNum(right); if (["+", "-"].includes(expression.op)) { const pointer = pointerMeta(expression.left); if (pointer?.pointer) return a + (expression.op === "+" ? b : -b) * (pointer.elementSize ?? 1); }
       if (expression.op === "/" && b === 0) runtimeError("division by zero", expression.line);
       if (expression.op === "==" || expression.op === "!=") { const equal = typeof left === "string" || typeof right === "string" ? left === right : a === b; return expression.op === "==" ? (equal ? 1 : 0) : (equal ? 0 : 1); }
-      return ({ "+": a + b, "-": a - b, "*": a * b, "/": Math.trunc(a / b), "%": a % b, "<": a < b ? 1 : 0, ">": a > b ? 1 : 0, "<=": a <= b ? 1 : 0, ">=": a >= b ? 1 : 0, "&&": a && b ? 1 : 0, "||": a || b ? 1 : 0 } as Record<string, number>)[expression.op] ?? 0;
+      return ({ "+": a + b, "-": a - b, "*": a * b, "/": Math.trunc(a / b), "%": a % b, "<": a < b ? 1 : 0, ">": a > b ? 1 : 0, "<=": a <= b ? 1 : 0, ">=": a >= b ? 1 : 0 } as Record<string, number>)[expression.op] ?? 0;
     }
     return null;
   };
@@ -177,7 +180,18 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
     if (statement.kind === "return") throw new ReturnSignal(statement.value ? evaluate(statement.value) : null);
     if (statement.kind === "if") { if (asNum(evaluate(statement.test))) execute(statement.yes); else if (statement.no) execute(statement.no); return; }
     if (statement.kind === "while" || statement.kind === "do") {
-      let guard = 0; do { try { execute(statement.body); } catch (caught) { if (caught instanceof BreakSignal) break; if (!(caught instanceof ContinueSignal)) throw caught; } if (statement.kind === "while" && !asNum(evaluate(statement.test))) break; if (++guard > stepLimit) runtimeError("step limit reached", statement.line); } while (statement.kind === "do" ? asNum(evaluate(statement.test)) : true); return;
+      let guard = 0;
+      let firstIteration = true;
+      while ((statement.kind === "do" && firstIteration) || asNum(evaluate(statement.test))) {
+        firstIteration = false;
+        if (++guard > stepLimit) runtimeError("step limit reached", statement.line);
+        try { execute(statement.body); }
+        catch (caught) {
+          if (caught instanceof BreakSignal) break;
+          if (!(caught instanceof ContinueSignal)) throw caught;
+        }
+      }
+      return;
     }
     if (statement.kind === "for") { if (statement.init) execute(statement.init); let guard = 0; while (!statement.test || asNum(evaluate(statement.test))) { try { execute(statement.body); } catch (caught) { if (caught instanceof BreakSignal) break; if (!(caught instanceof ContinueSignal)) throw caught; } if (statement.update) evaluate(statement.update); if (++guard > stepLimit) runtimeError("step limit reached", statement.line); } return; }
     if (statement.kind === "break") throw new BreakSignal();
@@ -191,3 +205,4 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
   roots.forEach(visit); const live = memory.allocations.filter(allocation => allocation.freeStep === undefined); const orphanedAtExit = live.filter(allocation => !reachable.has(allocation.address)).map(allocation => allocation.address);
   return { trace, status: error ? "error" : "ok", error, leaks: (error ? memory.allocations : live).map(allocation => ({ address: allocation.address, line: allocation.line })), orphanedAtExit };
 }
+

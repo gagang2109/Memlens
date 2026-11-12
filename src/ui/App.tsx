@@ -4,6 +4,7 @@ import { samples } from "../samples";
 import type { Trace } from "../vm/trace";
 import { renderModel } from "../viz/model";
 import { CodeEditor } from "./CodeEditor";
+import { shouldHandlePlaybackShortcut } from "./shortcuts";
 import { checkPrediction, nextPointerPrediction, type PointerPrediction } from "../vm/predict";
 
 function StructureDiagram({ model, highlighted, onHighlight }: { model: ReturnType<typeof renderModel>; highlighted?: number; onHighlight: (address?: number) => void }) {
@@ -50,7 +51,7 @@ export function App() {
   const runCode = () => { setPlaying(false); setPrediction(undefined); try { const result = run(code, 100000, 100, stdin); setTrace(result.trace); setCursor(0); setFault(result.error); setLeaks(result.leaks); setError(result.error?.reason ?? ""); } catch (caught) { setTrace(undefined); setFault(undefined); setLeaks([]); setError(caught instanceof Error ? caught.message : "Unable to parse program"); } };
   const answerPrediction = (answer: number | null) => { if (!prediction || !trace) return; const correct = checkPrediction(answer, prediction.expected); setPredictionResult(correct); const nextScore = correct ? score + 1 : score; const nextStreak = correct ? streak + 1 : 0; setScore(nextScore); setStreak(nextStreak); localStorage.setItem("memlens-predict-score", String(nextScore)); localStorage.setItem("memlens-predict-streak", String(nextStreak)); setTimeout(() => { setPrediction(undefined); setPredictionResult(undefined); setCursor(Math.min(cursor + 1, trace.steps.length - 1)); }, 500); };
   useEffect(() => { if (!playing || !trace) return; const timer = window.setInterval(() => { if (cursor >= trace.steps.length - 1) { setPlaying(false); return; } moveTo(cursor + 1); }, 1000 / speed); return () => window.clearInterval(timer); }, [playing, trace, cursor, speed, predictMode]);
-  useEffect(() => { const onKey = (event: KeyboardEvent) => { if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return; if (event.key === "ArrowLeft") moveTo(cursor - 1); else if (event.key === "ArrowRight") moveTo(cursor + 1); else if (event.key === " ") { event.preventDefault(); setPlaying(value => !value); } else if (event.key === "Home") moveTo(0); else if (event.key === "End" && trace) moveTo(trace.steps.length - 1); }; window.addEventListener("keydown", onKey); return () => window.removeEventListener("keydown", onKey); }, [trace, cursor, predictMode]);
+  useEffect(() => { const onKey = (event: KeyboardEvent) => { if (!shouldHandlePlaybackShortcut(event)) return; if (event.key === "ArrowLeft") moveTo(cursor - 1); else if (event.key === "ArrowRight") moveTo(cursor + 1); else if (event.key === " ") { event.preventDefault(); setPlaying(value => !value); } else if (event.key === "Home") moveTo(0); else if (event.key === "End" && trace) moveTo(trace.steps.length - 1); }; window.addEventListener("keydown", onKey); return () => window.removeEventListener("keydown", onKey); }, [trace, cursor, predictMode]);
   useEffect(() => { try { const saved = localStorage.getItem("memlens-code"); if (saved) setCode(saved); } catch { /* storage is optional */ } }, []);
   useEffect(() => { try { localStorage.setItem("memlens-code", code); } catch { /* storage is optional */ } }, [code]);
   const lines = useMemo(() => code.split(/\r?\n/), [code]);
@@ -72,3 +73,4 @@ export function App() {
     <footer>Local only · simulated memory, not gcc</footer>
   </main>;
 }
+
