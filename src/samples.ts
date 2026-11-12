@@ -1,6 +1,6 @@
 export const samples = {
   requested: {
-    name: "Push, reverse, and inspect",
+    name: "Push/reverse list — intentional use-after-free",
     code: `#include <stdio.h>
 #include <stdlib.h>
 
