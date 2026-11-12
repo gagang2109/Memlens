@@ -84,7 +84,14 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       const baseArray = arrayRefs.get(base); if (baseArray) { if (index < 0 || index >= baseArray.values.length) runtimeError(`pointer index out of bounds (${index})`, expression.line); return { get: () => baseArray.values[index], set: value => { baseArray.values[index] = value; }, address: base + index * (variable?.elementSize ?? elementSize(baseArray.type)) }; }
       const size = variable?.elementSize ?? memory.allocationAt(base)?.elementSize ?? 1; const address = base + index * size; const allocation = memory.allocationAt(address);
       if (!allocation || address < allocation.address || address + size > allocation.address + allocation.size) runtimeError(`pointer index out of bounds (${index})`, expression.line, allocation);
-      return { get: () => cells.get(address) ?? 0, set: value => { cells.set(address, value); memory.write(address, asNum(value), steps, expression.line); }, address };
+      return {
+        get: () => {
+          if (allocation!.freeStep !== undefined) runtimeError("use-after-free", expression.line, allocation);
+          return cells.get(address) ?? memory.read(address, steps, expression.line);
+        },
+        set: value => { cells.set(address, value); memory.write(address, asNum(value), steps, expression.line); },
+        address,
+      };
     }
     if (expression.kind === "unary" && expression.op === "*") {
       const address = asNum(evaluate(expression.expr)); const allocation = memory.find(address);
@@ -110,11 +117,12 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
     if (expression.kind === "conditional") return asNum(evaluate(expression.test)) ? evaluate(expression.yes) : evaluate(expression.no);
     if (expression.kind === "unary") {
       if (expression.op === "!" || expression.op === "-") { const old = asNum(evaluate(expression.expr)); return expression.op === "!" ? (old ? 0 : 1) : -old; }
-      const reference = ref(expression.expr); const old = asNum(reference.get());
+      const reference = ref(expression.expr);
       if (expression.op === "&") {
         const variable = expression.expr.kind === "name" ? findVariable(expression.expr.name) : undefined;
         return variable && !variable.pointer && variable.type.startsWith("struct") && typeof variable.value === "number" ? variable.value : reference.address ?? 0;
       }
+      const old = asNum(reference.get());
       if (expression.op === "++" || expression.op === "--") { const variable = pointerMeta(expression.expr); const delta = variable?.pointer ? (variable.elementSize ?? 1) : 1; const value = old + (expression.op === "++" ? delta : -delta); reference.set(value); return expression.postfix ? old : value; }
     }
     if (expression.kind === "call") {
@@ -135,7 +143,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       if (expression.name === "realloc") { const old = asNum(evaluate(args[0])); const size = asNum(evaluate(args[1])); const address = allocate(size, expression.line); const oldAllocation = memory.find(old); if (oldAllocation) for (let i = 0; i < Math.min(size, oldAllocation.size); i++) cells.set(address + i, cells.get(old + i) ?? 0); if (old) { memory.free(old, steps, expression.line); record(expression.line, "free"); } return address; }
       if (expression.name === "free") { const address = asNum(evaluate(args[0])); memory.free(address, steps, expression.line); record(expression.line, "free"); return null; }
       if (expression.name === "strlen") return readString(evaluate(args[0])).length;
-      if (expression.name === "strcpy" || expression.name === "strcat") { const destination = asNum(evaluate(args[0])); const source = readString(evaluate(args[1])); const existing = expression.name === "strcat" ? readString(destination) : ""; const result = existing + source; const destinationArray = arrayRefs.get(destination); for (let i = 0; i < result.length; i++) { cells.set(destination + i, result[i]); if (destinationArray && i < destinationArray.values.length) destinationArray.values[i] = result[i]; } return destination; }
+      if (expression.name === "strcpy" || expression.name === "strcat") { const destination = asNum(evaluate(args[0])); const source = readString(evaluate(args[1])); const existing = expression.name === "strcat" ? readString(destination) : ""; const result = existing + source; const destinationArray = arrayRefs.get(destination); for (let i = 0; i < result.length; i++) { cells.set(destination + i, result[i]); if (destinationArray && i < destinationArray.values.length) destinationArray.values[i] = result[i]; } cells.set(destination + result.length, 0); if (destinationArray && result.length < destinationArray.values.length) destinationArray.values[result.length] = "\0"; return destination; }
       if (expression.name === "strcmp") return readString(evaluate(args[0])).localeCompare(readString(evaluate(args[1])));
       if (expression.name === "memset") { const destination = asNum(evaluate(args[0])); const value = asNum(evaluate(args[1])); const length = asNum(evaluate(args[2])); for (let i = 0; i < length; i++) { cells.set(destination + i, value); memory.write(destination + i, value, steps, expression.line); } return destination; }
       if (expression.name === "scanf") { const format = String(evaluate(args[0])); let input = stdin.slice(stdinCursor); for (const argument of args.slice(1)) { const token = input.trim().split(/\s+/)[0] ?? ""; const leadingWhitespace = input.length - input.trimStart().length; stdinCursor += leadingWhitespace + token.length; input = stdin.slice(stdinCursor); const variable = argument.kind === "name" ? findVariable(argument.name) : undefined; if (format.includes("%s") && variable?.array) token.split("").forEach((character, index) => { if (index < variable.array!.length) variable.array![index] = character; }); else if (variable) variable.value = format.includes("%c") ? token[0] ?? "" : format.includes("%s") ? token : Number(token); else if (argument.kind === "unary" && argument.op === "&") ref(argument.expr).set(format.includes("%c") ? token[0] ?? "" : format.includes("%s") ? token : Number(token)); else runtimeError("scanf target is not assignable", expression.line); } record(expression.line); return args.length - 1; }
@@ -148,7 +156,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       let returned: Value = null; try { execute(fn.body); } catch (caught) { if (caught instanceof ReturnSignal) returned = caught.value; else throw caught; } finally { frames.pop(); record(expression.line, "return"); } return returned;
     }
     if (expression.kind === "binary") {
-      if (["=", "+=", "-="].includes(expression.op)) { const reference = ref(expression.left); const right = evaluate(expression.right); const old = asNum(reference.get()); const pointer = pointerMeta(expression.left); const delta = pointer?.pointer ? (pointer.elementSize ?? 1) : 1; const value = expression.op === "=" ? right : old + (expression.op === "+=" ? asNum(right) * delta : -asNum(right) * delta); reference.set(value); record(expression.line); return value; }
+      if (["=", "+=", "-="].includes(expression.op)) { const reference = ref(expression.left); const right = evaluate(expression.right); const old = expression.op === "=" ? 0 : asNum(reference.get()); const pointer = pointerMeta(expression.left); const delta = pointer?.pointer ? (pointer.elementSize ?? 1) : 1; const value = expression.op === "=" ? right : old + (expression.op === "+=" ? asNum(right) * delta : -asNum(right) * delta); reference.set(value); record(expression.line); return value; }
       if (expression.op === ",") { evaluate(expression.left); return evaluate(expression.right); }
       // C logical operators evaluate the right operand only when needed.
       if (expression.op === "&&") return asNum(evaluate(expression.left)) ? (asNum(evaluate(expression.right)) ? 1 : 0) : 0;
