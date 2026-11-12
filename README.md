@@ -85,6 +85,8 @@ The interpreter currently supports:
 - `if`/`else`, `while`, `do`/`while`, `for`, `break`, `continue`, and `switch`/`case`/`default`.
 - User-defined functions, parameters, return values, and recursion.
 - `malloc`, `calloc`, `realloc`, `free`, `sizeof` for supported types and expressions, `strlen`, `strcpy`, `strcmp`, `strcat`, `memset`, `getchar`, `exit`, and `printf` with `%d`, `%c`, `%s`, `%p`, `%f`, `%lf`, width, precision, and `%%`.
+- Printf formatting supports literal widths, left alignment, numeric signs/zero padding, integer/string precision, and floating precision up to 100. Width and other precision values are capped at 10,000 to bound browser allocations. Return counts include padding and `%c` bytes. String formatting is intended for basic ASCII teaching examples; non-ASCII string precision, locale-dependent formatting, exact native floating-point tie rounding, dynamic `*` widths, and other conversion specifiers are not modeled. Unsupported or incomplete conversions produce a simulator error rather than silently misaligning arguments.
+- `getchar` returns `EOF` (`-1`) once input is exhausted and shares the input position with `scanf`. Non-EOF character values retain the simulator’s existing string-backed representation, so comparisons with numeric character codes (for example, `getchar() == 65`) are not fully C-compatible. This is not a full C byte-stream/encoding implementation.
 - `scanf` for `%d`, `%c`, and `%s` using the app's standard-input field, including repeated whitespace-separated input and indexed lvalue targets.
 - Numeric and string `#define` constants. `#include` lines are accepted and ignored.
 - `//` and `/* ... */` comments.

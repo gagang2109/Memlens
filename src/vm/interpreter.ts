@@ -113,7 +113,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
   };
   const evaluate = (expression: Expr): Value => {
     if (expression.kind === "literal") return expression.value;
-    if (expression.kind === "name") { const variable = findVariable(expression.name); if (variable) return variable.array ? variable.arrayBase ?? 0 : variable.value; return program.constants.get(expression.name) ?? 0; }
+    if (expression.kind === "name") { const variable = findVariable(expression.name); if (variable) return variable.array ? variable.arrayBase ?? 0 : variable.value; return program.constants.get(expression.name) ?? (expression.name === "EOF" ? -1 : 0); }
     if (expression.kind === "member" || expression.kind === "index" || (expression.kind === "unary" && expression.op === "*")) return ref(expression).get();
     if (expression.kind === "cast") return evaluate(expression.expr);
     if (expression.kind === "conditional") return asNum(evaluate(expression.test)) ? evaluate(expression.yes) : evaluate(expression.no);
@@ -198,7 +198,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
         return destination;
       }
       if (expression.name === "scanf") {
-        const format = readString(evaluate(args[0]));
+        const format = readString(evaluate(args[0])).split("\0", 1)[0];
         // Evaluate every destination once, before scanning, as with ordinary calls.
         const destinations = args.slice(1).map(argument => asNum(evaluate(argument)));
         let assigned = 0; let destinationIndex = 0; let inputFailure = false;
@@ -254,9 +254,53 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
         record(expression.line);
         return inputFailure && assigned === 0 ? -1 : assigned;
       }
-      if (expression.name === "getchar") { const character = stdin[stdinCursor] ?? "\0"; stdinCursor++; record(expression.line); return character; }
+      if (expression.name === "getchar") {
+        if (stdinCursor >= stdin.length) { record(expression.line); return -1; }
+        const character = stdin[stdinCursor];
+        stdinCursor++; record(expression.line); return character;
+      }
       if (expression.name === "exit") { record(expression.line); throw new ExitSignal(); }
-      if (expression.name === "printf") { const format = String(evaluate(args[0])).replace(/\\n/g, "\n"); const values = args.slice(1).map(argument => evaluate(argument)); let index = 0; stdout += format.replace(/%([-+0-9.]*)([dcspf%]|lf)/g, (_match, flags: string, specifier: string) => { if (specifier === "%") return "%"; const value = values[index++]; if (specifier === "s") return readString(value); if (specifier === "f" || specifier === "lf") { const precision = flags.match(/\.([0-9]+)/)?.[1]; return Number(value ?? 0).toFixed(precision ? Number(precision) : 6); } const text = specifier === "c" ? (typeof value === "number" ? String.fromCharCode(value & 255) : String(value ?? "")) : specifier === "d" ? String(asNum(value)) : String(value ?? ""); const width = Number(flags.replace(/[^0-9]/g, "")) || 0; return width > text.length ? " ".repeat(width - text.length) + text : text; }); record(expression.line); return null; }
+      if (expression.name === "printf") {
+        const format = readString(evaluate(args[0])).split("\0", 1)[0];
+        const values = args.slice(1).map(argument => evaluate(argument)); let index = 0; let characterByteAdjustment = 0;
+        const output = format.replace(/%([-+ 0]*)([0-9]*)(?:\.([0-9]*))?(lf|[dcspf%])|%/g,
+          (_match, flags: string, widthText: string, precisionText: string | undefined, specifier: string) => {
+            if (_match === "%") runtimeError("unsupported or incomplete printf conversion", expression.line);
+            if (specifier === "%") return "%";
+            const value = values[index++]; const width = Number(widthText || 0);
+            const precision = precisionText === undefined ? undefined : Number(precisionText || 0);
+            // Bound formatting allocations just as execution and memory are bounded.
+            if (width > 10000 || (precision !== undefined && precision > 10000))
+              runtimeError("printf width or precision exceeds simulator limit (10000)", expression.line);
+            let text: string; let sign = "";
+            if (specifier === "s") {
+              text = readString(value).split("\0", 1)[0]; if (precision !== undefined) text = text.slice(0, precision);
+            } else if (specifier === "c") {
+              text = String.fromCharCode(asNum(value) & 255);
+              characterByteAdjustment += 1 - new TextEncoder().encode(text).length;
+            }
+            else if (specifier === "d" || specifier === "f" || specifier === "lf") {
+              const number = specifier === "d" ? Math.trunc(asNum(value)) : asNum(value);
+              sign = number < 0 || (specifier !== "d" && Object.is(number, -0)) ? "-" : flags.includes("+") ? "+" : flags.includes(" ") ? " " : "";
+              if (specifier === "d") {
+                text = Math.abs(number).toString();
+                if (precision === 0 && number === 0) text = "";
+                if (precision !== undefined) text = text.padStart(precision, "0");
+              } else {
+                if (precision !== undefined && precision > 100)
+                  runtimeError("printf floating precision exceeds simulator limit (100)", expression.line);
+                text = Math.abs(number).toFixed(precision ?? 6);
+              }
+            } else text = String(value ?? "");
+            const padding = Math.max(0, width - sign.length - text.length);
+            if (flags.includes("-")) return sign + text + " ".repeat(padding);
+            if (flags.includes("0") && (specifier === "d" ? precision === undefined : specifier === "f" || specifier === "lf"))
+              return sign + "0".repeat(padding) + text;
+            return " ".repeat(padding) + sign + text;
+          });
+        stdout += output; record(expression.line);
+        return new TextEncoder().encode(output).length + characterByteAdjustment;
+      }
       const fn = program.functions.get(expression.name); if (!fn) throw new Error(`line ${expression.line}: unsupported function '${expression.name}'`);
       if (frames.length >= recursionLimit) runtimeError("stack overflow", expression.line);
       const values = args.map(argument => evaluate(argument)); frames.push({ name: fn.name, vars: new Map(fn.params.map((parameter, index) => [parameter.name, { value: values[index] ?? null, type: parameter.type, pointer: parameter.pointer, elementSize: elementSize(parameter.type) }])) }); record(expression.line, "call");
