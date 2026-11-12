@@ -72,16 +72,19 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       return result;
     }
     if (expression.kind === "index") {
-      const index = asNum(evaluate(expression.index)); const base = asNum(evaluate(expression.object));
-      const variable = pointerMeta(expression.object); const array = expression.object.kind === "name" ? findVariable(expression.object.name)?.array : undefined;
+      const index = asNum(evaluate(expression.index));
       if (expression.object.kind === "index" && expression.object.object.kind === "name") {
         const outerVariable = findVariable(expression.object.object.name);
         if (outerVariable?.array && outerVariable.dimensions?.length) {
+          // Resolve the row once: evaluating the inner index expression first
+          // would repeat side effects such as matrix[row++][column].
           const outer = asNum(evaluate(expression.object.index)); const width = outerVariable.dimensions[1] ?? 1; const flat = outer * width + index;
           if (flat < 0 || flat >= outerVariable.array.length) runtimeError(`array index out of bounds (${index})`, expression.line);
           return { get: () => outerVariable.array![flat], set: value => { outerVariable.array![flat] = value; }, address: (outerVariable.arrayBase ?? 0) + flat * (outerVariable.elementSize ?? 4) };
         }
       }
+      const base = asNum(evaluate(expression.object));
+      const variable = pointerMeta(expression.object); const array = expression.object.kind === "name" ? findVariable(expression.object.name)?.array : undefined;
       if (array) { if (!Number.isInteger(index) || index < 0 || index >= array.length) runtimeError(`array index out of bounds (${index})`, expression.line); return { get: () => array[index], set: value => { array[index] = value; }, address: (findVariable(expression.object.kind === "name" ? expression.object.name : "")?.arrayBase ?? 0) + index * (variable?.elementSize ?? 4) }; }
       const baseArray = arrayRefs.get(base); if (baseArray) { if (!Number.isInteger(index) || index < 0 || index >= baseArray.values.length) runtimeError(`pointer index out of bounds (${index})`, expression.line); return { get: () => baseArray.values[index], set: value => { baseArray.values[index] = value; }, address: base + index * (variable?.elementSize ?? elementSize(baseArray.type)) }; }
       const size = variable?.elementSize ?? memory.allocationAt(base)?.elementSize ?? 1; const address = base + index * size; const allocation = memory.allocationAt(address);
@@ -161,7 +164,19 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
         for (let i = 0; i < size; i++) memory.write(address + i, 0, steps, expression.line);
         return address;
       }
-      if (expression.name === "realloc") { const old = asNum(evaluate(args[0])); const size = asNum(evaluate(args[1])); const address = allocate(size, expression.line); const oldAllocation = memory.find(old); if (oldAllocation) for (let i = 0; i < Math.min(size, oldAllocation.size); i++) cells.set(address + i, cells.get(old + i) ?? 0); if (old) { memory.free(old, steps, expression.line); record(expression.line, "free"); } return address; }
+      if (expression.name === "realloc") {
+        const old = asNum(evaluate(args[0])); const size = asNum(evaluate(args[1]));
+        const address = allocate(size, expression.line); const oldAllocation = memory.find(old);
+        if (oldAllocation) {
+          const copiedBytes = Math.min(size, oldAllocation.size);
+          memory.copyAllocationState(old, address, copiedBytes, steps, expression.line);
+          for (let i = 0; i < copiedBytes; i++) {
+            if (cells.has(old + i)) cells.set(address + i, cells.get(old + i)!);
+          }
+        }
+        if (old) { memory.free(old, steps, expression.line); record(expression.line, "free"); }
+        return address;
+      }
       if (expression.name === "free") { const address = asNum(evaluate(args[0])); memory.free(address, steps, expression.line); record(expression.line, address === 0 ? "step" : "free"); return null; }
       if (expression.name === "strlen") return readString(evaluate(args[0])).length;
       if (expression.name === "strcpy" || expression.name === "strcat") { const destination = asNum(evaluate(args[0])); const source = readString(evaluate(args[1])); const existing = expression.name === "strcat" ? readString(destination) : ""; const result = existing + source; const destinationArray = arrayRefs.get(destination); for (let i = 0; i < result.length; i++) { cells.set(destination + i, result[i]); if (destinationArray && i < destinationArray.values.length) destinationArray.values[i] = result[i]; } cells.set(destination + result.length, 0); if (destinationArray && result.length < destinationArray.values.length) destinationArray.values[result.length] = "\0"; return destination; }

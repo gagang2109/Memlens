@@ -29,6 +29,19 @@ export class Memory {
     this.snapshotData = undefined;
     this.bytes[address] = value & 255; this.shadows[address] = "initialized";
   }
+  copyAllocationState(source: number, destination: number, size: number, step: number, line: number) {
+    for (const address of [source, destination]) {
+      const allocation = this.find(address, size);
+      if (!allocation) throw new MemoryFault("invalid pointer dereference", line, step);
+      if (allocation.freeStep !== undefined) throw new MemoryFault("use-after-free", line, step, allocation);
+    }
+    // Reallocation preserves indeterminate bytes without reading their values.
+    // Copy shadow state too, rather than treating every old byte as initialized.
+    this.snapshotData = undefined;
+    this.bytes.copyWithin(destination, source, source + size);
+    const shadows = this.shadows.slice(source, source + size);
+    for (let i = 0; i < size; i++) this.shadows[destination + i] = shadows[i];
+  }
   free(address: number, step: number, line: number) {
     // C defines free(NULL) as a no-op, including repeated cleanup calls.
     if (address === 0) return;
