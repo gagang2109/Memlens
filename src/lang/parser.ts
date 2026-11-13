@@ -1,7 +1,7 @@
 import { lex, type Token } from "./lexer";
 
 export type Expr =
-  | { kind: "literal"; value: number | string | null; line: number }
+  | { kind: "literal"; value: number | string | null; line: number; literalKind?: "string" | "char" }
   | { kind: "name"; name: string; line: number }
   | { kind: "binary"; op: string; left: Expr; right: Expr; line: number }
   | { kind: "conditional"; test: Expr; yes: Expr; no: Expr; line: number }
@@ -67,7 +67,7 @@ export function parse(source: string): Program {
   };
   const parseExpression = (min = 0): Expr => {
     const token = take(); let left: Expr;
-    if (token.kind === "string" || token.kind === "char") left = { kind: "literal", value: token.value, line: token.line };
+    if (token.kind === "string" || token.kind === "char") left = { kind: "literal", value: token.value, line: token.line, literalKind: token.kind };
     else if (token.value === "(" && (isType())) {
       const type = parseType(); const pointer = Boolean(peek("*") && take()); take(")");
       left = { kind: "cast", type, pointer, expr: parseExpression(12), line: token.line };
@@ -102,10 +102,28 @@ export function parse(source: string): Program {
     const declarations: Stmt[] = [];
     while (true) {
       let pointer = false; while (peek("*")) { take(); pointer = true; } const name = take();
-      const arrayLengths: Expr[] = [];
-      while (peek("[")) { take("["); if (!peek("]")) arrayLengths.push(parseExpression(1)); else arrayLengths.push({ kind: "literal", value: 0, line: start.line }); take("]"); }
+      const arrayLengths: Expr[] = []; const omittedDimensions: number[] = [];
+      while (peek("[")) { take("["); if (!peek("]")) arrayLengths.push(parseExpression(1)); else { omittedDimensions.push(arrayLengths.length); arrayLengths.push({ kind: "literal", value: 0, line: start.line }); } take("]"); }
       let init: Expr | undefined; let arrayInitializer: Expr[] | undefined;
       if (peek("=")) { take(); if (peek("{")) { take("{"); arrayInitializer = []; while (!peek("}")) { if (peek("{")) { take(); while (!peek("}")) { arrayInitializer.push(parseExpression(1)); if (!peek(",")) break; take(","); } take("}"); } else arrayInitializer.push(parseExpression(1)); if (!peek(",")) break; take(","); } take("}"); } else init = parseExpression(1); }
+      // C permits a char array string initializer with optional braces.
+      // Keep character literals distinct: 'x' is not an array initializer.
+      const charArray = type.includes("char") && !pointer && arrayLengths.length === 1;
+      if (charArray && arrayInitializer?.length === 1 && arrayInitializer[0].kind === "literal" && arrayInitializer[0].literalKind === "string") {
+        init = arrayInitializer[0]; arrayInitializer = undefined;
+      }
+      if (charArray && arrayInitializer?.some(value => value.kind === "literal" && value.literalKind === "string"))
+        throw new Error(`line ${start.line}: unsupported char array initializer; use one string or a list of character values`);
+      if (omittedDimensions.length) {
+        // Preserve [] as an inferred bound, distinct from an explicit zero.
+        // Only the one-dimensional initializer forms modeled by this VM are inferred.
+        const inferred = arrayLengths.length === 1
+          ? arrayInitializer?.length ?? (charArray && init?.kind === "literal" && init.literalKind === "string" && typeof init.value === "string" ? init.value.length + 1 : undefined)
+          : undefined;
+        if (inferred === undefined || inferred === 0)
+          throw new Error(`line ${start.line}: unsupported omitted array bound; specify explicit positive dimensions or use a one-dimensional initializer`);
+        arrayLengths[0] = { kind: "literal", value: inferred, line: start.line };
+      }
       declarations.push({ kind: "decl", type, pointer, name: name.value, init, arrayLength: arrayLengths[0], arrayLengths: arrayLengths.length ? arrayLengths : undefined, arrayInitializer, line: start.line });
       if (!peek(",")) break;
       take(",");

@@ -101,6 +101,8 @@ It does not currently support:
 
 ### Important limits
 
+- Each local array is limited to **65,536 simulated bytes** (for example, 65,536 `char` elements or 16,384 `int` elements). Every dimension must be a positive integer, and multidimensional totals count toward the same cap. Reduce the array dimensions if this limit is reported; validation occurs before allocating array storage to keep accidental oversized inputs from freezing the browser. A one-dimensional omitted bound (`int a[] = {1,2}` or `char text[] = "abc"`) is inferred from its initializer. Other omitted-bound forms need explicit dimensions. This per-array guard is not a total memory budget and does not promise general variable-length-array support.
+
 - This is a **subset interpreter**, not a standards-complete C implementation. Unsupported syntax or library calls may need a simpler equivalent.
 - Variable-length arrays, function pointers, unions, and the full C preprocessor/library are not supported.
 - Addresses and object sizes are simulated; the app is not a substitute for a native debugger or sanitizer.
