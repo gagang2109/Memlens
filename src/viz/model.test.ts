@@ -147,3 +147,32 @@ it("keeps dangling-pointer labels clear of the preceding list row", () => {
   for (const node of preceding) expect(target.y - 40).toBeGreaterThanOrEqual(node.y + 78 + 20);
   expect(model.canvasHeight).toBeGreaterThanOrEqual(target.y + 98);
 });
+
+it.each([
+  "root->left = child; child->left = child;",
+  "root->right = child; child->right = child;",
+  "root->left = child; child->right = other; other->left = child;",
+  "root->left = child; root->right = child;",
+])("renders every snapshot of a cyclic or shared-child tree: %s", links => {
+  const result = run(`typedef struct Node { int value; struct Node *left; struct Node *right; } Node;
+int main() {
+  Node *root = calloc(1, sizeof(Node));
+  Node *child = calloc(1, sizeof(Node));
+  Node *other = calloc(1, sizeof(Node));
+  ${links}
+  return 0;
+}`);
+  expect(result.error).toBeUndefined();
+  for (const step of result.trace.steps) {
+    const model = renderModel(step);
+    expect(Number.isFinite(model.canvasWidth)).toBe(true);
+    expect(Number.isFinite(model.canvasHeight)).toBe(true);
+    expect(model.nodes).toHaveLength(step.memory.allocations.length);
+    for (const node of model.nodes) {
+      expect(Number.isFinite(node.x)).toBe(true);
+      expect(Number.isFinite(node.y)).toBe(true);
+      expect(node.y + 78).toBeLessThanOrEqual(model.canvasHeight);
+    }
+    expect(model.arrows).toEqual((step.pointers ?? []).filter(pointer => model.nodes.some(node => node.address === pointer.to)));
+  }
+});

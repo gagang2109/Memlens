@@ -9,7 +9,16 @@ export function lex(source: string): Token[] {
     const ch = source[i]; if (ch === " " || ch === "\t" || ch === "\r") { i++; column++; continue; }
     if (ch === "\n") { i++; line++; column = 1; continue; }
     if (source.slice(i, i + 2) === "//") { while (i < source.length && source[i] !== "\n") { i++; column++; } continue; }
-    if (source.slice(i, i + 2) === "/*") { i += 2; column += 2; while (i < source.length && source.slice(i, i + 2) !== "*/") { if (source[i] === "\n") { line++; column = 1; } else column++; i++; } i += 2; column += 2; continue; }
+    if (source.slice(i, i + 2) === "/*") {
+      const openingLine = line;
+      i += 2; column += 2;
+      while (i < source.length && source.slice(i, i + 2) !== "*/") {
+        if (source[i] === "\n") { line++; column = 1; } else column++;
+        i++;
+      }
+      if (i >= source.length) throw new Error(`line ${openingLine}: unterminated block comment`);
+      i += 2; column += 2; continue;
+    }
     const l = line, c = column;
     if (/[A-Za-z_]/.test(ch)) { let v = ch; i++; column++; while (i < source.length && /[A-Za-z0-9_]/.test(source[i])) { v += source[i++]; column++; } push("id", v, l, c); continue; }
     if (/[0-9]/.test(ch)) { let v = ch; i++; column++; while (i < source.length && /[0-9.]/.test(source[i])) { v += source[i++]; column++; } push("number", v, l, c); continue; }

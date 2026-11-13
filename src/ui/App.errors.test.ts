@@ -73,3 +73,32 @@ it("disables playback without a trace and restores it after a successful run", (
   clickRun();
   expectUnavailable();
 });
+
+it("keeps the access link at the failing iteration rather than the first matching source line", () => {
+  localStorage.setItem("memlens-code", `int main() {
+    int *p = malloc(sizeof(int));
+    *p = 7;
+    for (int i = 0; i < 2; i++) {
+      if (i == 1) free(p);
+      printf("%d", *p);
+    }
+    return 0;
+  }`);
+  act(() => root.render(createElement(App)));
+  clickRun();
+  act(() => container.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true })));
+  expect(container.querySelector(".crime")?.textContent).toContain("EXECUTION ERROR");
+  const faultCursor = container.querySelector<HTMLInputElement>('input[aria-label="Timeline"]')!.value;
+  const access = Array.from(container.querySelectorAll<HTMLButtonElement>(".crime button")).find(button => button.textContent?.startsWith("access line"))!;
+  act(() => access.click());
+  expect(container.querySelector<HTMLInputElement>('input[aria-label="Timeline"]')!.value).toBe(faultCursor);
+  expect(container.querySelector(".crime")?.textContent).toContain("EXECUTION ERROR");
+  expect(container.querySelector(".error-ahead")).toBeNull();
+  // Rewinding still exposes the earlier trace and returning restores the fault.
+  act(() => container.dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true })));
+  expect(container.querySelector(".crime")).toBeNull();
+  expect(container.querySelector(".error-ahead")).not.toBeNull();
+  act(() => container.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true })));
+  expect(container.querySelector(".crime")?.textContent).toContain("EXECUTION ERROR");
+  expect(container.querySelector<HTMLInputElement>('input[aria-label="Timeline"]')!.value).toBe(faultCursor);
+});

@@ -92,11 +92,18 @@ export function renderModel(step: TraceStep): RenderModel {
       return pointer ? nodes.find(candidate => candidate.address === pointer.to) : undefined;
     };
     let leaf = 0;
+    const measured = new Set<number>();
     const depthOf = (node: LayoutNode | undefined): number => {
-      if (!node) return 0;
+      if (!node || measured.has(node.address)) return 0;
+      measured.add(node.address);
       return 1 + Math.max(depthOf(childOf(node.address, "left")), depthOf(childOf(node.address, "right")));
     };
+    // Student pointer graphs can contain cycles or shared children. Visit each
+    // block once while retaining every pointer arrow for inspection.
+    const placed = new Set<number>();
     const place = (node: LayoutNode, depth: number): number => {
+      if (placed.has(node.address)) return node.x;
+      placed.add(node.address);
       const left = childOf(node.address, "left");
       const right = childOf(node.address, "right");
       if (left) place(left, depth + 1);
