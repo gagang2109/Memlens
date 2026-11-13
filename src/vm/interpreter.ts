@@ -36,7 +36,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
     const visible: FrameView[] = frames.map(frame => ({
       name: frame.name,
       locals: Object.fromEntries([...frame.vars].map(([key, variable]) => [key, variable.array ? `[${variable.array.join(", ")}]` : String(variable.value)])),
-      variables: Object.fromEntries([...frame.vars].map(([key, variable]) => [key, { type: `${variable.type}${variable.pointer ? " *" : ""}`, value: variable.array ? `[${variable.array.join(", ")}]` : String(variable.value), pointer: variable.pointer }])),
+      variables: Object.fromEntries([...frame.vars].map(([key, variable]) => [key, { type: `${variable.type}${variable.pointer ? " *" : ""}`, value: variable.array ? `[${variable.array.join(", ")}]` : String(variable.value), pointer: variable.pointer, ...(variable.pointer && !variable.array && typeof variable.value === "string" ? { stringPointer: true } : {}) }])),
     }));
     const pointers = frames.flatMap(frame => [...frame.vars].flatMap(([name, variable]) => variable.pointer && typeof variable.value === "number" ? [{ from: `${frame.name}.${name}`, to: variable.value, label: name, dangling: Boolean(memory.allocations.find(a => a.address === variable.value)?.freeStep !== undefined) }] : []));
     for (const object of heap.values()) for (const [label, value] of object.fields) if (["next", "left", "right"].includes(label) && typeof value === "number") pointers.push({ from: `0x${object.address.toString(16)}.${label}`, to: value, label, dangling: Boolean(memory.allocations.find(a => a.address === value)?.freeStep !== undefined) });
@@ -132,7 +132,13 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
   };
   const evaluate = (expression: Expr): Value => {
     if (expression.kind === "literal") return expression.value;
-    if (expression.kind === "name") { const variable = findVariable(expression.name); if (variable) return variable.array ? variable.arrayBase ?? 0 : variable.value; return program.constants.get(expression.name) ?? (expression.name === "EOF" ? -1 : 0); }
+    if (expression.kind === "name") {
+      const variable = findVariable(expression.name);
+      if (variable) return variable.array ? variable.arrayBase ?? 0 : variable.value;
+      if (program.constants.has(expression.name)) return program.constants.get(expression.name)!;
+      if (expression.name === "EOF") return -1;
+      return runtimeError(`unknown variable ${expression.name}`, expression.line);
+    }
     if (expression.kind === "member" || expression.kind === "index" || (expression.kind === "unary" && expression.op === "*")) return ref(expression).get();
     if (expression.kind === "cast") return evaluate(expression.expr);
     if (expression.kind === "conditional") return asNum(evaluate(expression.test)) ? evaluate(expression.yes) : evaluate(expression.no);
