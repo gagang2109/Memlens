@@ -400,6 +400,8 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
         return new TextEncoder().encode(output).length + characterByteAdjustment;
       }
       const fn = program.functions.get(expression.name); if (!fn) throw new Error(`line ${expression.line}: unsupported function '${expression.name}'`);
+      if (args.length !== fn.params.length)
+        runtimeError(`function '${fn.name}' expects ${fn.params.length} arguments, received ${args.length}`, expression.line);
       if (frames.length >= recursionLimit) runtimeError("stack overflow", expression.line);
       const values = args.map(argument => evaluate(argument)); frames.push({ name: fn.name, vars: new Map(fn.params.map((parameter, index) => [parameter.name, { value: values[index] ?? null, type: parameter.type, pointer: parameter.pointer, elementSize: elementSize(parameter.type) }])) }); record(expression.line, "call");
       let returned: Value = null; let failed = false;
