@@ -39,7 +39,7 @@ export function renderModel(step: TraceStep): RenderModel {
   const nodes: LayoutNode[] = step.memory.allocations.map(allocation => {
     const object = heap.get(allocation.address);
     const freed = allocation.freeStep !== undefined;
-    const type = allocation.type ?? object?.type;
+    const type = object?.type ?? allocation.type;
     const raw = !!type && /^(?:int|char|short|long|float|double|void)(?:\s|$)/.test(type);
     const nextPointer = pointers.find(pointer => pointer.from === `${addressOf(allocation.address)}.next`);
     const scalarFields = object ? Object.entries(object.fields).filter(([field]) => !["next", "prev", "left", "right"].includes(field)) : [];

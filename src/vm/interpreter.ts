@@ -417,7 +417,13 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       else if (statement.init) variable.value = evaluate(statement.init);
       if (!variable.pointer && statement.type.startsWith("struct")) { const address = memory.malloc(16, steps, statement.line); heap.set(address, { address, fields: new Map(), type: statement.type }); variable.value = address; }
       if (!variable.array && !variable.address) variable.address = nextStackAddress++;
-      if (typeof variable.value === "number" && statement.pointer) { const allocation = memory.allocationAt(variable.value); if (allocation) { allocation.type = statement.type; allocation.elementSize = variable.elementSize; allocation.elementType = statement.type; } }
+      if (typeof variable.value === "number" && statement.pointer) { const allocation = memory.allocationAt(variable.value); if (allocation) {
+        // Remember the structured display separately from runtime stride metadata.
+        // A later field alias must not turn an established Node into a raw block.
+        const object = heap.get(allocation.address);
+        if (object && !object.type && variable.value === allocation.address && statement.type.startsWith("struct")) object.type = statement.type;
+        allocation.type = statement.type; allocation.elementSize = variable.elementSize; allocation.elementType = statement.type;
+      } }
       current().set(statement.name, variable); record(statement.line); return;
     }
     if (statement.kind === "expr") { evaluate(statement.expr); if (statement.expr.kind !== "call" && statement.expr.kind !== "binary") record(statement.line); return; }
