@@ -79,7 +79,7 @@ export function parse(source: string): Program {
     else if (["!", "-", "*", "&", "++", "--"].includes(token.value)) left = { kind: "unary", op: token.value, expr: parseExpression(12), line: token.line };
     else left = { kind: "name", name: token.value, line: token.line };
     while (p < ts.length) {
-      if ((peek("++") || peek("--")) && (left.kind === "name" || left.kind === "member" || left.kind === "index")) { const op = take().value; left = { kind: "unary", op, expr: left, line: token.line, postfix: true }; continue; }
+      if ((peek("++") || peek("--")) && (left.kind === "name" || left.kind === "member" || left.kind === "index" || (token.value === "(" && left.kind === "unary" && left.op === "*"))) { const op = take().value; left = { kind: "unary", op, expr: left, line: token.line, postfix: true }; continue; }
       if (peek("(") && (left.kind === "name" || left.kind === "unary")) {
         take("("); const args: Expr[] = []; while (!peek(")")) { args.push(parseExpression(1)); if (!peek(",")) break; take(","); } take(")");
         if (left.kind !== "name") throw new Error(`line ${token.line}: only named calls are supported`);
@@ -116,6 +116,8 @@ export function parse(source: string): Program {
   };
   const statement = (): Stmt => {
     const start = ts[p];
+    // A standalone semicolon is a C null statement, including an empty loop body.
+    if (peek(";")) { take(); return { kind: "block", body: [], line: start.line }; }
     if (peek("{")) { take(); const statements: Stmt[] = []; while (!peek("}")) statements.push(statement()); take("}"); return { kind: "block", body: statements, line: start.line }; }
     if (peek("if")) { take(); take("("); const test = parseExpression(); take(")"); const yes = statement(); const no = peek("else") ? (take(), statement()) : undefined; return { kind: "if", test, yes, no, line: start.line }; }
     if (peek("while")) { take(); take("("); const test = parseExpression(); take(")"); return { kind: "while", test, body: statement(), line: start.line }; }
