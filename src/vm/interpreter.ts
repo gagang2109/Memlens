@@ -1,10 +1,10 @@
 import { parse, type Expr, type FunctionDef, type Program, type Stmt } from "../lang/parser";
-import { Memory, MemoryFault } from "./memory";
+import { Memory, MemoryFault, type Allocation } from "./memory";
 import { Trace, type FrameView } from "./trace";
 
 type Value = number | string | null;
 type RuntimeVariable = { value: Value; type: string; pointer: boolean; array?: Value[]; dimensions?: number[]; elementSize?: number; arrayBase?: number; address?: number };
-type Ref = { get: () => Value; set: (value: Value) => void; address?: number };
+type Ref = { get: () => Value; set: (value: Value) => void; address?: number; allocation?: Allocation };
 type HeapObject = { address: number; fields: Map<string, Value>; type?: string };
 type FlowSignal = "break" | "continue";
 
@@ -52,6 +52,14 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
     if (!allocation) runtimeError("invalid pointer dereference", line);
     return { value };
   };
+  const liveRef = (reference: Ref, line: number): Ref => {
+    const check = () => {
+      if (reference.allocation?.freeStep !== undefined) runtimeError("use-after-free", line, reference.allocation);
+    };
+    // The right-hand side of an assignment can free the owner after the lvalue
+    // is resolved. Validate at each actual read/write, not just ref creation.
+    return { ...reference, get: () => { check(); return reference.get(); }, set: value => { check(); reference.set(value); } };
+  };
   const ref = (expression: Expr, addressOnly = false): Ref => {
     if (expression.kind === "name") {
       const variable = findVariable(expression.name); if (!variable) throw new Error(`line ${expression.line}: unknown variable ${expression.name}`);
@@ -67,9 +75,9 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       const block = heap.get(asNum(object)); if (!block) runtimeError("invalid pointer dereference", expression.line);
       const fieldIndex = ["data", "value", "key", "left", "right", "next", "prev"].indexOf(expression.name);
       const address = block!.address + (fieldIndex < 0 ? block!.fields.size : fieldIndex) * 4;
-      const result = { get: () => block!.fields.get(expression.name) ?? null, set: (value: Value) => block!.fields.set(expression.name, value), address };
+      const result = { get: () => block!.fields.get(expression.name) ?? null, set: (value: Value) => block!.fields.set(expression.name, value), address, allocation };
       locations.set(address, result);
-      return result;
+      return liveRef(result, expression.line);
     }
     if (expression.kind === "index") {
       const index = asNum(evaluate(expression.index));
@@ -104,7 +112,8 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
     }
     if (expression.kind === "unary" && expression.op === "*") {
       const address = asNum(evaluate(expression.expr)); const allocation = memory.find(address);
-      if (locations.has(address)) return locations.get(address)!;
+      const location = locations.get(address);
+      if (location) return liveRef(location, expression.line);
       if (!allocation) runtimeError(address === 0 ? "null pointer dereference" : "invalid pointer dereference", expression.line);
       if (allocation!.freeStep !== undefined) runtimeError("use-after-free", expression.line, allocation);
       return { get: () => cells.get(address) ?? memory.read(address, steps, expression.line), set: value => { cells.set(address, value); memory.write(address, asNum(value), steps, expression.line); }, address };
