@@ -81,7 +81,7 @@ The interpreter currently supports:
 - Fixed-size `int` and `char` arrays, array initializers, array indexing, array parameters, two-dimensional arrays, and arrays of struct values.
 - Struct values, the `.` operator, and passing struct addresses to functions.
 - Variables, assignments (including chained assignment), compound assignments (`+=`, `-=`), arithmetic, comparisons, logical operators, the conditional operator (`?:`), unary `!`, unary `-`, dereference (`*`), address-of (`&`), and increment/decrement.
-- Integer, character, string, and `NULL` literals.
+- Integer, character, string, and `NULL` literals. Quoted literals decode escaped quotes/backslashes, standard simple escapes (such as `\n`, `\t`, and `\0`), and octal/hexadecimal escapes in the byte range 0–255. Multi-character character literals, universal character escapes, and line-spliced literals are not modeled; malformed or unsupported escapes report a parse error.
 - `if`/`else`, `while`, `do`/`while`, `for`, `break`, `continue`, and `switch`/`case`/`default`.
 - User-defined functions, parameters, return values, and recursion.
 - `malloc`, `calloc`, `realloc`, `free`, limited `sizeof` type/pointee forms (see limits below), `strlen`, `strcpy`, `strcmp`, `strcat`, `memset`, `getchar`, `exit`, and `printf` with `%d`, `%c`, `%s`, `%p`, `%f`, `%lf`, width, precision, and `%%`.

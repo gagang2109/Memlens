@@ -37,9 +37,9 @@ export function parse(source: string): Program {
   const ts = lex(lines.join("\n")); let p = 0;
   const structs = new Map<string, string[]>(); const knownTypes = new Set(["int", "char", "long", "void"]); const aliasTypes = new Map<string, string>();
   const functions = new Map<string, FunctionDef>(); const body: Stmt[] = [];
-  const peek = (value?: string) => value === undefined ? ts[p] : ts[p]?.value === value;
-  const take = (value?: string) => { const token = ts[p]; if (value && token.value !== value) throw new Error(`line ${token.line}: expected '${value}'`); p++; return token; };
-  const isType = () => types.has(ts[p]?.value) || knownTypes.has(ts[p]?.value) || ts[p]?.value === "typedef";
+  const peek = (value?: string) => value === undefined ? ts[p] : (ts[p]?.kind === "symbol" || ts[p]?.kind === "id") && ts[p]?.value === value;
+  const take = (value?: string) => { const token = ts[p]; if (value && !peek(value)) throw new Error(`line ${token.line}: expected '${value}'`); p++; return token; };
+  const isType = () => ts[p]?.kind === "id" && (types.has(ts[p]?.value) || knownTypes.has(ts[p]?.value) || ts[p]?.value === "typedef");
   const parseType = () => {
     const qualifier: string[] = [];
     while (["typedef", "const", "static", "unsigned", "short"].includes(ts[p]?.value)) qualifier.push(take().value);
@@ -67,13 +67,13 @@ export function parse(source: string): Program {
   };
   const parseExpression = (min = 0): Expr => {
     const token = take(); let left: Expr;
-    if (token.value === "(" && (isType())) {
+    if (token.kind === "string" || token.kind === "char") left = { kind: "literal", value: token.value, line: token.line };
+    else if (token.value === "(" && (isType())) {
       const type = parseType(); const pointer = Boolean(peek("*") && take()); take(")");
       left = { kind: "cast", type, pointer, expr: parseExpression(12), line: token.line };
     } else if (token.value === "(") { left = parseExpression(); take(")"); }
     else if (token.kind === "number") left = { kind: "literal", value: Number(token.value), line: token.line };
     else if (token.value === "struct" || token.value === "int" || token.value === "char" || token.value === "long" || knownTypes.has(token.value)) { if (token.value === "struct") take(); left = { kind: "literal", value: token.value === "char" ? 1 : token.value === "int" ? 4 : 16, line: token.line }; }
-    else if (token.kind === "string" || token.kind === "char") left = { kind: "literal", value: token.value, line: token.line };
     else if (token.value === "NULL") left = { kind: "literal", value: null, line: token.line };
     else if (token.value === "sizeof" && !peek("(")) left = { kind: "call", name: "sizeof", args: [parseExpression(12)], line: token.line };
     else if (["!", "-", "*", "&", "++", "--"].includes(token.value)) left = { kind: "unary", op: token.value, expr: parseExpression(12), line: token.line };
@@ -87,7 +87,7 @@ export function parse(source: string): Program {
       }
       if (peek("[")) { take("["); const index = parseExpression(); take("]"); left = { kind: "index", object: left, index, line: token.line }; continue; }
       if ((peek(".") || peek("->")) && (left.kind === "name" || left.kind === "member" || left.kind === "index" || left.kind === "unary")) { const op = take().value; const name = take(); left = { kind: "member", object: left, name: name.value, pointer: op === "->", line: name.line }; continue; }
-      const op = ts[p].value; const precedence = ({ ",": 0, "=": 1, "+=": 1, "-=": 1, "+": 6, "-": 6, "*": 7, "/": 7, "%": 7, "||": 2, "&&": 3, "==": 4, "!=": 4, "<": 5, ">": 5, "<=": 5, ">=": 5 } as Record<string, number>)[op] ?? -1;
+      const op = ts[p].kind === "symbol" ? ts[p].value : ""; const precedence = ({ ",": 0, "=": 1, "+=": 1, "-=": 1, "+": 6, "-": 6, "*": 7, "/": 7, "%": 7, "||": 2, "&&": 3, "==": 4, "!=": 4, "<": 5, ">": 5, "<=": 5, ">=": 5 } as Record<string, number>)[op] ?? -1;
       if (precedence < min) break; take(); const right = parseExpression(precedence + (["=", "+=", "-="].includes(op) ? 0 : 1)); left = { kind: "binary", op, left, right, line: token.line };
     }
     if (min <= 1 && peek("?")) {
