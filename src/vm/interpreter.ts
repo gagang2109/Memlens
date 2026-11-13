@@ -402,7 +402,21 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       const fn = program.functions.get(expression.name); if (!fn) throw new Error(`line ${expression.line}: unsupported function '${expression.name}'`);
       if (frames.length >= recursionLimit) runtimeError("stack overflow", expression.line);
       const values = args.map(argument => evaluate(argument)); frames.push({ name: fn.name, vars: new Map(fn.params.map((parameter, index) => [parameter.name, { value: values[index] ?? null, type: parameter.type, pointer: parameter.pointer, elementSize: elementSize(parameter.type) }])) }); record(expression.line, "call");
-      let returned: Value = null; try { execute(fn.body); } catch (caught) { if (caught instanceof ReturnSignal) returned = caught.value; else if (caught instanceof BreakSignal || caught instanceof ContinueSignal) runtimeError(caught.message, caught.line); else throw caught; } finally { frames.pop(); record(expression.line, "return"); } return returned;
+      let returned: Value = null; let failed = false;
+      try { execute(fn.body); }
+      catch (caught) {
+        if (caught instanceof ReturnSignal) returned = caught.value;
+        else {
+          failed = !(caught instanceof ExitSignal);
+          if (caught instanceof BreakSignal || caught instanceof ContinueSignal) runtimeError(caught.message, caught.line);
+          throw caught;
+        }
+      } finally {
+        // A fault stops execution in the active frames. Do not erase their
+        // locals or add fictional returns before recording the error snapshot.
+        if (!failed) { frames.pop(); record(expression.line, "return"); }
+      }
+      return returned;
     }
     if (expression.kind === "binary") {
       if (["=", "+=", "-="].includes(expression.op)) { const reference = ref(expression.left); const right = evaluate(expression.right); const old = expression.op === "=" ? 0 : asNum(reference.get()); const pointer = pointerMeta(expression.left); const delta = pointer?.pointer ? (pointer.elementSize ?? 1) : 1; const value = expression.op === "=" ? right : old + (expression.op === "+=" ? asNum(right) * delta : -asNum(right) * delta); reference.set(value); record(expression.line); return value; }

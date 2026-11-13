@@ -83,3 +83,12 @@ footer a{color:var(--cyan);text-underline-offset:3px}footer a:focus-visible{outl
 .practice-setup p { font-size: .85rem; line-height: 1.5; color: #bac7d6; }
 .practice-setup label { display: block; margin: 8px 0; }
 .practice-setup textarea { display: block; width: 100%; min-height: 180px; box-sizing: border-box; resize: vertical; background: #111827; color: #e2e8f0; border: 1px solid #64748b; border-radius: 6px; padding: 10px; font: 13px/1.5 monospace; tab-size: 4; }
+
+.starter-scaffolds { border-bottom: 1px solid #334155; padding: 12px; background: #152033; }
+.starter-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.starter-row label { font-weight: 600; }
+.starter-row select { min-width: 0; max-width: 100%; }
+.starter-scaffolds p { color: #c4cfdd; font-size: .85rem; line-height: 1.5; margin: 8px 0; }
+.starter-confirm { border: 1px solid #64748b; border-radius: 6px; padding: 10px; margin-top: 8px; }
+.starter-confirm button { margin: 4px 8px 4px 0; }
+.restore-draft { margin: 8px 12px; }

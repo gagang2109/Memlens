@@ -1,3 +1,5 @@
+import { StarterScaffolds } from "./StarterScaffolds";
+import { starterScaffolds, type StarterKey } from "../starterScaffolds";
 import { useEffect, useMemo, useState } from "react";
 import { practiceSource, validatePracticeSource, treeHeightSetup } from "./practiceHarness";
 import { run } from "../vm/interpreter";
@@ -54,6 +56,7 @@ export function App() {
   // Preserve an explicitly chosen alias, otherwise identify the actual editor content.
   const codeSample = code === samples[sample].code ? sample : (Object.keys(samples) as (keyof typeof samples)[]).find(key => samples[key].code === code) ?? "custom";
   const selectedSample = codeSample !== "custom" && setup === (codeSample === "tree-height" ? treeHeightSetup : "") ? codeSample : "custom";
+  const [previousDraft, setPreviousDraft] = useState<{ code: string; setup: string }>();
   const [stdin, setStdin] = useState("");
   const [executionMode, setExecutionMode] = useState<"program" | "snippet">();
   const [lastRun, setLastRun] = useState<{ code: string; stdin: string; setup: string }>();
@@ -77,7 +80,7 @@ export function App() {
   const faultStep = fault && trace ? trace.steps.findIndex(step => step.event === "error") : -1;
   const faultReached = Boolean(fault && faultStep >= 0 && cursor >= faultStep);
   const moveTo = (next: number) => { if (!trace) return; setPredictionResult(undefined); const bounded = Math.max(0, Math.min(next, trace.steps.length - 1)); if (predictMode && !stale && bounded > cursor) { const question = nextPointerPrediction(trace.steps[cursor], trace.steps[bounded]); if (question) { setPredictionTarget(bounded); setPrediction(question); setPlaying(false); return; } } setPrediction(undefined); setPredictionResult(undefined); setCursor(bounded); };
-  const runCode = () => { setLastRun({ code, stdin, setup }); setPlaying(false); setPrediction(undefined); setPredictionResult(undefined); try { const prepared = practiceSource(code, setup); validatePracticeSource(prepared.source, prepared.active); const result = run(prepared.source, 100000, 100, stdin); setTrace(result.trace); setExecutionMode(result.executionMode); setCursor(0); setFault(result.error); setLeaks(result.leaks); setError(result.error?.reason ?? ""); } catch (caught) { setTrace(undefined); setExecutionMode(undefined); setFault(undefined); setLeaks([]); setError(caught instanceof Error ? caught.message : "Unable to parse program"); } };
+  const runCode = () => { setHighlightedAddress(undefined); setLastRun({ code, stdin, setup }); setPlaying(false); setPrediction(undefined); setPredictionResult(undefined); try { const prepared = practiceSource(code, setup); validatePracticeSource(prepared.source, prepared.active); const result = run(prepared.source, 100000, 100, stdin); setTrace(result.trace); setExecutionMode(result.executionMode); setCursor(0); setFault(result.error); setLeaks(result.leaks); setError(result.error?.reason ?? ""); } catch (caught) { setTrace(undefined); setExecutionMode(undefined); setFault(undefined); setLeaks([]); setError(caught instanceof Error ? caught.message : "Unable to parse program"); } };
   useEffect(() => { if (stale) { setPlaying(false); setPrediction(undefined); setPredictionResult(undefined); } }, [code, stdin, setup, stale]);
   const answerPrediction = (answer: number | null) => { if (stale || !prediction || !trace || predictionResult !== undefined) return; const correct = checkPrediction(answer, prediction.expected); setPredictionResult(correct); const nextScore = correct ? score + 1 : score; const nextStreak = correct ? streak + 1 : 0; setScore(nextScore); setStreak(nextStreak); saveCount("memlens-predict-score", nextScore); saveCount("memlens-predict-streak", nextStreak);  };
   useEffect(() => {
@@ -107,6 +110,12 @@ export function App() {
   }, [trace, cursor, predictMode, stale]);
   useEffect(() => { try { localStorage.setItem("memlens-code", code); } catch { /* storage is optional */ } }, [code]);
   useEffect(() => { try { localStorage.setItem("memlens-test-setup", setup); } catch { /* storage is optional */ } }, [setup]);
+  const replaceDraft = (nextCode: string, nextSetup: string) => {
+    setCode(nextCode); setSetup(nextSetup); setLastRun(undefined); setTrace(undefined); setExecutionMode(undefined);
+    setFault(undefined); setError(""); setLeaks([]); setPlaying(false); setPrediction(undefined); setPredictionResult(undefined); setCursor(0); setHighlightedAddress(undefined);
+  };
+  const useStarter = (key: StarterKey) => { setPreviousDraft({ code, setup }); replaceDraft(starterScaffolds[key].code, ""); };
+  const restoreDraft = () => { if (previousDraft) { replaceDraft(previousDraft.code, previousDraft.setup); setPreviousDraft(undefined); } };
   const lines = useMemo(() => code.split(/\r?\n/), [code]);
   return <main>
     <header><div className="brand"><img className="brand-mark" src="/memlens-mark.svg" width="36" height="36" alt="" aria-hidden="true" /> MEMLENS</div><div className="tag">Step through your C code and watch memory rewind.</div>
@@ -116,7 +125,7 @@ export function App() {
     <p className="step-explanation snippet-help">Practice a full program or a snippet: main() is optional here. Declare your data, then write statements or call your functions. Memlens runs a supported C subset, not arbitrary incomplete code.</p>
     {!stale && executionMode === "snippet" && trace && <p className="step-explanation" role="status">Snippet run · top-level statements execute in source order; no main() wrapper is added.</p>}
     {stale && <p className="step-explanation stale-results" role="status">Code or input changed. Memory, console, errors and trace below are from the previous run. Run again to update them.</p>}
-    <section className="workspace"><div className="code-panel"><div className="panel-title">SOURCE <small>{lines.length} lines · edit your C code here</small></div><CodeEditor value={code} currentLine={stale || (displayedSource.active && (view?.line ?? 0) >= displayedSource.setupStart) ? undefined : view?.line} onChange={setCode} />
+    <section className="workspace"><div className="code-panel"><div className="panel-title">SOURCE <small>{lines.length} lines · edit your C code here</small></div><StarterScaffolds onUse={useStarter} />{previousDraft && <button type="button" className="restore-draft" onClick={restoreDraft}>Restore previous draft</button>}<CodeEditor value={code} currentLine={stale || (displayedSource.active && (view?.line ?? 0) >= displayedSource.setupStart) ? undefined : view?.line} onChange={setCode} />
       <details className="practice-setup" open={setup.trim().length > 0 || undefined}>
         <summary>Test setup &amp; call (optional)</summary>
         <p>Keep your types and function above. Add input declarations and an explicit function call here. This code runs after your source, without a main() wrapper. Nothing is guessed. Clear this area for a full main() program.</p>
