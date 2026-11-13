@@ -1,4 +1,16 @@
+import { treeHeightCode } from "./ui/practiceHarness";
 export const samples = {
+  "tree-height": { name: "Practice tree height — separate test setup", code: treeHeightCode },
+  snippet: {
+    name: "Array sum snippet — no main needed",
+    code: `// Write statements directly: main() and includes are optional here.
+int values[] = {4, 7, 2};
+int total = 0;
+for (int i = 0; i < 3; i++) {
+    total += values[i];
+}
+printf("Sum: %d\\n", total);`,
+  },
   requested: {
     name: "Push/reverse list — intentional use-after-free",
     code: `#include <stdio.h>

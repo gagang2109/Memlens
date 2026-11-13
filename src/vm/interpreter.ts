@@ -8,7 +8,7 @@ type Ref = { get: () => Value; set: (value: Value) => void; address?: number; al
 type HeapObject = { address: number; fields: Map<string, Value>; type?: string };
 type FlowSignal = "break" | "continue";
 
-export type RunResult = { trace: Trace; status: "ok" | "error"; error?: MemoryFault; leaks: { address: number; line: number }[]; orphanedAtExit: number[] };
+export type RunResult = { executionMode?: "program" | "snippet"; trace: Trace; status: "ok" | "error"; error?: MemoryFault; leaks: { address: number; line: number }[]; orphanedAtExit: number[] };
 
 const elementSize = (type: string) => type.includes("char") ? 1 : type.startsWith("struct") ? 16 : 4;
 
@@ -491,6 +491,6 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
   const roots = [...frames.flatMap(frame => [...frame.vars.values()].map(variable => variable.value))].filter((value): value is number => typeof value === "number");
   const reachable = new Set<number>(); const visit = (address: number) => { const allocation = memory.allocationAt(address); if (!allocation || allocation.freeStep !== undefined || reachable.has(allocation.address)) return; reachable.add(allocation.address); const object = heap.get(allocation.address); if (object) for (const value of object.fields.values()) if (typeof value === "number") visit(value); };
   roots.forEach(visit); const live = memory.allocations.filter(allocation => allocation.freeStep === undefined); const orphanedAtExit = live.filter(allocation => !reachable.has(allocation.address)).map(allocation => allocation.address);
-  return { trace, status: error ? "error" : "ok", error, leaks: (error ? memory.allocations : live).map(allocation => ({ address: allocation.address, line: allocation.line })), orphanedAtExit };
+  return { executionMode: program.functions.has("main") ? "program" : "snippet", trace, status: error ? "error" : "ok", error, leaks: (error ? memory.allocations : live).map(allocation => ({ address: allocation.address, line: allocation.line })), orphanedAtExit };
 }
 

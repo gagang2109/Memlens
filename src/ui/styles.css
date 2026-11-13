@@ -77,3 +77,9 @@ select{margin-left:auto;background:#182332;border:1px solid #3a4b60;color:var(--
 
 
 footer a{color:var(--cyan);text-underline-offset:3px}footer a:focus-visible{outline:2px solid var(--cyan);outline-offset:3px}
+
+.practice-setup { border-top: 1px solid #334155; padding: 12px; }
+.practice-setup summary { cursor: pointer; font-weight: 600; }
+.practice-setup p { font-size: .85rem; line-height: 1.5; color: #bac7d6; }
+.practice-setup label { display: block; margin: 8px 0; }
+.practice-setup textarea { display: block; width: 100%; min-height: 180px; box-sizing: border-box; resize: vertical; background: #111827; color: #e2e8f0; border: 1px solid #64748b; border-radius: 6px; padding: 10px; font: 13px/1.5 monospace; tab-size: 4; }

@@ -64,6 +64,21 @@ The bundled BST sample during inorder traversal, with the diagram zoomed out to 
 
 Playback shortcuts stay out of the editor and interactive controls. **Tab** moves focus between controls rather than trapping it inside the editor.
 
+## Practice without `main`
+
+Choose **Array sum snippet — no main needed**, or write supported C statements directly:
+
+```c
+int values[] = {4, 7, 2};
+int total = 0;
+for (int i = 0; i < 3; i++) total += values[i];
+printf("%d", total);
+```
+
+Memlens executes top-level statements in source order without adding hidden wrapper lines. Define the variables and data your snippet needs. Function definitions can accompany a snippet, but you must call them explicitly with your chosen arguments; Memlens does not invent test data or auto-call functions. A bare expression does not automatically print its value: use `printf`.
+
+This is a teaching extension, not standard standalone C syntax: native C programs normally need an entry point such as `main`. Existing full programs continue to work. If you mix top-level statements with a `main` function, those statements run before `main`.
+
 ## Supported C subset
 
 Designed for small C and data-structures exercises: functions and recursion, structs and pointers, fixed-size arrays (including two-dimensional arrays), loops, branching, and a selection of memory and input/output functions.
@@ -170,3 +185,9 @@ Function pointers, unions, a bit-level memory view, shareable links, and image/G
 ## License
 
 [MIT](LICENSE) · Copyright © 2026 Gagan Ganesh Devadiga
+
+### Practice a function with explicit test data
+
+`main()` is optional for supported snippets. Put your types, helper functions and function in the source editor, then open **Test setup & call** to create inputs and call it. The setup is appended after the source; trace and diagnostic labels distinguish source lines from test-setup lines. No function or arguments are guessed. Use `printf` when you want to display a result. Clear setup before running a complete program with `main()`. Both editor drafts are saved separately in this browser when storage is available.
+
+Choose **Practice tree height — separate test setup** for an editable two-node tree example. Its height convention counts nodes (empty tree 0, leaf 1). Selecting any sample explicitly replaces the source and setup; copy your draft before replacing it. The runner still supports only Memlens's documented C subset, not arbitrary missing types, libraries or function signatures.
