@@ -108,9 +108,9 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
     throw new Error(`line ${expression.line}: expression is not assignable (${expression.kind})`);
   };
   const readString = (value: Value) => {
-    if (typeof value === "string") return value;
+    if (typeof value === "string") return value.split("\0", 1)[0];
     const variable = [...frames].reverse().flatMap(frame => [...frame.vars.values()]).find(candidate => candidate.arrayBase === value);
-    if (variable?.array) return variable.array.map(item => typeof item === "number" ? String.fromCharCode(item & 255) : String(item ?? "\0")).join("").replace(/\0.*$/, "");
+    if (variable?.array) return variable.array.map(item => typeof item === "number" ? String.fromCharCode(item & 255) : String(item ?? "\0")).join("").split("\0", 1)[0];
     // Interior pointers into live local char buffers refer to their suffix, not
     // the unrelated heap-cell map. Use live variables rather than stale refs.
     if (typeof value === "number" && !memory.allocationAt(value)) {
@@ -119,7 +119,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
           if (!candidate.array || candidate.arrayBase === undefined || candidate.type !== "char") continue;
           const offset = value - candidate.arrayBase;
           if (Number.isInteger(offset) && offset >= 0 && offset < candidate.array.length)
-            return candidate.array.slice(offset).map(item => typeof item === "number" ? String.fromCharCode(item & 255) : String(item ?? "\0")).join("").replace(/\0.*$/, "");
+            return candidate.array.slice(offset).map(item => typeof item === "number" ? String.fromCharCode(item & 255) : String(item ?? "\0")).join("").split("\0", 1)[0];
         }
       }
     }
@@ -196,7 +196,20 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
             }
           }
         }
-        const destinationArray = arrayRefs.get(destination); for (let i = 0; i < result.length; i++) { cells.set(destination + i, result[i]); if (destinationArray && i < destinationArray.values.length) destinationArray.values[i] = result[i]; } cells.set(destination + result.length, 0); if (destinationArray && result.length < destinationArray.values.length) destinationArray.values[result.length] = "\0"; return destination; }
+        const allocation = memory.find(destination);
+        if (!allocation) runtimeError(destination === 0 ? "null pointer dereference" : "invalid pointer dereference", expression.line);
+        if (allocation!.freeStep !== undefined) runtimeError("use-after-free", expression.line, allocation);
+        if (result.length + 1 > allocation!.address + allocation!.size - destination)
+          runtimeError(expression.name + " exceeds heap allocation bounds", expression.line, allocation);
+        // Keep the memory canvas and realloc shadow state consistent with cells.
+        // The terminating NUL is a write too; untouched capacity stays indeterminate.
+        for (let i = 0; i <= result.length; i++) {
+          const value = i === result.length ? 0 : result.charCodeAt(i);
+          memory.write(destination + i, value, steps, expression.line);
+          cells.set(destination + i, i === result.length ? 0 : result[i]);
+        }
+        return destination;
+      }
       if (expression.name === "strcmp") {
         // C compares unsigned bytes, not language-dependent collation.
         // Compare UTF-8 encoded strings, stopping at their first NUL.
