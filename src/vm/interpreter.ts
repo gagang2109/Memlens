@@ -52,7 +52,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
     if (!allocation) runtimeError("invalid pointer dereference", line);
     return { value };
   };
-  const ref = (expression: Expr): Ref => {
+  const ref = (expression: Expr, addressOnly = false): Ref => {
     if (expression.kind === "name") {
       const variable = findVariable(expression.name); if (!variable) throw new Error(`line ${expression.line}: unknown variable ${expression.name}`);
       if (variable.array) return { get: () => variable.array![0], set: () => runtimeError("array is not assignable", expression.line), address: variable.arrayBase };
@@ -79,7 +79,11 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
           // Resolve the row once: evaluating the inner index expression first
           // would repeat side effects such as matrix[row++][column].
           const outer = asNum(evaluate(expression.object.index)); const width = outerVariable.dimensions[1] ?? 1; const flat = outer * width + index;
-          if (flat < 0 || flat >= outerVariable.array.length) runtimeError(`array index out of bounds (${index})`, expression.line);
+          // Validate both dimensions before flattening: an invalid column can
+          // otherwise spill into the next row and appear to be in bounds.
+          // Address formation alone may point one past the row; no read/write.
+          if (!Number.isInteger(outer) || outer < 0 || outer >= outerVariable.dimensions[0]) runtimeError(`array index out of bounds (${outer})`, expression.line);
+          if (!Number.isInteger(index) || index < 0 || index > width || (!addressOnly && (index === width || flat >= outerVariable.array.length))) runtimeError(`array index out of bounds (${index})`, expression.line);
           return { get: () => outerVariable.array![flat], set: value => { outerVariable.array![flat] = value; }, address: (outerVariable.arrayBase ?? 0) + flat * (outerVariable.elementSize ?? 4) };
         }
       }
@@ -134,7 +138,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
     if (expression.kind === "conditional") return asNum(evaluate(expression.test)) ? evaluate(expression.yes) : evaluate(expression.no);
     if (expression.kind === "unary") {
       if (expression.op === "!" || expression.op === "-") { const old = asNum(evaluate(expression.expr)); return expression.op === "!" ? (old ? 0 : 1) : -old; }
-      const reference = ref(expression.expr);
+      const reference = ref(expression.expr, expression.op === "&");
       if (expression.op === "&") {
         const variable = expression.expr.kind === "name" ? findVariable(expression.expr.name) : undefined;
         return variable && !variable.pointer && variable.type.startsWith("struct") && typeof variable.value === "number" ? variable.value : reference.address ?? 0;

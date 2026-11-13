@@ -44,3 +44,32 @@ it("displays unexpected run failures and clears them on a successful retry", () 
   clickRun();
   expect(container.querySelector('[role="alert"]')).toBeNull();
 });
+
+it("disables playback without a trace and restores it after a successful run", () => {
+  localStorage.setItem("memlens-code", "int main( {");
+  act(() => root.render(createElement(App)));
+  const controls = () => Array.from(container.querySelectorAll<HTMLButtonElement>(".controls > button"));
+  const expectUnavailable = () => {
+    expect(controls()).toHaveLength(3);
+    for (const button of controls()) expect(button.disabled).toBe(true);
+    act(() => controls()[0].click());
+    expect(controls()[0].textContent).toContain("Play");
+    const space = new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true });
+    act(() => container.dispatchEvent(space));
+    expect(space.defaultPrevented).toBe(false);
+    expect(controls()[0].textContent).toContain("Play");
+  };
+  expectUnavailable();
+  clickRun();
+  expectUnavailable();
+  const select = container.querySelector<HTMLSelectElement>('select[aria-label="Samples"]')!;
+  act(() => { select.value = "factorial"; select.dispatchEvent(new Event("change", { bubbles: true })); });
+  expectUnavailable();
+  clickRun();
+  for (const button of controls()) expect(button.disabled).toBe(false);
+  act(() => controls()[0].click());
+  expect(controls()[0].textContent).toContain("Pause");
+  vi.spyOn(interpreter, "run").mockImplementationOnce(() => { throw new Error("runner failure"); });
+  clickRun();
+  expectUnavailable();
+});
