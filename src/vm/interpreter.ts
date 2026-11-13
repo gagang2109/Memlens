@@ -322,6 +322,26 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
           if (destination === undefined) runtimeError("missing scanf destination", expression.line);
           if (specifier === "d") write(destination, Number(token));
           else {
+            // Validate the entire conversion against its starting buffer. Checking
+            // each byte independently can silently spill into an adjacent object.
+            const bytes = token.length + (specifier === "s" ? 1 : 0);
+            const allocation = memory.find(destination);
+            if (allocation?.freeStep !== undefined) runtimeError("use-after-free", expression.line, allocation);
+            // Match write()'s existing dispatch order. Simulated stack and heap
+            // numbers can overlap; this guard must not change which object wins.
+            if (!locations.has(destination)) {
+              const local = [...arrayRefs].find(([base, array]) => {
+                const size = elementSize(array.type); const offset = destination - base;
+                return offset >= 0 && offset < array.values.length * size && offset % size === 0;
+              });
+              if (local) {
+                const [base, array] = local;
+                if (elementSize(array.type) === 1 && bytes > base + array.values.length - destination)
+                  runtimeError("scanf exceeds local array bounds", expression.line);
+              } else if (allocation && bytes > allocation.address + allocation.size - destination) {
+                runtimeError("scanf exceeds heap allocation bounds", expression.line, allocation);
+              }
+            }
             for (let offset = 0; offset < token.length; offset++) write(destination + offset, token[offset]);
             if (specifier === "s") write(destination + token.length, "\0");
           }
