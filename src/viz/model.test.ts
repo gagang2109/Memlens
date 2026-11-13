@@ -110,7 +110,7 @@ it("expands the canvas for tall stacks instead of clipping later allocations", (
     })) },
   });
   expect(model.shape).toBe("stack");
-  expect(model.canvasHeight).toBe(685);
+  expect(model.canvasHeight).toBe(1138);
   for (const node of model.nodes) expect(model.canvasHeight).toBeGreaterThanOrEqual(node.y + 98);
 });
 

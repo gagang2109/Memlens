@@ -82,7 +82,24 @@ export function renderModel(step: TraceStep): RenderModel {
     otherNodes.forEach((node, index) => { node.x = 20 + index * 145; node.y = 245; });
     canvasWidth = Math.max(520, (ordered.length ? Math.max(...ordered.map(node => node.x)) : 0) + 146);
   } else if (shape === "stack") {
-    ordered.forEach((node, index) => { node.x = 175; node.y = 55 + index * 76; });
+    ordered.forEach((node, index) => { node.x = 175; node.y = 60 + index * 140; });
+  }
+  if (shape === "grid") {
+    // Independent buffers/structs have no connecting edge to order them. Give
+    // each its own cell, including room for all variable aliases above it.
+    const tagCounts = new Map<number, number>();
+    for (const pointer of pointers) {
+      if (!pointer.from.startsWith("0x")) tagCounts.set(pointer.to, (tagCounts.get(pointer.to) ?? 0) + 1);
+    }
+    let x = 20;
+    ordered.forEach((node, index) => {
+      if (index % 3 === 0) x = 20;
+      node.x = x;
+      node.y = 60 + Math.floor(index / 3) * 140;
+      const tags = tagCounts.get(node.address) ?? 0;
+      x += Math.max(164, tags ? 27 + (tags - 1) * 76 + 72 + 20 : 0);
+      canvasWidth = Math.max(canvasWidth, x);
+    });
   }
   if (shape === "tree") {
     const children = new Set(heapEdges.filter(pointer => pointer.label === "left" || pointer.label === "right").map(pointer => pointer.to));
