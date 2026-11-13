@@ -179,7 +179,24 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       }
       if (expression.name === "free") { const address = asNum(evaluate(args[0])); memory.free(address, steps, expression.line); record(expression.line, address === 0 ? "step" : "free"); return null; }
       if (expression.name === "strlen") return readString(evaluate(args[0])).length;
-      if (expression.name === "strcpy" || expression.name === "strcat") { const destination = asNum(evaluate(args[0])); const source = readString(evaluate(args[1])); const existing = expression.name === "strcat" ? readString(destination) : ""; const result = existing + source; const destinationArray = arrayRefs.get(destination); for (let i = 0; i < result.length; i++) { cells.set(destination + i, result[i]); if (destinationArray && i < destinationArray.values.length) destinationArray.values[i] = result[i]; } cells.set(destination + result.length, 0); if (destinationArray && result.length < destinationArray.values.length) destinationArray.values[result.length] = "\0"; return destination; }
+      if (expression.name === "strcpy" || expression.name === "strcat") { const destination = asNum(evaluate(args[0])); const source = readString(evaluate(args[1])); const existing = expression.name === "strcat" ? readString(destination) : ""; const result = existing + source;
+        // Interior char pointers must update the live local buffer, including
+        // its terminator, rather than an unrelated heap-cell entry.
+        if (!memory.allocationAt(destination)) {
+          for (const frame of [...frames].reverse()) {
+            for (const variable of frame.vars.values()) {
+              if (!variable.array || variable.arrayBase === undefined || variable.type !== "char") continue;
+              const offset = destination - variable.arrayBase;
+              if (!Number.isInteger(offset) || offset < 0 || offset >= variable.array.length) continue;
+              if (result.length + 1 > variable.array.length - offset)
+                runtimeError(expression.name + " exceeds local array bounds", expression.line);
+              for (let i = 0; i < result.length; i++) variable.array[offset + i] = result[i];
+              variable.array[offset + result.length] = "\0";
+              return destination;
+            }
+          }
+        }
+        const destinationArray = arrayRefs.get(destination); for (let i = 0; i < result.length; i++) { cells.set(destination + i, result[i]); if (destinationArray && i < destinationArray.values.length) destinationArray.values[i] = result[i]; } cells.set(destination + result.length, 0); if (destinationArray && result.length < destinationArray.values.length) destinationArray.values[result.length] = "\0"; return destination; }
       if (expression.name === "strcmp") {
         // C compares unsigned bytes, not language-dependent collation.
         // Compare UTF-8 encoded strings, stopping at their first NUL.

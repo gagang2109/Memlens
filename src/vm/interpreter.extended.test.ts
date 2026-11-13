@@ -36,7 +36,7 @@ int main() { int values[3] = {1, 2, 3}; printf("%d", sum(values, 3)); }`);
 
   it("supports allocation, string, memory, scanf, and define builtins", () => {
     const result = run(`#define N 3
-int main() { char text[8] = "hi"; char other[8] = " there"; strcat(text, other); printf("%d", strlen(text)); int n; scanf("%d", &n); printf("%d", n); }`, 100000, 100, "42");
+int main() { char text[9] = "hi"; char other[8] = " there"; strcat(text, other); printf("%d", strlen(text)); int n; scanf("%d", &n); printf("%d", n); }`, 100000, 100, "42");
     expect(result.status).toBe("ok");
     expect(result.trace.steps.at(-1)?.stdout).toBe("842");
   });

@@ -84,7 +84,7 @@ The interpreter currently supports:
 - Integer, character, string, and `NULL` literals.
 - `if`/`else`, `while`, `do`/`while`, `for`, `break`, `continue`, and `switch`/`case`/`default`.
 - User-defined functions, parameters, return values, and recursion.
-- `malloc`, `calloc`, `realloc`, `free`, `sizeof` for supported types and expressions, `strlen`, `strcpy`, `strcmp`, `strcat`, `memset`, `getchar`, `exit`, and `printf` with `%d`, `%c`, `%s`, `%p`, `%f`, `%lf`, width, precision, and `%%`.
+- `malloc`, `calloc`, `realloc`, `free`, limited `sizeof` type/pointee forms (see limits below), `strlen`, `strcpy`, `strcmp`, `strcat`, `memset`, `getchar`, `exit`, and `printf` with `%d`, `%c`, `%s`, `%p`, `%f`, `%lf`, width, precision, and `%%`.
 - Printf formatting supports literal widths, left alignment, numeric signs/zero padding, integer/string precision, and floating precision up to 100. Width and other precision values are capped at 10,000 to bound browser allocations. Return counts include padding and `%c` bytes. String formatting is intended for basic ASCII teaching examples; non-ASCII string precision, locale-dependent formatting, exact native floating-point tie rounding, dynamic `*` widths, and other conversion specifiers are not modeled. Unsupported or incomplete conversions produce a simulator error rather than silently misaligning arguments.
 - `getchar` returns `EOF` (`-1`) once input is exhausted and shares the input position with `scanf`. Non-EOF character values retain the simulator’s existing string-backed representation, so comparisons with numeric character codes (for example, `getchar() == 65`) are not fully C-compatible. This is not a full C byte-stream/encoding implementation.
 - `scanf` for `%d`, `%c`, and `%s` using the app's standard-input field, including repeated whitespace-separated input and indexed lvalue targets.
@@ -104,6 +104,7 @@ It does not currently support:
 - This is a **subset interpreter**, not a standards-complete C implementation. Unsupported syntax or library calls may need a simpler equivalent.
 - Variable-length arrays, function pointers, unions, and the full C preprocessor/library are not supported.
 - Addresses and object sizes are simulated; the app is not a substitute for a native debugger or sanitizer.
+- `sizeof` is not a general expression/type-size implementation. Basic forms such as `sizeof(int)`, `sizeof(char)`, and `sizeof(*p)` for a simple typed pointer use simulated sizes, but array, variable, and numeric-expression operands can return incorrect sizes without an error. Do not use `sizeof(array) / sizeof(array[0])` to derive loop bounds here; use an explicit element count until this limitation is resolved.
 - Local-array `memset` supports byte ranges in `char` arrays and zero-filling whole `int` elements. Partial-byte or nonzero fills of local integer arrays, and other local object representations, report an unsupported-operation error rather than guessing a machine layout.
 - Diagram layouts infer structure from pointer fields and heap edges. Not every possible graph has a specialized layout.
 - Source and Predict progress use browser localStorage, not an account or cloud sync. Browser storage can be cleared or unavailable.
