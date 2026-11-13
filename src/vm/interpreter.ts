@@ -11,6 +11,11 @@ type FlowSignal = "break" | "continue";
 export type RunResult = { executionMode?: "program" | "snippet"; trace: Trace; status: "ok" | "error"; error?: MemoryFault; leaks: { address: number; line: number }[]; orphanedAtExit: number[] };
 
 const elementSize = (type: string) => type.includes("char") ? 1 : type.startsWith("struct") ? 16 : 4;
+const builtinArgumentCounts = new Map<string, number>([
+  ["malloc", 1], ["calloc", 2], ["realloc", 2], ["free", 1],
+  ["strlen", 1], ["strcpy", 2], ["strcat", 2], ["strcmp", 2],
+  ["memset", 3], ["getchar", 0], ["exit", 1],
+]);
 
 export function run(source: string, stepLimit = 100000, recursionLimit = 100, stdin = ""): RunResult {
   const trace = new Trace();
@@ -163,6 +168,11 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
     }
     if (expression.kind === "call") {
       const args = expression.args;
+      const expectedArguments = builtinArgumentCounts.get(expression.name);
+      if (expectedArguments !== undefined && args.length !== expectedArguments)
+        runtimeError(`function '${expression.name}' expects ${expectedArguments} arguments, received ${args.length}`, expression.line);
+      if (expression.name === "scanf" && args.length === 0)
+        runtimeError("missing scanf format argument", expression.line);
       if (expression.name === "sizeof") {
         const argument = args[0];
         if (argument?.kind === "literal") return argument.value;
