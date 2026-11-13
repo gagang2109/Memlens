@@ -1,0 +1,34 @@
+// @vitest-environment jsdom
+import { act, createElement } from 'react';
+import { createRoot } from 'react-dom/client';
+import { afterEach, expect, it, vi } from 'vitest';
+import { App } from './App';
+import { run } from '../vm/interpreter';
+vi.mock('./CodeEditor',()=>({CodeEditor:()=>null}));
+let cleanup:(()=>void)|undefined;
+afterEach(()=>{cleanup?.();vi.restoreAllMocks();localStorage.clear();});
+it('gives repeated recursive pointer labels distinct tags and arrow origins',()=>{
+  const source='void visit(int *p,int depth){if(depth>0)visit(p,depth-1);}int main(){int *p=malloc(4);visit(p,2);}';
+  const result=run(source);
+  const index=result.trace.steps.findIndex(step=>step.frames.filter(frame=>frame.name==='visit').length===3);
+  expect(index).toBeGreaterThan(0);
+  const errors=vi.spyOn(console,'error').mockImplementation(()=>{});
+  (globalThis as {IS_REACT_ACT_ENVIRONMENT?:boolean}).IS_REACT_ACT_ENVIRONMENT=true;
+  localStorage.setItem('memlens-code',source);
+  const container=document.body.appendChild(document.createElement('div'));const root=createRoot(container);
+  cleanup=()=>{act(()=>root.unmount());container.remove();};
+  act(()=>root.render(createElement(App)));
+  act(()=>container.querySelector<HTMLButtonElement>('button.run')!.click());
+  for(let i=0;i<index;i++)act(()=>window.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true})));
+  const tags=[...container.querySelectorAll('.pointer-tag')];
+  expect(tags).toHaveLength(4);
+  expect(new Set(tags.map(tag=>tag.getAttribute('x'))).size).toBe(4);
+  const arrows=[...container.querySelectorAll('line.pointer-arrow')];
+  expect(new Set(arrows.map(arrow=>arrow.getAttribute('x1'))).size).toBe(4);
+  act(()=>window.dispatchEvent(new KeyboardEvent('keydown',{key:'End',bubbles:true})));
+  expect(container.querySelectorAll('.pointer-tag')).toHaveLength(1);
+  act(()=>window.dispatchEvent(new KeyboardEvent('keydown',{key:'Home',bubbles:true})));
+  for(let i=0;i<index;i++)act(()=>window.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true})));
+  expect(new Set([...container.querySelectorAll('.pointer-tag')].map(tag=>tag.getAttribute('x'))).size).toBe(4);
+  expect(errors.mock.calls.some(args=>args.join(' ').includes('same key'))).toBe(false);
+});

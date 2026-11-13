@@ -130,7 +130,7 @@ it("keeps tree-root pointer labels inside the top of the canvas", () => {
   const child = model.nodes.find(node => node.address === 4112)!;
   // StructureDiagram draws variable tags 40px above their target node.
   expect(root.y - 40).toBeGreaterThanOrEqual(20);
-  expect(child.y - root.y).toBe(92);
+  expect(child.y - root.y).toBe(140);
   for (const node of model.nodes) expect(model.canvasHeight).toBeGreaterThanOrEqual(node.y + 98);
 });
 
@@ -228,7 +228,7 @@ it("keeps all 100 rootless cycle nodes distinct and within scrollable bounds", (
   }
 });
 
-it("preserves the existing ordinary rooted-tree coordinates", () => {
+it("preserves rooted-tree horizontal positions while reserving vertical tag clearance", () => {
   const model = renderModel({
     index: 0, line: 1, stdout: "", frames: [],
     pointers: [
@@ -239,7 +239,7 @@ it("preserves the existing ordinary rooted-tree coordinates", () => {
       address, size: 16, allocStep: 0, line: 1,
     })) },
   });
-  expect(model.nodes.map(({ x, y }) => [x, y])).toEqual([[34, 60], [48, 152], [212, 152]]);
+  expect(model.nodes.map(({ x, y }) => [x, y])).toEqual([[34, 60], [48, 200], [212, 200]]);
 });
 
 it.each(["grid", "tree", "singly-linked-list", "stack"] as const)("keeps live and dangling variable tags inside horizontal bounds for %s", shape => {

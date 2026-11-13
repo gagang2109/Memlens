@@ -125,8 +125,9 @@ export function renderModel(step: TraceStep): RenderModel {
       const right = childOf(node.address, "right");
       if (left) place(left, depth + 1);
       const x = left && right ? (left.x + right.x) / 2 : left ? left.x + 82 : right ? right.x - 82 : 48 + leaf++ * 164;
-      // Variable-pointer tags sit 40px above nodes; leave 20px of top padding.
-      node.x = x; node.y = 60 + depth * 92;
+      // Leave 40px for child alias tags plus a 78px parent card and
+      // 22px clearance. The prior 92px level stride put tags over parents.
+      node.x = x; node.y = 60 + depth * 140;
       if (right) place(right, depth + 1);
       return x;
     };
@@ -136,7 +137,7 @@ export function renderModel(step: TraceStep): RenderModel {
       const minX = Math.min(...nodes.map(node => node.x));
       if (minX < 20) nodes.forEach(node => { node.x += 20 - minX; });
       canvasWidth = Math.max(520, Math.max(...nodes.map(node => node.x)) + 164);
-      canvasHeight = 55 + depth * 92;
+      canvasHeight = 55 + depth * 140;
     }
     // Rootless cycles and disconnected blocks are not part of the selected
     // tree. Keep them inspectable in a separate row instead of stacking them
