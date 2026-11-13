@@ -176,3 +176,85 @@ int main() {
     expect(model.arrows).toEqual((step.pointers ?? []).filter(pointer => model.nodes.some(node => node.address === pointer.to)));
   }
 });
+
+it.each([false, true])("separates unplaced tree-cycle nodes (separate rooted component: %s)", withRoot => {
+  const addresses = withRoot ? [4096, 4112, 4128, 4144] : [4096, 4112];
+  const model = renderModel({
+    index: 0, line: 1, stdout: "", frames: [],
+    pointers: [
+      { from: "main.loop", to: 4096, label: "loop", dangling: false },
+      { from: "0x1000.left", to: 4112, label: "left", dangling: false },
+      { from: "0x1010.right", to: 4096, label: "right", dangling: false },
+      ...(withRoot ? [{ from: "0x1020.left", to: 4144, label: "left", dangling: false }] : []),
+    ],
+    memory: { bytes: [], shadows: [], allocations: addresses.map(address => ({
+      address, size: 16, allocStep: 0, line: 1,
+    })) },
+  });
+  expect(model.shape).toBe("tree");
+  expect(model.arrows).toHaveLength(withRoot ? 4 : 3);
+  const loop = model.nodes.slice(0, 2);
+  expect(Math.abs(loop[0].x - loop[1].x)).toBeGreaterThanOrEqual(146);
+  for (const node of loop) {
+    expect(node.y - 40).toBeGreaterThanOrEqual(20);
+    expect(node.x + 146).toBeLessThanOrEqual(model.canvasWidth);
+    expect(node.y + 98).toBeLessThanOrEqual(model.canvasHeight);
+    for (const treeNode of model.nodes.slice(2)) {
+      expect(node.y - 40).toBeGreaterThanOrEqual(treeNode.y + 98);
+    }
+  }
+});
+
+it("keeps all 100 rootless cycle nodes distinct and within scrollable bounds", () => {
+  const addresses = Array.from({ length: 100 }, (_, index) => 4096 + index * 16);
+  const model = renderModel({
+    index: 0, line: 1, stdout: "", frames: [],
+    pointers: addresses.map((address, index) => ({
+      from: `0x${address.toString(16)}.left`, to: addresses[(index + 1) % addresses.length], label: "left", dangling: false,
+    })),
+    memory: { bytes: [], shadows: [], allocations: addresses.map(address => ({
+      address, size: 16, allocStep: 0, line: 1,
+    })) },
+  });
+  expect(model.nodes).toHaveLength(100);
+  expect(new Set(model.nodes.map(node => node.address)).size).toBe(100);
+  expect(new Set(model.nodes.map(node => `${node.x},${node.y}`)).size).toBe(100);
+  expect(model.arrows).toHaveLength(100);
+  for (const node of model.nodes) {
+    expect(node.x).toBeGreaterThanOrEqual(20);
+    expect(node.x + 146).toBeLessThanOrEqual(model.canvasWidth);
+    expect(node.y - 40).toBeGreaterThanOrEqual(20);
+    expect(node.y + 98).toBeLessThanOrEqual(model.canvasHeight);
+  }
+});
+
+it("preserves the existing ordinary rooted-tree coordinates", () => {
+  const model = renderModel({
+    index: 0, line: 1, stdout: "", frames: [],
+    pointers: [
+      { from: "0x1000.left", to: 4112, label: "left", dangling: false },
+      { from: "0x1000.right", to: 4128, label: "right", dangling: false },
+    ],
+    memory: { bytes: [], shadows: [], allocations: [4096, 4112, 4128].map(address => ({
+      address, size: 16, allocStep: 0, line: 1,
+    })) },
+  });
+  expect(model.nodes.map(({ x, y }) => [x, y])).toEqual([[34, 60], [48, 152], [212, 152]]);
+});
+
+it.each(["grid", "tree", "singly-linked-list", "stack"] as const)("keeps live and dangling variable tags inside horizontal bounds for %s", shape => {
+ for (const dangling of [false, true]) {
+  const aliases = Array.from({length:8},(_,i)=>({from:`main.${shape === "stack" ? "top" : "alias"}${i}`,to:4096,label:`alias${i}`,dangling}));
+  const edgeLabel = shape === "tree" ? "left" : shape === "singly-linked-list" ? "next" : undefined;
+  const model = renderModel({
+   index:0,line:1,stdout:"",frames:[],
+   pointers:[...aliases, ...(edgeLabel ? [{from:`0x1000.${edgeLabel}`,to:4112,label:edgeLabel,dangling:false}] : [])],
+   memory:{bytes:[],shadows:[],allocations:[4096,4112].map(address=>({address,size:16,allocStep:0,line:1}))},
+  });
+  // Dangling roots intentionally don't select stack shape.
+  expect(model.shape).toBe(shape === "stack" && dangling ? "grid" : shape);
+  // App renders 72px tags, offset 27px, with 76px between aliases.
+  expect(model.canvasWidth).toBeGreaterThanOrEqual(model.nodes[0].x + 27 + 7*76 + 72 + 20);
+  expect(model.arrows.filter(arrow=>!arrow.from.startsWith("0x"))).toEqual(aliases);
+ }
+});

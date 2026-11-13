@@ -121,10 +121,28 @@ export function renderModel(step: TraceStep): RenderModel {
       canvasWidth = Math.max(520, Math.max(...nodes.map(node => node.x)) + 164);
       canvasHeight = 55 + depth * 92;
     }
+    // Rootless cycles and disconnected blocks are not part of the selected
+    // tree. Keep them inspectable in a separate row instead of stacking them
+    // at the default coordinates; preserve all real pointer arrows.
+    const unplaced = nodes.filter(node => !placed.has(node.address));
+    const placedNodes = nodes.filter(node => placed.has(node.address));
+    const extraY = placedNodes.length ? Math.max(...placedNodes.map(node => node.y)) + 140 : 60;
+    unplaced.forEach((node, index) => { node.x = 20 + index * 164; node.y = extraY; });
+    canvasWidth = Math.max(canvasWidth, ...nodes.map(node => node.x + 164));
   }
   // The SVG clips at its viewBox even when the outer viewport is scrollable.
   // Include every row (especially freed/orphaned blocks and tall stacks), plus
   // room for the 78px node, its address label, stroke and drop shadow.
-  for (const node of nodes) canvasHeight = Math.max(canvasHeight, node.y + 78 + 20);
+  const variableTagCounts = new Map<number, number>();
+  for (const pointer of pointers) {
+    if (!pointer.from.startsWith("0x")) variableTagCounts.set(pointer.to, (variableTagCounts.get(pointer.to) ?? 0) + 1);
+  }
+  for (const node of nodes) {
+    canvasHeight = Math.max(canvasHeight, node.y + 78 + 20);
+    // StructureDiagram places 72px variable tags at x + 27, 76px apart.
+    // Count dangling aliases too, so their labels remain reachable when panning.
+    const tagCount = variableTagCounts.get(node.address) ?? 0;
+    if (tagCount) canvasWidth = Math.max(canvasWidth, node.x + 27 + (tagCount - 1) * 76 + 72 + 20);
+  }
   return { nodes, arrows: pointers.filter(pointer => nodes.some(node => node.address === pointer.to)), shape, canvasWidth, canvasHeight };
 }
