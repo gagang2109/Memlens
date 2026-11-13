@@ -11,7 +11,7 @@ describe("pointer prediction", () => {
   });
   it("recognizes assignments to NULL", () => {
     const before = { index: 0, line: 1, stdout: "", memory: { bytes: [], shadows: [], allocations: [] }, frames: [], pointers: [{ from: "main.head", to: 4096, label: "head", dangling: false }] };
-    const after = { ...before, index: 1, pointers: [] };
+    const after = { ...before, index: 1, pointers: [], frames: [{ name: "main", locals: { head: "null" }, variables: { head: { type: "int *", value: "null", pointer: true } } }] };
     expect(nextPointerPrediction(before, after)?.expected).toBeNull();
   });
 });

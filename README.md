@@ -107,6 +107,7 @@ It does not currently support:
 - `sizeof` is not a general expression/type-size implementation. Basic forms such as `sizeof(int)`, `sizeof(char)`, and `sizeof(*p)` for a simple typed pointer use simulated sizes, but array, variable, and numeric-expression operands can return incorrect sizes without an error. Do not use `sizeof(array) / sizeof(array[0])` to derive loop bounds here; use an explicit element count until this limitation is resolved.
 - Local-array `memset` supports byte ranges in `char` arrays and zero-filling whole `int` elements. Partial-byte or nonzero fills of local integer arrays, and other local object representations, report an unsupported-operation error rather than guessing a machine layout.
 - Diagram layouts infer structure from pointer fields and heap edges. Not every possible graph has a specialized layout.
+- Predict skips local-pointer questions when recursive calls share the same function name: the current trace labels cannot uniquely identify those frames. Stepping and playback still continue normally.
 - Source and Predict progress use browser localStorage, not an account or cloud sync. Browser storage can be cleared or unavailable.
 - The production JavaScript bundle includes CodeMirror and currently triggers Vite's large-chunk warning.
 
