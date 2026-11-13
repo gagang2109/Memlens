@@ -357,12 +357,14 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       }
       if (expression.name === "exit") { record(expression.line); throw new ExitSignal(); }
       if (expression.name === "printf") {
+        if (args.length === 0) runtimeError("missing printf format argument", expression.line);
         const format = readString(evaluate(args[0])).split("\0", 1)[0];
         const values = args.slice(1).map(argument => evaluate(argument)); let index = 0; let characterByteAdjustment = 0;
         const output = format.replace(/%([-+ 0]*)([0-9]*)(?:\.([0-9]*))?(lf|[dcspf%])|%/g,
           (_match, flags: string, widthText: string, precisionText: string | undefined, specifier: string) => {
             if (_match === "%") runtimeError("unsupported or incomplete printf conversion", expression.line);
             if (specifier === "%") return "%";
+            if (index >= values.length) runtimeError("missing printf argument", expression.line);
             const value = values[index++]; const width = Number(widthText || 0);
             const precision = precisionText === undefined ? undefined : Number(precisionText || 0);
             // Bound formatting allocations just as execution and memory are bounded.

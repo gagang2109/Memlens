@@ -27,11 +27,26 @@ export type Program = { functions: Map<string, FunctionDef>; structs: Map<string
 
 const types = new Set(["int", "char", "long", "long", "short", "unsigned", "float", "double", "void", "struct", "const", "static"]);
 
+function parseNumberLiteral(text: string, line: number): number {
+  // A leading zero denotes an octal integer in C, not decimal padding.
+  if (/^[+-]?0[0-9]+$/.test(text)) {
+    if (/[89]/.test(text)) throw new Error(`line ${line}: invalid numeric literal '${text}'`);
+    const sign = text.startsWith("-") ? -1 : 1;
+    const digits = text.replace(/^[+-]/, "");
+    const value = sign * parseInt(digits, 8);
+    if (!Number.isFinite(value)) throw new Error(`line ${line}: invalid numeric literal '${text}'`);
+    return value;
+  }
+  const value = Number(text);
+  if (!Number.isFinite(value)) throw new Error(`line ${line}: invalid numeric literal '${text}'`);
+  return value;
+}
+
 export function parse(source: string): Program {
   const constants = new Map<string, number | string>();
-  const lines = source.split(/\r?\n/).map(line => {
+  const lines = source.split(/\r?\n/).map((line, index) => {
     const define = line.match(/^\s*#define\s+([A-Za-z_]\w*)\s+(.+?)\s*$/);
-    if (define) { const value = /^".*"$/.test(define[2]) ? define[2].slice(1, -1) : Number.isNaN(Number(define[2])) ? define[2] : Number(define[2]); constants.set(define[1], value); }
+    if (define) { const value = /^".*"$/.test(define[2]) ? define[2].slice(1, -1) : Number.isNaN(Number(define[2])) && !/^[+-]?[0-9][0-9.]*$/.test(define[2]) ? define[2] : parseNumberLiteral(define[2], index + 1); constants.set(define[1], value); }
     return line.trimStart().startsWith("#") ? "" : line;
   });
   const ts = lex(lines.join("\n")); let p = 0;
@@ -72,7 +87,7 @@ export function parse(source: string): Program {
       const type = parseType(); const pointer = Boolean(peek("*") && take()); take(")");
       left = { kind: "cast", type, pointer, expr: parseExpression(12), line: token.line };
     } else if (token.value === "(") { left = parseExpression(); take(")"); }
-    else if (token.kind === "number") left = { kind: "literal", value: Number(token.value), line: token.line };
+    else if (token.kind === "number") left = { kind: "literal", value: parseNumberLiteral(token.value, token.line), line: token.line };
     else if (token.value === "struct" || token.value === "int" || token.value === "char" || token.value === "long" || knownTypes.has(token.value)) { if (token.value === "struct") take(); left = { kind: "literal", value: token.value === "char" ? 1 : token.value === "int" ? 4 : 16, line: token.line }; }
     else if (token.value === "NULL") left = { kind: "literal", value: null, line: token.line };
     else if (token.value === "sizeof" && !peek("(")) left = { kind: "call", name: "sizeof", args: [parseExpression(12)], line: token.line };
