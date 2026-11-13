@@ -62,7 +62,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
     }
     if (expression.kind === "member") {
       const object = evaluate(expression.object); const allocation = memory.find(asNum(object));
-      if (!allocation) runtimeError(expression.object.kind === "literal" && object === null ? "null pointer dereference" : "invalid pointer dereference", expression.line);
+      if (!allocation) runtimeError(asNum(object) === 0 ? "null pointer dereference" : "invalid pointer dereference", expression.line);
       if (allocation!.freeStep !== undefined) runtimeError("use-after-free", expression.line, allocation);
       const block = heap.get(asNum(object)); if (!block) runtimeError("invalid pointer dereference", expression.line);
       const fieldIndex = ["data", "value", "key", "left", "right", "next", "prev"].indexOf(expression.name);
