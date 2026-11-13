@@ -402,7 +402,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       const fn = program.functions.get(expression.name); if (!fn) throw new Error(`line ${expression.line}: unsupported function '${expression.name}'`);
       if (frames.length >= recursionLimit) runtimeError("stack overflow", expression.line);
       const values = args.map(argument => evaluate(argument)); frames.push({ name: fn.name, vars: new Map(fn.params.map((parameter, index) => [parameter.name, { value: values[index] ?? null, type: parameter.type, pointer: parameter.pointer, elementSize: elementSize(parameter.type) }])) }); record(expression.line, "call");
-      let returned: Value = null; try { execute(fn.body); } catch (caught) { if (caught instanceof ReturnSignal) returned = caught.value; else throw caught; } finally { frames.pop(); record(expression.line, "return"); } return returned;
+      let returned: Value = null; try { execute(fn.body); } catch (caught) { if (caught instanceof ReturnSignal) returned = caught.value; else if (caught instanceof BreakSignal || caught instanceof ContinueSignal) runtimeError(caught.message, caught.line); else throw caught; } finally { frames.pop(); record(expression.line, "return"); } return returned;
     }
     if (expression.kind === "binary") {
       if (["=", "+=", "-="].includes(expression.op)) { const reference = ref(expression.left); const right = evaluate(expression.right); const old = expression.op === "=" ? 0 : asNum(reference.get()); const pointer = pointerMeta(expression.left); const delta = pointer?.pointer ? (pointer.elementSize ?? 1) : 1; const value = expression.op === "=" ? right : old + (expression.op === "+=" ? asNum(right) * delta : -asNum(right) * delta); reference.set(value); record(expression.line); return value; }
@@ -421,7 +421,10 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
   const allocate = (size: number, line: number) => { const address = memory.malloc(size, steps, line); heap.set(address, { address, fields: new Map() }); record(line, "alloc"); return address; };
   class ReturnSignal { constructor(public value: Value) {} }
   class ExitSignal {}
-  class BreakSignal {} class ContinueSignal {}
+  // Keep normal loop control lightweight; convert escaped signals to faults only
+  // at a function boundary rather than allowing them to control a caller's loop.
+  class BreakSignal { readonly message: string; constructor(public readonly line: number) { this.message = `line ${line}: break outside loop or switch`; } }
+  class ContinueSignal { readonly message: string; constructor(public readonly line: number) { this.message = `line ${line}: continue outside loop`; } }
   const execute = (statement: Stmt): void => {
     if (steps >= stepLimit) runtimeError("step limit reached", statement.line);
     if (statement.kind === "block") { for (const child of statement.body) execute(child); return; }
@@ -466,8 +469,8 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       return;
     }
     if (statement.kind === "for") { if (statement.init) execute(statement.init); let guard = 0; while (!statement.test || asNum(evaluate(statement.test))) { try { execute(statement.body); } catch (caught) { if (caught instanceof BreakSignal) break; if (!(caught instanceof ContinueSignal)) throw caught; } if (statement.update) evaluate(statement.update); if (++guard > stepLimit) runtimeError("step limit reached", statement.line); } return; }
-    if (statement.kind === "break") throw new BreakSignal();
-    if (statement.kind === "continue") throw new ContinueSignal();
+    if (statement.kind === "break") throw new BreakSignal(statement.line);
+    if (statement.kind === "continue") throw new ContinueSignal(statement.line);
     if (statement.kind === "switch") {
       const value = asNum(evaluate(statement.test));
       // Default is a fallback entry point, not a match encountered in source order.
@@ -484,7 +487,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
     }
   };
   try { if (program.body.length) execute({ kind: "block", body: program.body, line: program.body[0].line }); const main = program.functions.get("main"); if (main) { record(main.line, "call"); execute(main.body); record(main.line, "return"); } else if (!program.body.length) execute({ kind: "block", body: [], line: 1 }); }
-  catch (caught) { if (caught instanceof MemoryFault) { error = caught; record(caught.line, "error", caught.reason); } else if (!(caught instanceof ReturnSignal) && !(caught instanceof ExitSignal)) { const message = caught instanceof Error ? caught.message : "unsupported construct"; const match = message.match(/line (\d+)/); const line = match ? Number(match[1]) : 1; error = new MemoryFault(message, line, steps); record(line, "error", message); } }
+  catch (caught) { if (caught instanceof MemoryFault) { error = caught; record(caught.line, "error", caught.reason); } else if (!(caught instanceof ReturnSignal) && !(caught instanceof ExitSignal)) { const message = caught instanceof Error || caught instanceof BreakSignal || caught instanceof ContinueSignal ? caught.message : "unsupported construct"; const match = message.match(/line (\d+)/); const line = match ? Number(match[1]) : 1; error = new MemoryFault(message, line, steps); record(line, "error", message); } }
   const roots = [...frames.flatMap(frame => [...frame.vars.values()].map(variable => variable.value))].filter((value): value is number => typeof value === "number");
   const reachable = new Set<number>(); const visit = (address: number) => { const allocation = memory.allocationAt(address); if (!allocation || allocation.freeStep !== undefined || reachable.has(allocation.address)) return; reachable.add(allocation.address); const object = heap.get(allocation.address); if (object) for (const value of object.fields.values()) if (typeof value === "number") visit(value); };
   roots.forEach(visit); const live = memory.allocations.filter(allocation => allocation.freeStep === undefined); const orphanedAtExit = live.filter(allocation => !reachable.has(allocation.address)).map(allocation => allocation.address);

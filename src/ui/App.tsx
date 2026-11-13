@@ -43,7 +43,12 @@ function StructureDiagram({ model, highlighted, onHighlight }: { model: ReturnTy
 }
 
 export function App() {
-  const [sample, setSample] = useState<keyof typeof samples>("requested"); const [code, setCode] = useState(samples.requested.code);
+  const [sample, setSample] = useState<keyof typeof samples>("requested"); const [code, setCode] = useState(() => {
+    // Restore before the persistence effect can write, including StrictMode's
+    // mount-effect replay. An intentionally empty draft is still a saved draft.
+    try { return localStorage.getItem("memlens-code") ?? samples.requested.code; }
+    catch { return samples.requested.code; }
+  });
   // Preserve an explicitly chosen alias, otherwise identify the actual editor content.
   const selectedSample = code === samples[sample].code ? sample : (Object.keys(samples) as (keyof typeof samples)[]).find(key => samples[key].code === code) ?? "custom";
   const [stdin, setStdin] = useState("");
@@ -90,7 +95,6 @@ export function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [trace, cursor, predictMode, stale]);
-  useEffect(() => { try { const saved = localStorage.getItem("memlens-code"); if (saved) setCode(saved); } catch { /* storage is optional */ } }, []);
   useEffect(() => { try { localStorage.setItem("memlens-code", code); } catch { /* storage is optional */ } }, [code]);
   const lines = useMemo(() => code.split(/\r?\n/), [code]);
   return <main>
