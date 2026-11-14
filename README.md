@@ -145,6 +145,8 @@ On Windows PowerShell, use `npm.cmd` in place of `npm` if your execution policy 
 
 ### Check a change
 
+Run all three checks below before pushing a change; a successful build does not replace the test suite.
+
 ```sh
 npm test
 npm run typecheck
