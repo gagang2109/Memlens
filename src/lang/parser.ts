@@ -102,8 +102,8 @@ export function parse(source: string): Program {
       }
       if (peek("[")) { take("["); const index = parseExpression(); take("]"); left = { kind: "index", object: left, index, line: token.line }; continue; }
       if ((peek(".") || peek("->")) && (left.kind === "name" || left.kind === "member" || left.kind === "index" || left.kind === "unary")) { const op = take().value; const name = take(); left = { kind: "member", object: left, name: name.value, pointer: op === "->", line: name.line }; continue; }
-      const op = ts[p].kind === "symbol" ? ts[p].value : ""; const precedence = ({ ",": 0, "=": 1, "+=": 1, "-=": 1, "+": 6, "-": 6, "*": 7, "/": 7, "%": 7, "||": 2, "&&": 3, "==": 4, "!=": 4, "<": 5, ">": 5, "<=": 5, ">=": 5 } as Record<string, number>)[op] ?? -1;
-      if (precedence < min) break; take(); const right = parseExpression(precedence + (["=", "+=", "-="].includes(op) ? 0 : 1)); left = { kind: "binary", op, left, right, line: token.line };
+      const op = ts[p].kind === "symbol" ? ts[p].value : ""; const precedence = ({ ",": 0, "=": 1, "+=": 1, "-=": 1, "*=": 1, "/=": 1, "%=": 1, "+": 6, "-": 6, "*": 7, "/": 7, "%": 7, "||": 2, "&&": 3, "==": 4, "!=": 4, "<": 5, ">": 5, "<=": 5, ">=": 5 } as Record<string, number>)[op] ?? -1;
+      if (precedence < min) break; take(); const right = parseExpression(precedence + (["=", "+=", "-=", "*=", "/=", "%="].includes(op) ? 0 : 1)); left = { kind: "binary", op, left, right, line: token.line };
     }
     if (min <= 1 && peek("?")) {
       take(); const yes = parseExpression(); take(":"); const no = parseExpression(1);

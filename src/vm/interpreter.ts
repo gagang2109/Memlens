@@ -419,7 +419,32 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       return returned;
     }
     if (expression.kind === "binary") {
-      if (["=", "+=", "-="].includes(expression.op)) { const reference = ref(expression.left); const right = evaluate(expression.right); const old = expression.op === "=" ? 0 : asNum(reference.get()); const pointer = pointerMeta(expression.left); const delta = pointer?.pointer ? (pointer.elementSize ?? 1) : 1; const value = expression.op === "=" ? right : old + (expression.op === "+=" ? asNum(right) * delta : -asNum(right) * delta); reference.set(value); record(expression.line); return value; }
+      if (["=", "+=", "-=", "*=", "/=", "%="].includes(expression.op)) {
+        const reference = ref(expression.left);
+        const pointer = pointerMeta(expression.left);
+        const multiplicative = ["*=", "/=", "%="].includes(expression.op);
+        if (multiplicative && (pointer?.pointer || pointer?.array)) runtimeError("invalid arithmetic compound assignment to pointer", expression.line);
+        if (multiplicative) {
+          const target = expression.left.kind === "name" ? pointer
+            : expression.left.kind === "index" ? pointerMeta(expression.left.object)
+            : expression.left.kind === "unary" && expression.left.op === "*" ? pointerMeta(expression.left.expr) : undefined;
+          if (!target || !/^(int|char|short|long|unsigned|signed)(\s|$)/.test(target.type))
+            runtimeError("arithmetic compound assignment requires a supported integer target", expression.line);
+        }
+        const right = evaluate(expression.right);
+        const old = expression.op === "=" ? 0 : asNum(reference.get());
+        if (multiplicative && (!Number.isInteger(old) || !Number.isInteger(asNum(right))))
+          runtimeError("arithmetic compound assignment requires supported integer operands", expression.line);
+        const delta = pointer?.pointer ? (pointer.elementSize ?? 1) : 1;
+        if (expression.op === "/=" && asNum(right) === 0) runtimeError("division by zero", expression.line);
+        if (expression.op === "%=" && asNum(right) === 0) runtimeError("remainder by zero", expression.line);
+        const value = expression.op === "=" ? right
+          : expression.op === "+=" ? old + asNum(right) * delta
+          : expression.op === "-=" ? old - asNum(right) * delta
+          : expression.op === "*=" ? old * asNum(right)
+          : expression.op === "/=" ? Math.trunc(old / asNum(right)) : old % asNum(right);
+        reference.set(value); record(expression.line); return value;
+      }
       if (expression.op === ",") { evaluate(expression.left); return evaluate(expression.right); }
       // C logical operators evaluate the right operand only when needed.
       if (expression.op === "&&") return asNum(evaluate(expression.left)) ? (asNum(evaluate(expression.right)) ? 1 : 0) : 0;
