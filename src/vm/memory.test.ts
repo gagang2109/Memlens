@@ -15,3 +15,14 @@ describe("simulated memory", () => {
     expect(() => memory.write(0, 1, 0, 9)).toThrow(MemoryFault);
   });
 });
+
+it('preserves allocation failure metadata and leaves allocation state unchanged', () => {
+  const memory = new Memory();
+  let fault: unknown;
+  try { memory.malloc(40000, 17, 29); } catch (error) { fault = error; }
+  expect(fault).toBeInstanceOf(MemoryFault);
+  expect((fault as MemoryFault).line).toBe(29);
+  expect((fault as MemoryFault).step).toBe(17);
+  expect(memory.allocations).toHaveLength(0);
+  expect(memory.malloc(4, 18, 30)).toBe(0x1000);
+});
