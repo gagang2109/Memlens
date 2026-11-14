@@ -174,6 +174,7 @@ export function parse(source: string): Program {
         }
         take(")");
         if (peek(";")) { take(); continue; }
+        if (functions.has(name.value)) throw new Error(`line ${name.line}: duplicate definition of function '${name.value}'`);
         functions.set(name.value, { name: name.value, params, body: statement(), line: name.line });
       } else { p = save; body.push(statement()); }
     } else if (peek(";")) take(";"); else body.push(statement());
