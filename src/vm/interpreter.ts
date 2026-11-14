@@ -3,7 +3,7 @@ import { Memory, MemoryFault, type Allocation } from "./memory";
 import { Trace, type FrameView } from "./trace";
 
 type Value = number | string | null;
-type RuntimeVariable = { value: Value; type: string; pointer: boolean; array?: Value[]; dimensions?: number[]; elementSize?: number; arrayBase?: number; address?: number };
+type RuntimeVariable = { value: Value; type: string; pointer: boolean; array?: Value[]; arrayElementPointer?: boolean; dimensions?: number[]; elementSize?: number; arrayBase?: number; address?: number };
 type Ref = { get: () => Value; set: (value: Value) => void; address?: number; allocation?: Allocation };
 type HeapObject = { address: number; fields: Map<string, Value>; type?: string };
 type FlowSignal = "break" | "continue";
@@ -165,6 +165,22 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       const args = expression.args;
       if (expression.name === "sizeof") {
         const argument = args[0];
+        // Array shape is declaration metadata: sizeof must not evaluate indices.
+        let base = argument;
+        let indexedDimensions = 0;
+        while (base?.kind === "index") {
+          indexedDimensions++;
+          base = base.object;
+        }
+        if (base?.kind === "name") {
+          const variable = findVariable(base.name);
+          if (variable?.array && variable.dimensions && !variable.arrayElementPointer &&
+              (variable.type === "int" || variable.type === "char") &&
+              indexedDimensions <= variable.dimensions.length) {
+            return variable.dimensions.slice(indexedDimensions)
+              .reduce((bytes, dimension) => bytes * dimension, variable.elementSize!);
+          }
+        }
         if (argument?.kind === "literal") return argument.value;
         if (argument?.kind === "name" && argument.name === "char") return 1;
         if (argument?.kind === "name" && argument.name === "int") return 4;
@@ -444,7 +460,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
     if (statement.kind === "block") { for (const child of statement.body) execute(child); return; }
     if (statement.kind === "decl") {
       const variable: RuntimeVariable = { value: null, type: statement.type, pointer: statement.pointer, elementSize: elementSize(statement.type) };
-      if (statement.arrayLength) { const dimensions = (statement.arrayLengths ?? [statement.arrayLength]).map(lengthExpr => asNum(evaluate(lengthExpr)));
+      if (statement.arrayLength) { variable.arrayElementPointer = statement.pointer; const dimensions = (statement.arrayLengths ?? [statement.arrayLength]).map(lengthExpr => asNum(evaluate(lengthExpr)));
         if (dimensions.some(dimension => !Number.isSafeInteger(dimension) || dimension <= 0))
           runtimeError("array dimensions must be positive integers", statement.line);
         // Bound browser allocations before creating or initializing array storage.
