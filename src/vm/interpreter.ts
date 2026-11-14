@@ -120,7 +120,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
     }
     throw new Error(`line ${expression.line}: expression is not assignable (${expression.kind})`);
   };
-  const readString = (value: Value) => {
+  const readString = (value: Value, line: number) => {
     if (typeof value === "string") return value.split("\0", 1)[0];
     const variable = [...frames].reverse().flatMap(frame => [...frame.vars.values()]).find(candidate => candidate.arrayBase === value);
     if (variable?.array) return variable.array.map(item => typeof item === "number" ? String.fromCharCode(item & 255) : String(item ?? "\0")).join("").split("\0", 1)[0];
@@ -136,7 +136,10 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
         }
       }
     }
-    if (typeof value === "number") { let result = ""; for (let index = 0; index < 256; index++) { const cell = cells.get(value + index); if (cell === undefined || cell === 0 || cell === "\0") break; result += typeof cell === "number" ? String.fromCharCode(cell & 255) : String(cell); } return result; }
+    if (typeof value === "number") {
+      const allocation = memory.allocationAt(value);
+      if (allocation?.freeStep !== undefined) runtimeError("use-after-free", line, allocation);
+      let result = ""; for (let index = 0; index < 256; index++) { const cell = cells.get(value + index); if (cell === undefined || cell === 0 || cell === "\0") break; result += typeof cell === "number" ? String.fromCharCode(cell & 255) : String(cell); } return result; }
     return "";
   };
   const evaluate = (expression: Expr): Value => {
@@ -197,8 +200,8 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
         return address;
       }
       if (expression.name === "free") { const address = asNum(evaluate(args[0])); memory.free(address, steps, expression.line); record(expression.line, address === 0 ? "step" : "free"); return null; }
-      if (expression.name === "strlen") return readString(evaluate(args[0])).length;
-      if (expression.name === "strcpy" || expression.name === "strcat") { const destination = asNum(evaluate(args[0])); const source = readString(evaluate(args[1])); const existing = expression.name === "strcat" ? readString(destination) : ""; const result = existing + source;
+      if (expression.name === "strlen") return readString(evaluate(args[0]), expression.line).length;
+      if (expression.name === "strcpy" || expression.name === "strcat") { const destination = asNum(evaluate(args[0])); const source = readString(evaluate(args[1]), expression.line); const existing = expression.name === "strcat" ? readString(destination, expression.line) : ""; const result = existing + source;
         // Interior char pointers must update the live local buffer, including
         // its terminator, rather than an unrelated heap-cell entry.
         if (!memory.allocationAt(destination)) {
@@ -233,8 +236,8 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
         // C compares unsigned bytes, not language-dependent collation.
         // Compare UTF-8 encoded strings, stopping at their first NUL.
         const encoder = new TextEncoder();
-        const left = encoder.encode(readString(evaluate(args[0])).split("\0", 1)[0]);
-        const right = encoder.encode(readString(evaluate(args[1])).split("\0", 1)[0]);
+        const left = encoder.encode(readString(evaluate(args[0]), expression.line).split("\0", 1)[0]);
+        const right = encoder.encode(readString(evaluate(args[1]), expression.line).split("\0", 1)[0]);
         for (let i = 0; i <= Math.min(left.length, right.length); i++) {
           const difference = (left[i] ?? 0) - (right[i] ?? 0);
           if (difference !== 0) return difference;
@@ -274,7 +277,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
         return destination;
       }
       if (expression.name === "scanf") {
-        const format = readString(evaluate(args[0])).split("\0", 1)[0];
+        const format = readString(evaluate(args[0]), expression.line).split("\0", 1)[0];
         // Evaluate every destination once, before scanning, as with ordinary calls.
         const destinations = args.slice(1).map(argument => asNum(evaluate(argument)));
         let assigned = 0; let destinationIndex = 0; let inputFailure = false;
@@ -358,7 +361,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       if (expression.name === "exit") { record(expression.line); throw new ExitSignal(); }
       if (expression.name === "printf") {
         if (args.length === 0) runtimeError("missing printf format argument", expression.line);
-        const format = readString(evaluate(args[0])).split("\0", 1)[0];
+        const format = readString(evaluate(args[0]), expression.line).split("\0", 1)[0];
         const values = args.slice(1).map(argument => evaluate(argument)); let index = 0; let characterByteAdjustment = 0;
         const output = format.replace(/%([-+ 0]*)([0-9]*)(?:\.([0-9]*))?(lf|[dcspf%])|%/g,
           (_match, flags: string, widthText: string, precisionText: string | undefined, specifier: string) => {
@@ -372,7 +375,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
               runtimeError("printf width or precision exceeds simulator limit (10000)", expression.line);
             let text: string; let sign = "";
             if (specifier === "s") {
-              text = readString(value).split("\0", 1)[0]; if (precision !== undefined) text = text.slice(0, precision);
+              text = readString(value, expression.line).split("\0", 1)[0]; if (precision !== undefined) text = text.slice(0, precision);
             } else if (specifier === "c") {
               text = String.fromCharCode(asNum(value) & 255);
               characterByteAdjustment += 1 - new TextEncoder().encode(text).length;
