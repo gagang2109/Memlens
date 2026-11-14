@@ -11,6 +11,11 @@ type FlowSignal = "break" | "continue";
 export type RunResult = { executionMode?: "program" | "snippet"; trace: Trace; status: "ok" | "error"; error?: MemoryFault; leaks: { address: number; line: number }[]; orphanedAtExit: number[] };
 
 const elementSize = (type: string) => type.includes("char") ? 1 : type.startsWith("struct") ? 16 : 4;
+const builtinArgumentCounts = new Map<string, number>([
+  ["malloc", 1], ["calloc", 2], ["realloc", 2], ["free", 1],
+  ["strlen", 1], ["strcpy", 2], ["strcat", 2], ["strcmp", 2],
+  ["memset", 3], ["getchar", 0], ["exit", 1],
+]);
 
 export function run(source: string, stepLimit = 100000, recursionLimit = 100, stdin = ""): RunResult {
   const trace = new Trace();
@@ -163,6 +168,11 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
     }
     if (expression.kind === "call") {
       const args = expression.args;
+      const expectedArguments = builtinArgumentCounts.get(expression.name);
+      if (expectedArguments !== undefined && args.length !== expectedArguments)
+        runtimeError(`function '${expression.name}' expects ${expectedArguments} arguments, received ${args.length}`, expression.line);
+      if (expression.name === "scanf" && args.length === 0)
+        runtimeError("missing scanf format argument", expression.line);
       if (expression.name === "sizeof") {
         const argument = args[0];
         if (argument?.kind === "literal") return argument.value;
@@ -400,6 +410,8 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
         return new TextEncoder().encode(output).length + characterByteAdjustment;
       }
       const fn = program.functions.get(expression.name); if (!fn) throw new Error(`line ${expression.line}: unsupported function '${expression.name}'`);
+      if (args.length !== fn.params.length)
+        runtimeError(`function '${fn.name}' expects ${fn.params.length} arguments, received ${args.length}`, expression.line);
       if (frames.length >= recursionLimit) runtimeError("stack overflow", expression.line);
       const values = args.map(argument => evaluate(argument)); frames.push({ name: fn.name, vars: new Map(fn.params.map((parameter, index) => [parameter.name, { value: values[index] ?? null, type: parameter.type, pointer: parameter.pointer, elementSize: elementSize(parameter.type) }])) }); record(expression.line, "call");
       let returned: Value = null; let failed = false;
