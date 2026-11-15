@@ -205,7 +205,7 @@ Choosing a category does not alter your draft. **Use starter** asks before repla
 
 Select **Program input → Interactive console** above the editor and press Run
 (or Ctrl/⌘+Enter in the editor). When `scanf` or `getchar` needs input, the
-console waits beside the memory canvas on laptop layouts. Enter a line and
+console waits above the editor beside the memory canvas on laptop layouts. Enter a line and
 press Enter/Send; each line includes a newline. **Send EOF** explicitly closes
 input. Input ahead remains the default for supplying all stdin before running.
 
