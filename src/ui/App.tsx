@@ -10,7 +10,7 @@ import { DiagramViewport } from "./DiagramViewport";
 import { CodeEditor } from "./CodeEditor";
 import { readSavedCount, saveCount } from "./storage";
 import { explainStep } from "./stepExplanation";
-import { shouldHandlePlaybackShortcut } from "./shortcuts";
+import { shouldHandlePlaybackShortcut, shouldHandleRunShortcut } from "./shortcuts";
 import { checkPrediction, nextPointerPrediction, type PointerPrediction } from "../vm/predict";
 
 function StructureDiagram({ model, highlighted, onHighlight }: { model: ReturnType<typeof renderModel>; highlighted?: number; onHighlight: (address?: number) => void }) {
@@ -46,7 +46,7 @@ function StructureDiagram({ model, highlighted, onHighlight }: { model: ReturnTy
 }
 
 export function App() {
-  const stepForward = useRef<HTMLButtonElement>(null);
+  const workspace = useRef<HTMLElement>(null);
   const focusStepsAfterRun = useRef(false);
   const [sample, setSample] = useState<keyof typeof samples>("requested"); const [code, setCode] = useState(() => {
     // Restore before the persistence effect can write, including StrictMode's
@@ -86,7 +86,7 @@ export function App() {
   useEffect(() => {
     if (focusStepsAfterRun.current) {
       focusStepsAfterRun.current = false;
-      stepForward.current?.focus();
+      workspace.current?.focus({ preventScroll: true });
     }
   }, [trace]);
   useEffect(() => { if (stale) { setPlaying(false); setPrediction(undefined); setPredictionResult(undefined); } }, [code, stdin, setup, stale]);
@@ -103,6 +103,7 @@ export function App() {
   useEffect(() => { if (!playing || !trace || prediction) return; const timer = window.setInterval(() => { if (cursor >= trace.steps.length - 1) { setPlaying(false); return; } moveTo(cursor + 1); }, 1000 / speed); return () => window.clearInterval(timer); }, [playing, trace, cursor, speed, predictMode, prediction, stale]);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      if (shouldHandleRunShortcut(event)) { event.preventDefault(); runCode(); return; }
       if (!trace || trace.steps.length < 2 || !shouldHandlePlaybackShortcut(event)) return;
       if (!["ArrowLeft", "ArrowRight", " ", "Home", "End"].includes(event.key)) return;
       // A playback action replaces the key's native page-scroll behavior.
@@ -115,7 +116,7 @@ export function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [trace, cursor, predictMode, stale]);
+  }, [trace, cursor, predictMode, stale, code, stdin, setup]);
   useEffect(() => { try { localStorage.setItem("memlens-code", code); } catch { /* storage is optional */ } }, [code]);
   useEffect(() => { try { localStorage.setItem("memlens-test-setup", setup); } catch { /* storage is optional */ } }, [setup]);
   const replaceDraft = (nextCode: string, nextSetup: string) => {
@@ -125,7 +126,7 @@ export function App() {
   const useStarter = (key: StarterKey) => { setPreviousDraft({ code, setup }); replaceDraft(starterScaffolds[key].code, ""); };
   const restoreDraft = () => { if (previousDraft) { replaceDraft(previousDraft.code, previousDraft.setup); setPreviousDraft(undefined); } };
   const lines = useMemo(() => code.split(/\r?\n/), [code]);
-  return <main>
+  return <main ref={workspace} tabIndex={-1} aria-label="Code execution workspace">
     <header><div className="brand"><img className="brand-mark" src="/memlens-mark.svg" width="36" height="36" alt="" aria-hidden="true" /> MEMLENS</div><div className="tag">Step through your C code and watch memory rewind.</div>
       <select aria-label="Samples" value={selectedSample} onChange={e => { if (e.target.value === "custom") return; const key = e.target.value as keyof typeof samples; setSample(key); setLastRun(undefined); setCode(samples[key].code); setSetup(key === "tree-height" ? treeHeightSetup : ""); setTrace(undefined); setExecutionMode(undefined); setFault(undefined); setError(""); setLeaks([]); setPlaying(false); setPrediction(undefined); setPredictionResult(undefined); setCursor(0); }}><option value="custom" disabled>Custom code — choose a sample to replace it</option><option value="tree-height">Practice tree height — separate test setup</option><option value="snippet">Array sum snippet — no main needed</option><option value="requested">Push/reverse list — intentional use-after-free</option><option value="requested-uaf">Push/reverse use-after-free — same intentional error example</option><option value="tree">BST insert and inorder — traverse a binary tree</option><option value="tree-menu">Tree menu — insert, traverse, and delete a leaf</option><option value="stack">Array stack — push/pop/display with MAX</option><option value="queue">Linked queue — enqueue/dequeue with front and rear</option><option value="factorial">Factorial recursion — watch frames stack</option><option value="use-after-free">Use after free — raw block fault</option></select>
       <button className="run" onClick={runCode}>Run</button></header>
@@ -151,7 +152,7 @@ export function App() {
         {!fault && leaks.length > 0 && <div className="leak-report"><b>MEMORY NOT FREED AT EXIT</b><span>{leaks.length} block{leaks.length === 1 ? " was" : "s were"} never freed.</span>{leaks.map(leak => <small key={leak.address}>allocation {location(leak.line)}</small>)}</div>}
       </div></section>
     <section className="bottom"><div className="console"><div className="panel-title">CONSOLE</div><label className="stdin-label">Program input (scanf) <input aria-label="Standard input" value={stdin} onChange={event => setStdin(event.target.value)} placeholder="e.g. 3 10 20 30 (space-separated)" /></label><pre>{view ? view.stdout || "No output printed at this step." : emptyRun ? "Run finished without printed output." : "Run a program to see its printed output (printf)."}</pre></div>
-      <div className="timeline"><div className="panel-title">TRACE <small>{traceLabel}</small></div><p className="step-explanation">{emptyRun ? emptyRunMessage : displayedSource.active && view ? diagnostic(explainStep(view)).replace(/^Line \d+/, location(view.line)) : explainStep(view)}</p><div className="timeline-track"><input aria-label="Timeline" type="range" min="0" max={Math.max(0, (trace?.steps.length ?? 1) - 1)} value={cursor} onChange={e => moveTo(Number(e.target.value))} disabled={!trace || emptyRun} />{trace?.steps.map((step, index) => <button aria-label={`${step.event ?? "step"} tick ${index + 1}`} className={`event-tick tick-${step.event ?? "step"}`} style={{ left: `${trace.steps.length > 1 ? index / (trace.steps.length - 1) * 100 : 0}%` }} key={index} onClick={() => moveTo(index)} />)}</div><div className="controls"><button disabled={(trace?.steps.length ?? 0) < 2} onClick={() => setPlaying(value => !value)}>{playing ? "Pause" : "Play"} ▶</button><button data-step-navigation="true" disabled={(trace?.steps.length ?? 0) < 2} onClick={() => moveTo(cursor - 1)}>← step back</button><button ref={stepForward} data-step-navigation="true" aria-keyshortcuts="ArrowLeft ArrowRight" title="Use Left/Right arrow keys to step" disabled={(trace?.steps.length ?? 0) < 2} onClick={() => moveTo(cursor + 1)}>step forward →</button><select aria-label="Playback speed" value={speed} onChange={e => setSpeed(Number(e.target.value))}><option value="0.5">0.5x</option><option value="1">1x</option><option value="2">2x</option><option value="4">4x</option></select><label className="predict-toggle"><input type="checkbox" disabled={stale} checked={predictMode} onChange={e => { setPredictMode(e.target.checked); setPrediction(undefined); setPredictionResult(undefined); }} /> Predict</label><span>{view ? `${location(view.line)} · ${view.event ?? "step"}` : emptyRun ? "Run finished · no recorded steps" : "No trace loaded"} · score {score} · streak {streak}</span></div>{prediction && <div className="prediction"><b>Where will {prediction.label} point after this line?</b><button disabled={predictionResult !== undefined} onClick={() => answerPrediction(null)}>NULL</button>{predictionNodes.map(node => <button key={node.address} disabled={predictionResult !== undefined} onClick={() => answerPrediction(node.address)}>{`0x${node.address.toString(16)}`}{node.freeStep !== undefined ? " (freed)" : !allocations.some(allocation => allocation.address === node.address) ? " (new block)" : ""}</button>)}{predictionResult !== undefined && <strong className={predictionResult ? "correct" : "incorrect"}>{predictionResult ? "Correct!" : "Not quite"}</strong>}</div>}</div></section>
+      <div className="timeline"><div className="panel-title">TRACE <small>{traceLabel}</small></div><p className="step-explanation">{emptyRun ? emptyRunMessage : displayedSource.active && view ? diagnostic(explainStep(view)).replace(/^Line \d+/, location(view.line)) : explainStep(view)}</p><div className="timeline-track"><input aria-label="Timeline" type="range" min="0" max={Math.max(0, (trace?.steps.length ?? 1) - 1)} value={cursor} onChange={e => moveTo(Number(e.target.value))} disabled={!trace || emptyRun} />{trace?.steps.map((step, index) => <button aria-label={`${step.event ?? "step"} tick ${index + 1}`} className={`event-tick tick-${step.event ?? "step"}`} style={{ left: `${trace.steps.length > 1 ? index / (trace.steps.length - 1) * 100 : 0}%` }} key={index} onClick={() => moveTo(index)} />)}</div><div className="controls"><button disabled={(trace?.steps.length ?? 0) < 2} onClick={() => setPlaying(value => !value)}>{playing ? "Pause" : "Play"} ▶</button><button data-step-navigation="true" disabled={(trace?.steps.length ?? 0) < 2} onClick={() => moveTo(cursor - 1)}>← step back</button><button data-step-navigation="true" aria-keyshortcuts="ArrowLeft ArrowRight" title="Use Left/Right arrow keys to step" disabled={(trace?.steps.length ?? 0) < 2} onClick={() => moveTo(cursor + 1)}>step forward →</button><select aria-label="Playback speed" value={speed} onChange={e => setSpeed(Number(e.target.value))}><option value="0.5">0.5x</option><option value="1">1x</option><option value="2">2x</option><option value="4">4x</option></select><label className="predict-toggle"><input type="checkbox" disabled={stale} checked={predictMode} onChange={e => { setPredictMode(e.target.checked); setPrediction(undefined); setPredictionResult(undefined); }} /> Predict</label><span>{view ? `${location(view.line)} · ${view.event ?? "step"}` : emptyRun ? "Run finished · no recorded steps" : "No trace loaded"} · score {score} · streak {streak}</span></div>{prediction && <div className="prediction"><b>Where will {prediction.label} point after this line?</b><button disabled={predictionResult !== undefined} onClick={() => answerPrediction(null)}>NULL</button>{predictionNodes.map(node => <button key={node.address} disabled={predictionResult !== undefined} onClick={() => answerPrediction(node.address)}>{`0x${node.address.toString(16)}`}{node.freeStep !== undefined ? " (freed)" : !allocations.some(allocation => allocation.address === node.address) ? " (new block)" : ""}</button>)}{predictionResult !== undefined && <strong className={predictionResult ? "correct" : "incorrect"}>{predictionResult ? "Correct!" : "Not quite"}</strong>}</div>}</div></section>
     <footer><a href="https://github.com/gagang2109/Memlens" target="_blank" rel="noopener noreferrer">Memlens on GitHub ↗</a> · supports a subset of C, not a full C compiler · addresses and memory are simulated</footer>
   </main>;
 }
