@@ -15,5 +15,5 @@ export function shouldHandleRunShortcut(event: KeyboardEvent): boolean {
   const target = event.target;
   if (!(target instanceof Element)) return true;
   if (target instanceof HTMLElement && target.isContentEditable) return false;
-  return !target.closest('select, [role="menu"], [role="listbox"], [role="combobox"], dialog, [role="dialog"], [role="alertdialog"], [data-run-shortcut="ignore"], [contenteditable]:not([contenteditable="false"])');
+  return !target.closest('[role="menu"], [role="listbox"], [role="combobox"], dialog, [role="dialog"], [role="alertdialog"], [data-run-shortcut="ignore"], [contenteditable]:not([contenteditable="false"])');
 }

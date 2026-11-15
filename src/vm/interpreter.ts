@@ -8,11 +8,11 @@ type Ref = { get: () => Value; set: (value: Value) => void; address?: number; al
 type HeapObject = { address: number; fields: Map<string, Value>; type?: string };
 type FlowSignal = "break" | "continue";
 
-export type RunResult = { executionMode?: "program" | "snippet"; trace: Trace; status: "ok" | "error"; error?: MemoryFault; leaks: { address: number; line: number }[]; orphanedAtExit: number[] };
+export type RunResult = { executionMode?: "program" | "snippet"; trace: Trace; status: "ok" | "error" | "waiting"; waitingLine?: number; error?: MemoryFault; leaks: { address: number; line: number }[]; orphanedAtExit: number[] };
 
 const elementSize = (type: string) => type.includes("char") ? 1 : type.startsWith("struct") ? 16 : 4;
 
-export function run(source: string, stepLimit = 100000, recursionLimit = 100, stdin = ""): RunResult {
+export function run(source: string, stepLimit = 100000, recursionLimit = 100, stdin = "", inputOpen = false): RunResult {
   const trace = new Trace();
   let program: Program;
   try { program = parse(source); } catch (caught) {
@@ -42,6 +42,13 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
     for (const object of heap.values()) for (const [label, value] of object.fields) if (["next", "left", "right"].includes(label) && typeof value === "number") pointers.push({ from: `0x${object.address.toString(16)}.${label}`, to: value, label, dangling: Boolean(memory.allocations.find(a => a.address === value)?.freeStep !== undefined) });
     trace.add({ line, stdout, memory: memory.snapshot(), frames: visible, heap: [...heap.values()].map(object => ({ address: object.address, type: object.type, fields: Object.fromEntries([...object.fields].map(([key, value]) => [key, String(value)])) })), pointers, event, message });
     steps++;
+  };
+  // An open interactive stream is not EOF. Replay starts with fresh VM state;
+  // the suspended snapshot is only for display, never resumed as a checkpoint.
+  class InputNeeded { constructor(public line: number) {} }
+  const needInput = (line: number): never => {
+    record(line, "step", "Waiting for input. Enter a line or send EOF.");
+    throw new InputNeeded(line);
   };
   const runtimeError = (reason: string, line: number, allocation?: ReturnType<Memory["find"]>): never => { throw new MemoryFault(reason, line, steps, allocation); };
   const addressFor = (expression: Expr, line: number) => {
@@ -294,10 +301,10 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
           cells.set(address, value);
         };
         for (let i = 0; i < format.length; i++) {
-          if (/\s/.test(format[i])) { while (/\s/.test(stdin[stdinCursor] ?? "") && stdinCursor < stdin.length) stdinCursor++; continue; }
+          if (/\s/.test(format[i])) { while (/\s/.test(stdin[stdinCursor] ?? "") && stdinCursor < stdin.length) stdinCursor++; if (inputOpen && stdinCursor >= stdin.length) needInput(expression.line); continue; }
           if (format[i] !== "%" || format[i + 1] === "%") {
             const literal = format[i] === "%" ? format[++i] : format[i];
-            if (stdinCursor >= stdin.length) { inputFailure = true; break; }
+            if (stdinCursor >= stdin.length) { if (inputOpen) needInput(expression.line); inputFailure = true; break; }
             if (stdin[stdinCursor] !== literal) break;
             stdinCursor++; continue;
           }
@@ -308,9 +315,15 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
           const width = widthText ? Number(widthText) : specifier === "c" ? 1 : Infinity;
           if (width < 1) runtimeError("invalid scanf field width", expression.line);
           if (specifier !== "c") while (stdinCursor < stdin.length && /\s/.test(stdin[stdinCursor])) stdinCursor++;
-          if (stdinCursor >= stdin.length) { inputFailure = true; break; }
+          if (stdinCursor >= stdin.length) { if (inputOpen) needInput(expression.line); inputFailure = true; break; }
           const remaining = stdin.slice(stdinCursor, Number.isFinite(width) ? stdinCursor + width : undefined);
           const token = specifier === "d" ? remaining.match(/^[+-]?\d+/)?.[0] : specifier === "s" ? remaining.match(/^\S+/)?.[0] : remaining;
+          // A token at the end of an open stream may still grow. A field-width
+          // boundary completes it; %c instead needs exactly its requested width.
+          if (inputOpen && stdinCursor + remaining.length === stdin.length &&
+              (specifier === "c" ? remaining.length < width :
+               token ? token.length === remaining.length && token.length < width :
+               specifier === "d" && remaining.length < width && /^[+-]$/.test(remaining))) needInput(expression.line);
           if (!token) {
             // A sign is a valid prefix of a decimal input item, even if no digit follows.
             if (specifier === "d" && /^[+-]/.test(remaining)) stdinCursor++;
@@ -351,7 +364,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
         return inputFailure && assigned === 0 ? -1 : assigned;
       }
       if (expression.name === "getchar") {
-        if (stdinCursor >= stdin.length) { record(expression.line); return -1; }
+        if (stdinCursor >= stdin.length) { if (inputOpen) needInput(expression.line); record(expression.line); return -1; }
         const character = stdin[stdinCursor];
         stdinCursor++; record(expression.line); return character;
       }
@@ -501,7 +514,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
     }
   };
   try { if (program.body.length) execute({ kind: "block", body: program.body, line: program.body[0].line }); const main = program.functions.get("main"); if (main) { record(main.line, "call"); execute(main.body); record(main.line, "return"); } else if (!program.body.length) execute({ kind: "block", body: [], line: 1 }); }
-  catch (caught) { if (caught instanceof MemoryFault) { error = caught; record(caught.line, "error", caught.reason); } else if (!(caught instanceof ReturnSignal) && !(caught instanceof ExitSignal)) { const message = caught instanceof Error || caught instanceof BreakSignal || caught instanceof ContinueSignal ? caught.message : "unsupported construct"; const match = message.match(/line (\d+)/); const line = match ? Number(match[1]) : 1; error = new MemoryFault(message, line, steps); record(line, "error", message); } }
+  catch (caught) { if (caught instanceof InputNeeded) return { executionMode: program.functions.has("main") ? "program" : "snippet", trace, status: "waiting", waitingLine: caught.line, leaks: [], orphanedAtExit: [] }; if (caught instanceof MemoryFault) { error = caught; record(caught.line, "error", caught.reason); } else if (!(caught instanceof ReturnSignal) && !(caught instanceof ExitSignal)) { const message = caught instanceof Error || caught instanceof BreakSignal || caught instanceof ContinueSignal ? caught.message : "unsupported construct"; const match = message.match(/line (\d+)/); const line = match ? Number(match[1]) : 1; error = new MemoryFault(message, line, steps); record(line, "error", message); } }
   const roots = [...frames.flatMap(frame => [...frame.vars.values()].map(variable => variable.value))].filter((value): value is number => typeof value === "number");
   const reachable = new Set<number>(); const visit = (address: number) => { const allocation = memory.allocationAt(address); if (!allocation || allocation.freeStep !== undefined || reachable.has(allocation.address)) return; reachable.add(allocation.address); const object = heap.get(allocation.address); if (object) for (const value of object.fields.values()) if (typeof value === "number") visit(value); };
   roots.forEach(visit); const live = memory.allocations.filter(allocation => allocation.freeStep === undefined); const orphanedAtExit = live.filter(allocation => !reachable.has(allocation.address)).map(allocation => allocation.address);

@@ -199,3 +199,26 @@ Choose **Practice tree height — separate test setup** for an editable two-node
 The **Start from a scaffold** control directly above the source editor is separate from the completed examples in **Samples**. Choose binary tree, singly linked list, stack, queue, graph (adjacency matrix), or a basic function. Each starter provides editable definitions/helpers, explicit hardcoded input and `main()`, with comments showing where to add and call your own algorithm. Nothing executes automatically.
 
 Choosing a category does not alter your draft. **Use starter** asks before replacing source and clearing the optional test setup; **Cancel** leaves both intact. **Restore previous draft** recovers the source/setup pair replaced by the most recent starter during this session (until reload or another starter). Copy important work before replacing it. The graph starter uses a flat adjacency matrix visible as array cells, not a dedicated node-link graph layout. All starters use Memlens's supported subset; they do not infer arbitrary types or function signatures.
+
+
+### Interactive input (optional)
+
+Select **Program input → Interactive console** above the editor and press Run
+(or Ctrl/⌘+Enter in the editor). When `scanf` or `getchar` needs input, the
+console waits above the editor beside the memory canvas on laptop layouts. Enter a line and
+press Enter/Send; each line includes a newline. **Send EOF** explicitly closes
+input. Input ahead remains the default for supplying all stdin before running.
+
+The console can collapse on smaller screens. Output and memory follow the
+selected trace step. While reviewing earlier steps, use **Return to waiting
+step** before sending more input. Stepping back never submits input again.
+Run restarts with an empty interactive transcript; Stop retains the trace but
+ends input. Editing source/setup requires Run again.
+
+This is simulated C input, not a shell. It deterministically reruns the program
+from the beginning with the accumulated transcript and replaces the old trace,
+so it does not duplicate output or mutate the old VM. Long examples cost more
+CPU with every submission. Existing execution/recursion/bounds checks remain;
+interactive sessions additionally cap input at 64 KiB, submissions at 100 and
+use a cumulative replay-step budget. It is intended for small teaching examples,
+not terminal applications. No server, process execution, or dependencies added.
