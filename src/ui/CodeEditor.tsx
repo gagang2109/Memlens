@@ -29,16 +29,18 @@ const currentLine = StateField.define<DecorationSet>({
   provide: field => EditorView.decorations.from(field),
 });
 
-export function CodeEditor({ value, currentLine: line, onChange }: { value: string; currentLine?: number; onChange: (value: string) => void }) {
+export function CodeEditor({ value, currentLine: line, onChange, onRun }: { value: string; currentLine?: number; onChange: (value: string) => void; onRun?: () => void }) {
   const [helpOpen, setHelpOpen] = useState(false);
   const [position, setPosition] = useState({ line: 1, column: 1 });
   const host = useRef<HTMLDivElement>(null); const view = useRef<EditorView>();
+  const onRunRef = useRef(onRun); onRunRef.current = onRun;
   const onChangeRef = useRef(onChange); onChangeRef.current = onChange;
   useEffect(() => {
     if (!host.current) return;
     const state = EditorState.create({ doc: value, extensions: [editorSetup, cpp(), oneDark, currentLine,
       EditorView.contentAttributes.of({ "aria-label": "C source editor", "aria-describedby": "editor-keyboard-hint" }),
       Prec.highest(keymap.of([
+        { key: "Ctrl-Enter", mac: "Meta-Enter", run: () => { if (!onRunRef.current) return false; onRunRef.current(); return true; } },
         { key: "Mod-/", run: toggleComment },
         { key: "Alt-A", run: toggleComment },
         { key: "Mod-Shift-z", run: redo },
@@ -69,6 +71,7 @@ export function CodeEditor({ value, currentLine: line, onChange }: { value: stri
       <strong>Code comfortably</strong>
       <p>Use Ctrl on Windows/Linux, or ⌘ on Mac, for “Mod” below. Shortcuts work while the editor is focused.</p>
       <dl>{[
+        ["Mod + Enter", "Run code, then use Left/Right arrows to step"],
         ["Mod + /", "Toggle comment on selected lines"],
         ["Alt + Shift + A", "Toggle comment on selected lines"],
         ["Mod + Z / Mod + Shift + Z", "Undo / redo"],

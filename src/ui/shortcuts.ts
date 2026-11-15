@@ -4,5 +4,6 @@ export function shouldHandlePlaybackShortcut(event: KeyboardEvent): boolean {
   const target = event.target;
   if (!(target instanceof Element)) return true;
   if (target instanceof HTMLElement && target.isContentEditable) return false;
+  if (target.closest('button[data-step-navigation="true"]') && ["ArrowLeft", "ArrowRight"].includes(event.key)) return true;
   return !target.closest('input, textarea, select, button, a[href], [role="button"], [role="textbox"], [contenteditable]:not([contenteditable="false"])');
 }
