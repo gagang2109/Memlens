@@ -92,3 +92,17 @@ footer a{color:var(--cyan);text-underline-offset:3px}footer a:focus-visible{outl
 .starter-confirm { border: 1px solid #64748b; border-radius: 6px; padding: 10px; margin-top: 8px; }
 .starter-confirm button { margin: 4px 8px 4px 0; }
 .restore-draft { margin: 8px 12px; }
+
+/* Laptop-first: input stays beside memory, not in a modal over the diagram. */
+.input-mode{display:flex;align-items:center;gap:10px;padding:10px 12px;color:var(--muted);font-size:12px}
+.interactive-console{padding:12px;background:#0d151e;border:1px solid var(--line);border-radius:6px;margin-top:10px;min-width:0}
+.console-heading{width:100%;text-align:left;background:#20354a;color:var(--ink);padding:9px}
+.interactive-console pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:180px;overflow:auto;color:var(--green);font:13px/1.5 ui-monospace,monospace}
+.console-state{font-size:12px;color:var(--amber)}
+.interactive-console label,.interactive-console small{display:block;font-size:12px;line-height:1.5;color:var(--muted);margin:8px 0}
+.console-input-row{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+.console-input-row input{flex:1 1 140px;min-width:0;background:#182332;color:var(--ink);border:1px solid #55708c;border-radius:5px;padding:8px}
+.console-input-row button{padding:8px;background:#263548;color:var(--ink)}
+.interactive-bottom{grid-template-columns:minmax(0,1fr)}
+@media(min-width:1100px){.interactive-workspace{grid-template-columns:minmax(0,42fr) minmax(0,58fr)}.interactive-workspace .columns{grid-template-columns:150px minmax(0,1fr)}.interactive-workspace .columns>div:last-child{grid-column:1/-1}.interactive-workspace .memory-panel{min-height:0}}
+@media(max-width:700px){.interactive-console{padding:10px}.console-input-row button{min-height:40px}}
