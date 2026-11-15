@@ -70,7 +70,11 @@ it('runs globally from visualization and starter buttons with current code, incl
   for(const target of [host.querySelector('[aria-label="Standard input"]')!, host.querySelector('[aria-label="C test setup"]')!]) {
     expect(key(target,'Enter',{ctrlKey:true}).defaultPrevented).toBe(true);
   }
-  expect(key(host.querySelector('[aria-label="Playback speed"]')!,'Enter',{ctrlKey:true}).defaultPrevented).toBe(false);
+  expect(key(host.querySelector('[aria-label="Playback speed"]')!,'Enter',{ctrlKey:true}).defaultPrevented).toBe(true);
+  const samples=host.querySelector('select')!;
+  expect(key(samples,'Enter',{ctrlKey:true}).defaultPrevented).toBe(true);
+  expect(key(samples,'ArrowDown').defaultPrevented).toBe(false);
+  expect(key(samples,'Enter').defaultPrevented).toBe(false);
   const menu=host.appendChild(document.createElement('div'));menu.setAttribute('role','menu');
   expect(key(menu,'Enter',{ctrlKey:true}).defaultPrevented).toBe(false);
   expect(key(menu,'ArrowRight').defaultPrevented).toBe(false);
