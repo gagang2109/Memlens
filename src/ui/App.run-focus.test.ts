@@ -2,7 +2,7 @@
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { EditorView } from '@codemirror/view';
-import { afterEach, beforeEach, expect, it } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { App } from './App';
 let host: HTMLDivElement; let root: Root;
 const code = 'int main(){int x=1; x=2; printf("%d",x);}';
@@ -20,10 +20,12 @@ function key(target: Element, key: string, extra: KeyboardEventInit = {}) {
 const editor=()=>host.querySelector<HTMLElement>('.cm-content')!;
 const forward=()=>[...host.querySelectorAll<HTMLButtonElement>('[data-step-navigation]')][1];
 const timeline=()=>host.querySelector<HTMLInputElement>('[aria-label="Timeline"]')!;
-it('focuses step forward after Run and allows arrows from either step button',()=>{
+it('focuses the workspace without scrolling after Run and allows arrows from either step button',()=>{
+  const focusSpy=vi.spyOn(HTMLElement.prototype,'focus');
   act(()=>host.querySelector<HTMLButtonElement>('button.run')!.click());
   const buttons=[...host.querySelectorAll<HTMLButtonElement>('[data-step-navigation]')];
-  expect(document.activeElement).toBe(buttons[1]);
+  expect(document.activeElement).toBe(host.querySelector("main"));
+  expect(focusSpy).toHaveBeenCalledWith({preventScroll:true});focusSpy.mockRestore();
   expect(key(buttons[1],'ArrowRight').defaultPrevented).toBe(true);expect(timeline().value).toBe('1');
   act(()=>buttons[0].focus());key(buttons[0],'ArrowLeft');expect(timeline().value).toBe('0');
   expect(key(buttons[0],' ',{}).defaultPrevented).toBe(false);
@@ -32,15 +34,15 @@ it('focuses step forward after Run and allows arrows from either step button',()
 it('runs latest editor contents with Ctrl+Enter without inserting a newline',()=>{
   const content=editor(); const view=EditorView.findFromDOM(content)!;
   act(()=>view.focus()); expect(key(content,'Enter',{ctrlKey:true}).defaultPrevented).toBe(true);
-  expect(view.state.doc.toString()).toBe(code);expect(document.activeElement).toBe(forward());
+  expect(view.state.doc.toString()).toBe(code);expect(document.activeElement).toBe(host.querySelector("main"));
   act(()=>{view.dispatch({changes:{from:0,to:view.state.doc.length,insert:'int main(){printf("latest");}'}});view.focus();});
-  key(content,'Enter',{ctrlKey:true});expect(document.activeElement).toBe(forward());
+  key(content,'Enter',{ctrlKey:true});expect(document.activeElement).toBe(host.querySelector("main"));
   key(host,'End');expect(host.querySelector('.console pre')!.textContent).toBe('latest');
 });
 it('keeps focus and native arrows in editor or other controls after returning to them',()=>{
   act(()=>host.querySelector<HTMLButtonElement>('button.run')!.click());
   const content=editor();act(()=>content.focus());key(content,'ArrowRight');expect(timeline().value).toBe('0');
-  for(const target of [host.querySelector('[aria-label="Standard input"]')!,host.querySelector('[aria-label="Playback speed"]')!,host.querySelector('[aria-label="C test setup"]')!]){
+  for(const target of [host.querySelector('[aria-label="Standard input"]')!,host.querySelector('[aria-label="C test setup"]')!]){
     expect(key(target,'ArrowRight').defaultPrevented).toBe(false);expect(timeline().value).toBe('0');
   }
 });
@@ -56,4 +58,32 @@ it('does not steal focus for empty runs or unrelated modified Enter',()=>{
   act(()=>{view.dispatch({changes:{from:0,to:view.state.doc.length,insert:''}});view.focus();});
   key(content,'Enter',{ctrlKey:true});expect(document.activeElement).toBe(content);expect(forward().disabled).toBe(true);
   expect(key(content,'Enter',{ctrlKey:true,altKey:true}).defaultPrevented).toBe(false);
+});
+
+it('runs globally from visualization and starter buttons with current code, including ordinary text inputs, but not menus',()=>{
+  const view=EditorView.findFromDOM(editor())!;
+  act(()=>view.dispatch({changes:{from:0,to:view.state.doc.length,insert:'int main(){printf("global");}'}}));
+  for(const target of [host.querySelector('main')!, host.querySelector('button')!]) {
+    expect(key(target,'Enter',{ctrlKey:true}).defaultPrevented).toBe(true);
+    expect(timeline().value).toBe('0');key(host,'End');expect(host.querySelector('.console pre')!.textContent).toBe('global');
+  }
+  for(const target of [host.querySelector('[aria-label="Standard input"]')!, host.querySelector('[aria-label="C test setup"]')!]) {
+    expect(key(target,'Enter',{ctrlKey:true}).defaultPrevented).toBe(true);
+  }
+  expect(key(host.querySelector('[aria-label="Playback speed"]')!,'Enter',{ctrlKey:true}).defaultPrevented).toBe(false);
+  const menu=host.appendChild(document.createElement('div'));menu.setAttribute('role','menu');
+  expect(key(menu,'Enter',{ctrlKey:true}).defaultPrevented).toBe(false);
+  expect(key(menu,'ArrowRight').defaultPrevented).toBe(false);
+  expect(key(host,'Enter',{ctrlKey:true,repeat:true}).defaultPrevented).toBe(false);
+});
+
+it('leaves modal dialogs and opt-out console controls alone',()=>{
+  for(const attributes of [{role:'dialog'}, {role:'alertdialog'}, {'data-run-shortcut':'ignore'}]) {
+    const wrapper=host.appendChild(document.createElement('div'));
+    for(const [name,value] of Object.entries(attributes)) wrapper.setAttribute(name,value!);
+    const input=wrapper.appendChild(document.createElement('input'));
+    expect(key(input,'Enter',{ctrlKey:true}).defaultPrevented).toBe(false);
+  }
+  const dialog=host.appendChild(document.createElement('dialog'));
+  expect(key(dialog,'Enter',{ctrlKey:true}).defaultPrevented).toBe(false);
 });

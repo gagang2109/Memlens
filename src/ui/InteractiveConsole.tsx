@@ -8,9 +8,9 @@ export function InteractiveConsole({ output, waiting, active, stale, atLatest, t
   const [open, setOpen] = useState(true);
   const input = useRef<HTMLInputElement>(null);
   useEffect(() => { if (waiting && !stale) setOpen(true); }, [waiting, stale, transcript]);
-  useEffect(() => { if (waiting && !stale && atLatest && open) input.current?.focus(); }, [waiting, stale, atLatest, open, transcript]);
+  useEffect(() => { if (waiting && !stale && atLatest && open) input.current?.focus({ preventScroll: true }); }, [waiting, stale, atLatest, open, transcript]);
   useEffect(() => { setLine(""); }, [transcript, active]);
-  return <section className="interactive-console" aria-label="Interactive console">
+  return <section data-run-shortcut="ignore" className="interactive-console" aria-label="Interactive console">
     <button className="console-heading" type="button" aria-expanded={open} onClick={() => setOpen(value => !value)}>Interactive console {open ? "▾" : "▸"}</button>
     {open && <>
       <p className="console-state" role="status">{stale ? "Code or mode changed. Run again before entering input." : waiting ? "Waiting for input" : active ? "Run finished" : "Press Run to start an interactive program."}</p>

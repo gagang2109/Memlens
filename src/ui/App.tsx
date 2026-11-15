@@ -12,7 +12,7 @@ import { DiagramViewport } from "./DiagramViewport";
 import { CodeEditor } from "./CodeEditor";
 import { readSavedCount, saveCount } from "./storage";
 import { explainStep } from "./stepExplanation";
-import { shouldHandlePlaybackShortcut } from "./shortcuts";
+import { shouldHandlePlaybackShortcut, shouldHandleRunShortcut } from "./shortcuts";
 import { checkPrediction, nextPointerPrediction, type PointerPrediction } from "../vm/predict";
 
 function StructureDiagram({ model, highlighted, onHighlight }: { model: ReturnType<typeof renderModel>; highlighted?: number; onHighlight: (address?: number) => void }) {
@@ -48,7 +48,7 @@ function StructureDiagram({ model, highlighted, onHighlight }: { model: ReturnTy
 }
 
 export function App() {
-  const stepForward = useRef<HTMLButtonElement>(null);
+  const workspace = useRef<HTMLElement>(null);
   const focusStepsAfterRun = useRef(false);
   const [sample, setSample] = useState<keyof typeof samples>("requested"); const [code, setCode] = useState(() => {
     // Restore before the persistence effect can write, including StrictMode's
@@ -61,6 +61,7 @@ export function App() {
   const codeSample = code === samples[sample].code ? sample : (Object.keys(samples) as (keyof typeof samples)[]).find(key => samples[key].code === code) ?? "custom";
   const selectedSample = codeSample !== "custom" && setup === (codeSample === "tree-height" ? treeHeightSetup : "") ? codeSample : "custom";
   const [previousDraft, setPreviousDraft] = useState<{ code: string; setup: string }>();
+  const [runGeneration, setRunGeneration] = useState(0);
   const session = useRef<InteractiveRun>();
   const [inputMode, setInputMode] = useState<"ahead" | "interactive">("ahead");
   const [waiting, setWaiting] = useState(false);
@@ -95,6 +96,7 @@ export function App() {
     setFault(result.error); setLeaks(result.leaks); setError(result.error?.reason ?? ""); setWaiting(result.status === "waiting");
   };
   const runCode = () => {
+    setRunGeneration(value => value + 1);
     focusStepsAfterRun.current = false;
     session.current = undefined; setWaiting(false); setTranscript(""); setConsoleError("");
     setHighlightedAddress(undefined); setLastRun({ code, stdin, setup, inputMode }); setPlaying(false); setPrediction(undefined); setPredictionResult(undefined);
@@ -113,7 +115,7 @@ export function App() {
     } catch (caught) { setConsoleError(caught instanceof Error ? caught.message : "Unable to submit input"); }
   };
   useEffect(() => {
-    if (focusStepsAfterRun.current) { focusStepsAfterRun.current = false; stepForward.current?.focus(); }
+    if (focusStepsAfterRun.current) { focusStepsAfterRun.current = false; workspace.current?.focus({ preventScroll: true }); }
   }, [trace]);
   useEffect(() => { if (stale) { setPlaying(false); setPrediction(undefined); setPredictionResult(undefined); } }, [code, stdin, setup, stale]);
   const answerPrediction = (answer: number | null) => { if (stale || !prediction || !trace || predictionResult !== undefined) return; const correct = checkPrediction(answer, prediction.expected); setPredictionResult(correct); const nextScore = correct ? score + 1 : score; const nextStreak = correct ? streak + 1 : 0; setScore(nextScore); setStreak(nextStreak); saveCount("memlens-predict-score", nextScore); saveCount("memlens-predict-streak", nextStreak);  };
@@ -129,6 +131,7 @@ export function App() {
   useEffect(() => { if (!playing || !trace || prediction) return; const timer = window.setInterval(() => { if (cursor >= trace.steps.length - 1) { setPlaying(false); return; } moveTo(cursor + 1); }, 1000 / speed); return () => window.clearInterval(timer); }, [playing, trace, cursor, speed, predictMode, prediction, stale]);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      if (shouldHandleRunShortcut(event)) { event.preventDefault(); runCode(); return; }
       if (!trace || trace.steps.length < 2 || !shouldHandlePlaybackShortcut(event)) return;
       if (!["ArrowLeft", "ArrowRight", " ", "Home", "End"].includes(event.key)) return;
       // A playback action replaces the key's native page-scroll behavior.
@@ -141,7 +144,7 @@ export function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [trace, cursor, predictMode, stale]);
+  }, [trace, cursor, predictMode, stale, code, stdin, setup, inputMode]);
   useEffect(() => { try { localStorage.setItem("memlens-code", code); } catch { /* storage is optional */ } }, [code]);
   useEffect(() => { try { localStorage.setItem("memlens-test-setup", setup); } catch { /* storage is optional */ } }, [setup]);
   const replaceDraft = (nextCode: string, nextSetup: string) => {
@@ -152,7 +155,7 @@ export function App() {
   const useStarter = (key: StarterKey) => { setPreviousDraft({ code, setup }); replaceDraft(starterScaffolds[key].code, ""); };
   const restoreDraft = () => { if (previousDraft) { replaceDraft(previousDraft.code, previousDraft.setup); setPreviousDraft(undefined); } };
   const lines = useMemo(() => code.split(/\r?\n/), [code]);
-  return <main>
+  return <main ref={workspace} tabIndex={-1} aria-label="Code execution workspace">
     <header><div className="brand"><img className="brand-mark" src="/memlens-mark.svg" width="36" height="36" alt="" aria-hidden="true" /> MEMLENS</div><div className="tag">Step through your C code and watch memory rewind.</div>
       <select aria-label="Samples" value={selectedSample} onChange={e => { if (e.target.value === "custom") return; const key = e.target.value as keyof typeof samples; session.current = undefined; setWaiting(false); setTranscript(""); setConsoleError(""); setSample(key); setLastRun(undefined); setCode(samples[key].code); setSetup(key === "tree-height" ? treeHeightSetup : ""); setTrace(undefined); setExecutionMode(undefined); setFault(undefined); setError(""); setLeaks([]); setPlaying(false); setPrediction(undefined); setPredictionResult(undefined); setCursor(0); }}><option value="custom" disabled>Custom code — choose a sample to replace it</option><option value="tree-height">Practice tree height — separate test setup</option><option value="snippet">Array sum snippet — no main needed</option><option value="requested">Push/reverse list — intentional use-after-free</option><option value="requested-uaf">Push/reverse use-after-free — same intentional error example</option><option value="tree">BST insert and inorder — traverse a binary tree</option><option value="tree-menu">Tree menu — insert, traverse, and delete a leaf</option><option value="stack">Array stack — push/pop/display with MAX</option><option value="queue">Linked queue — enqueue/dequeue with front and rear</option><option value="factorial">Factorial recursion — watch frames stack</option><option value="use-after-free">Use after free — raw block fault</option></select>
       <button className="run" onClick={runCode}>Run</button></header>
@@ -160,7 +163,7 @@ export function App() {
     <p className="step-explanation snippet-help">Practice a full program or a snippet: main() is optional here. Declare your data, then write statements or call your functions. Memlens runs a supported C subset, not arbitrary incomplete code.</p>
     {!stale && executionMode === "snippet" && trace && <p className="step-explanation" role="status">Snippet run · top-level statements execute in source order; no main() wrapper is added.</p>}
     {stale && <p className="step-explanation stale-results" role="status">Code or input changed. Memory, console, errors and trace below are from the previous run. Run again to update them.</p>}
-    <section className={`workspace ${inputMode === "interactive" ? "interactive-workspace" : ""}`}><div className="code-panel"><div className="panel-title">SOURCE <small>{lines.length} lines · edit your C code here</small></div><StarterScaffolds onUse={useStarter} /><label className="input-mode">Program input <select aria-label="Input mode" value={inputMode} onChange={event => setInputMode(event.target.value as "ahead" | "interactive")}><option value="ahead">Input ahead (stdin)</option><option value="interactive">Interactive console</option></select></label>{previousDraft && <button type="button" className="restore-draft" onClick={restoreDraft}>Restore previous draft</button>}{inputMode === "interactive" && <InteractiveConsole output={view?.stdout ?? ""} waiting={waiting} active={Boolean(lastRun)} stale={stale} atLatest={cursor === (trace?.steps.length ?? 0) - 1} transcript={transcript} error={consoleError} onSubmit={submitInteractive} onEOF={() => submitInteractive()} onLatest={() => { setPlaying(false); setCursor(Math.max(0, (trace?.steps.length ?? 1) - 1)); }} onStop={() => { session.current = undefined; setWaiting(false); setPlaying(false); setConsoleError("Stopped. The recorded trace remains available; Run starts a new session."); }} />}<CodeEditor onRun={runCode} value={code} currentLine={stale || (displayedSource.active && (view?.line ?? 0) >= displayedSource.setupStart) ? undefined : view?.line} onChange={setCode} />
+    <section className={`workspace ${inputMode === "interactive" ? "interactive-workspace" : ""}`}><div className="code-panel"><div className="panel-title">SOURCE <small>{lines.length} lines · edit your C code here</small></div><StarterScaffolds onUse={useStarter} /><label className="input-mode">Program input <select aria-label="Input mode" value={inputMode} onChange={event => setInputMode(event.target.value as "ahead" | "interactive")}><option value="ahead">Input ahead (stdin)</option><option value="interactive">Interactive console</option></select></label>{previousDraft && <button type="button" className="restore-draft" onClick={restoreDraft}>Restore previous draft</button>}{inputMode === "interactive" && <InteractiveConsole key={runGeneration} output={view?.stdout ?? ""} waiting={waiting} active={Boolean(lastRun)} stale={stale} atLatest={cursor === (trace?.steps.length ?? 0) - 1} transcript={transcript} error={consoleError} onSubmit={submitInteractive} onEOF={() => submitInteractive()} onLatest={() => { setPlaying(false); setCursor(Math.max(0, (trace?.steps.length ?? 1) - 1)); }} onStop={() => { session.current = undefined; setWaiting(false); setPlaying(false); setConsoleError("Stopped. The recorded trace remains available; Run starts a new session."); }} />}<CodeEditor onRun={runCode} value={code} currentLine={stale || (displayedSource.active && (view?.line ?? 0) >= displayedSource.setupStart) ? undefined : view?.line} onChange={setCode} />
 
       <details className="practice-setup" open={setup.trim().length > 0 || undefined}>
         <summary>Test setup &amp; call (optional)</summary>
@@ -179,7 +182,7 @@ export function App() {
         {!fault && leaks.length > 0 && <div className="leak-report"><b>MEMORY NOT FREED AT EXIT</b><span>{leaks.length} block{leaks.length === 1 ? " was" : "s were"} never freed.</span>{leaks.map(leak => <small key={leak.address}>allocation {location(leak.line)}</small>)}</div>}
       </div></section>
     <section className={`bottom ${inputMode === "interactive" ? "interactive-bottom" : ""}`}>{inputMode === "ahead" && <div className="console"><div className="panel-title">CONSOLE</div><label className="stdin-label">Program input (scanf) <input aria-label="Standard input" value={stdin} onChange={event => setStdin(event.target.value)} placeholder="e.g. 3 10 20 30 (space-separated)" /></label><pre>{view ? view.stdout || "No output printed at this step." : emptyRun ? "Run finished without printed output." : "Run a program to see its printed output (printf)."}</pre></div>}
-      <div className="timeline"><div className="panel-title">TRACE <small>{traceLabel}</small></div><p className="step-explanation">{emptyRun ? emptyRunMessage : displayedSource.active && view ? diagnostic(explainStep(view)).replace(/^Line \d+/, location(view.line)) : explainStep(view)}</p><div className="timeline-track"><input aria-label="Timeline" type="range" min="0" max={Math.max(0, (trace?.steps.length ?? 1) - 1)} value={cursor} onChange={e => moveTo(Number(e.target.value))} disabled={!trace || emptyRun} />{trace?.steps.map((step, index) => <button aria-label={`${step.event ?? "step"} tick ${index + 1}`} className={`event-tick tick-${step.event ?? "step"}`} style={{ left: `${trace.steps.length > 1 ? index / (trace.steps.length - 1) * 100 : 0}%` }} key={index} onClick={() => moveTo(index)} />)}</div><div className="controls"><button disabled={(trace?.steps.length ?? 0) < 2} onClick={() => setPlaying(value => !value)}>{playing ? "Pause" : "Play"} ▶</button><button data-step-navigation="true" disabled={(trace?.steps.length ?? 0) < 2} onClick={() => moveTo(cursor - 1)}>← step back</button><button ref={stepForward} data-step-navigation="true" aria-keyshortcuts="ArrowLeft ArrowRight" title="Use Left/Right arrow keys to step" disabled={(trace?.steps.length ?? 0) < 2} onClick={() => moveTo(cursor + 1)}>step forward →</button><select aria-label="Playback speed" value={speed} onChange={e => setSpeed(Number(e.target.value))}><option value="0.5">0.5x</option><option value="1">1x</option><option value="2">2x</option><option value="4">4x</option></select><label className="predict-toggle"><input type="checkbox" disabled={stale} checked={predictMode} onChange={e => { setPredictMode(e.target.checked); setPrediction(undefined); setPredictionResult(undefined); }} /> Predict</label><span>{view ? `${location(view.line)} · ${view.event ?? "step"}` : emptyRun ? "Run finished · no recorded steps" : "No trace loaded"} · score {score} · streak {streak}</span></div>{prediction && <div className="prediction"><b>Where will {prediction.label} point after this line?</b><button disabled={predictionResult !== undefined} onClick={() => answerPrediction(null)}>NULL</button>{predictionNodes.map(node => <button key={node.address} disabled={predictionResult !== undefined} onClick={() => answerPrediction(node.address)}>{`0x${node.address.toString(16)}`}{node.freeStep !== undefined ? " (freed)" : !allocations.some(allocation => allocation.address === node.address) ? " (new block)" : ""}</button>)}{predictionResult !== undefined && <strong className={predictionResult ? "correct" : "incorrect"}>{predictionResult ? "Correct!" : "Not quite"}</strong>}</div>}</div></section>
+      <div className="timeline"><div className="panel-title">TRACE <small>{traceLabel}</small></div><p className="step-explanation">{emptyRun ? emptyRunMessage : displayedSource.active && view ? diagnostic(explainStep(view)).replace(/^Line \d+/, location(view.line)) : explainStep(view)}</p><div className="timeline-track"><input aria-label="Timeline" type="range" min="0" max={Math.max(0, (trace?.steps.length ?? 1) - 1)} value={cursor} onChange={e => moveTo(Number(e.target.value))} disabled={!trace || emptyRun} />{trace?.steps.map((step, index) => <button aria-label={`${step.event ?? "step"} tick ${index + 1}`} className={`event-tick tick-${step.event ?? "step"}`} style={{ left: `${trace.steps.length > 1 ? index / (trace.steps.length - 1) * 100 : 0}%` }} key={index} onClick={() => moveTo(index)} />)}</div><div className="controls"><button disabled={(trace?.steps.length ?? 0) < 2} onClick={() => setPlaying(value => !value)}>{playing ? "Pause" : "Play"} ▶</button><button data-step-navigation="true" disabled={(trace?.steps.length ?? 0) < 2} onClick={() => moveTo(cursor - 1)}>← step back</button><button data-step-navigation="true" aria-keyshortcuts="ArrowLeft ArrowRight" title="Use Left/Right arrow keys to step" disabled={(trace?.steps.length ?? 0) < 2} onClick={() => moveTo(cursor + 1)}>step forward →</button><select aria-label="Playback speed" value={speed} onChange={e => setSpeed(Number(e.target.value))}><option value="0.5">0.5x</option><option value="1">1x</option><option value="2">2x</option><option value="4">4x</option></select><label className="predict-toggle"><input type="checkbox" disabled={stale} checked={predictMode} onChange={e => { setPredictMode(e.target.checked); setPrediction(undefined); setPredictionResult(undefined); }} /> Predict</label><span>{view ? `${location(view.line)} · ${view.event ?? "step"}` : emptyRun ? "Run finished · no recorded steps" : "No trace loaded"} · score {score} · streak {streak}</span></div>{prediction && <div className="prediction"><b>Where will {prediction.label} point after this line?</b><button disabled={predictionResult !== undefined} onClick={() => answerPrediction(null)}>NULL</button>{predictionNodes.map(node => <button key={node.address} disabled={predictionResult !== undefined} onClick={() => answerPrediction(node.address)}>{`0x${node.address.toString(16)}`}{node.freeStep !== undefined ? " (freed)" : !allocations.some(allocation => allocation.address === node.address) ? " (new block)" : ""}</button>)}{predictionResult !== undefined && <strong className={predictionResult ? "correct" : "incorrect"}>{predictionResult ? "Correct!" : "Not quite"}</strong>}</div>}</div></section>
     <footer><a href="https://github.com/gagang2109/Memlens" target="_blank" rel="noopener noreferrer">Memlens on GitHub ↗</a> · supports a subset of C, not a full C compiler · addresses and memory are simulated</footer>
   </main>;
 }

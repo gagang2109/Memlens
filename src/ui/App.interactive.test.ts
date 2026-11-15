@@ -59,3 +59,16 @@ it('retains input-ahead content when switching modes without consuming it',()=>{
   start(); select('Input mode','ahead');expect(container.querySelector('[aria-label="Standard input"]')).not.toBeNull();
   select('Input mode','interactive');submit('2');submit('5');expect(output()).toContain('sum 7');
 });
+it('repeated Run resets unsent input and reopens a collapsed waiting console',()=>{
+  start();type('unsent');click('.console-heading');expect(container.querySelector('form')).toBeNull();
+  click('.run');expect(container.querySelector('form')).not.toBeNull();
+  expect(container.querySelector<HTMLInputElement>('#interactive-input')!.value).toBe('');
+  expect(document.activeElement?.id).toBe('interactive-input');expect(output()).toBe('first: ');
+});
+it('global Run uses latest input mode but cannot restart from console input',()=>{
+  select('Input mode','interactive');
+  act(()=>container.querySelector('main')!.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',ctrlKey:true,bubbles:true,cancelable:true})));
+  expect(output()).toBe('first: ');submit('2');
+  act(()=>container.querySelector('#interactive-input')!.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',ctrlKey:true,bubbles:true,cancelable:true})));
+  expect(output()).toBe('first: second: ');submit('5');expect(output()).toContain('sum 7');
+});
