@@ -92,3 +92,12 @@ footer a{color:var(--cyan);text-underline-offset:3px}footer a:focus-visible{outl
 .starter-confirm { border: 1px solid #64748b; border-radius: 6px; padding: 10px; margin-top: 8px; }
 .starter-confirm button { margin: 4px 8px 4px 0; }
 .restore-draft { margin: 8px 12px; }
+
+/* Navigation changes location, never unmounts editor or execution state. */
+.section-navigation{position:sticky;top:0;z-index:10;display:flex;align-items:center;gap:16px;padding:10px 28px;background:#101822f5;border-bottom:1px solid var(--line);backdrop-filter:blur(10px)}
+.section-links{display:flex;gap:6px}.section-navigation a{display:inline-block;padding:8px 14px;border-radius:6px;color:var(--ink);text-decoration:none;font-weight:600}.section-navigation a:hover{background:#263548}.section-navigation a:focus-visible,.section-navigation summary:focus-visible{outline:2px solid var(--amber);outline-offset:2px}.section-menu{display:none}.run-hint{margin-left:auto;color:var(--muted);font-size:11px}
+#code,#memory,#console,#trace{scroll-margin-top:78px}#code:focus,#memory:focus,#console:focus,#trace:focus{outline:2px solid var(--cyan);outline-offset:-2px}
+.usage-help{margin:12px 28px;color:var(--muted);font-size:12px}.usage-help summary,.starter-description summary{cursor:pointer;line-height:1.6}.usage-help .step-explanation{margin-top:10px}.starter-description{margin-top:8px;font-size:12px;color:var(--muted)}
+@media(min-width:1000px){.workspace,.bottom{grid-template-columns:minmax(0,42fr) minmax(0,58fr)}.columns{grid-template-columns:150px minmax(0,1fr);gap:14px;min-height:0}.columns>div:last-child{grid-column:1/-1}.memory-panel{min-height:0}.code-panel,.memory-panel,.console,.timeline{padding:20px}.tag{display:none}header select{min-width:0;max-width:55%}}
+@media(max-width:999px){.workspace,.bottom{grid-template-columns:minmax(0,1fr)}}
+@media(max-width:600px){.section-navigation{padding:8px 16px}.section-links{display:none}.section-menu{display:block}.section-menu summary{cursor:pointer;padding:8px 0;list-style:none;font-weight:700}.section-menu>div{position:absolute;left:16px;top:52px;padding:6px;background:#182332;border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 24px #0006}.section-menu a{display:block;min-width:140px;min-height:44px}.usage-help{margin:10px 16px}.run-hint{font-size:10px}}
