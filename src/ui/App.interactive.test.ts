@@ -24,10 +24,12 @@ it('keeps batch stdin by default and docks optional console beside memory',()=>{
   start(); expect(container.querySelector('.code-panel .interactive-console')).not.toBeNull();
   expect(container.querySelector('.memory-panel')).not.toBeNull(); expect(output()).toBe('first: ');
   expect(document.activeElement?.id).toBe('interactive-input');
+  expect(container.querySelector('#memory #trace .waiting-console-link')?.getAttribute('href')).toBe('#console');
   submit('3'); expect(output()).toBe('first: second: ');
   submit('7'); expect(output()).toBe('first: second: sum 10');
   expect(container.querySelector<HTMLInputElement>('#interactive-input')!.disabled).toBe(true);
   expect(container.querySelector('.console-state')!.textContent).toBe('Run finished');
+  expect(container.querySelector('.waiting-console-link')).toBeNull();
 });
 it('blocks input while viewing old snapshots and never resubmits through arrows',()=>{
   start();submit('4');const count=container.querySelectorAll('.event-tick').length;
