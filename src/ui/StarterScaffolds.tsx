@@ -12,7 +12,7 @@ export function StarterScaffolds({ onUse }: { onUse: (key: StarterKey) => void }
       </select>
       <button type="button" onClick={() => setConfirming(true)}>Use starter</button>
     </div>
-    <p>{starter.description} All code remains editable.</p>
+    <details className="starter-description"><summary>What this starter includes</summary><p>{starter.description} All code remains editable.</p></details>
     {confirming && <div className="starter-confirm" role="group" aria-label="Confirm starter replacement">
       <p>Replace the source with the {starter.name.toLowerCase()} starter and clear test setup? Your current source and setup can be restored with “Restore previous draft” until you reload or load another starter. Nothing runs automatically.</p>
       <button type="button" onClick={() => { onUse(selected); setConfirming(false); }}>Replace source and clear test setup</button>
