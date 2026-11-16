@@ -1,4 +1,5 @@
 import { lex, type Token } from "./lexer";
+import { stripComments } from "./comments";
 
 export type Expr =
   | { kind: "literal"; value: number | string | null; line: number; literalKind?: "string" | "char" }
@@ -44,7 +45,7 @@ function parseNumberLiteral(text: string, line: number): number {
 
 export function parse(source: string): Program {
   const constants = new Map<string, number | string>();
-  const lines = source.split(/\r?\n/).map((line, index) => {
+  const lines = stripComments(source).split(/\r?\n/).map((line, index) => {
     const define = line.match(/^\s*#define\s+([A-Za-z_]\w*)\s+(.+?)\s*$/);
     if (define) { const value = /^".*"$/.test(define[2]) ? define[2].slice(1, -1) : Number.isNaN(Number(define[2])) && !/^[+-]?[0-9][0-9.]*$/.test(define[2]) ? define[2] : parseNumberLiteral(define[2], index + 1); constants.set(define[1], value); }
     return line.trimStart().startsWith("#") ? "" : line;
