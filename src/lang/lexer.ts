@@ -1,7 +1,7 @@
 export type TokenKind = "id" | "number" | "string" | "char" | "symbol" | "eof";
 export type Token = { kind: TokenKind; value: string; line: number; column: number };
 
-const two = new Set(["==", "!=", "<=", ">=", "++", "--", "->", "&&", "||", "+=", "-=", "*=", "/="]);
+const two = new Set(["==", "!=", "<=", ">=", "++", "--", "->", "&&", "||", "+=", "-=", "*=", "/=", "%="]);
 export function lex(source: string): Token[] {
   const out: Token[] = []; let i = 0; let line = 1; let column = 1;
   const push = (kind: TokenKind, value: string, l: number, c: number) => out.push({ kind, value, line: l, column: c });
