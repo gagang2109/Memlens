@@ -11,6 +11,7 @@ export type LayoutNode = {
   value: string;
   fields?: string[];
   next: string;
+  treeChildren?: Partial<Record<"left" | "right", number | null>>;
   type?: string;
   raw: boolean;
   size: number;
@@ -39,6 +40,8 @@ export function renderModel(step: TraceStep): RenderModel {
   const pointers = step.pointers ?? [];
   const heap = new Map((step.heap ?? []).map(object => [object.address, object]));
   const heapEdges = pointers.filter(pointer => pointer.from.startsWith("0x"));
+  const childEdges = new Map(heapEdges.filter(pointer => pointer.label === "left" || pointer.label === "right").map(pointer => [pointer.from, pointer.to]));
+  const childTargets = new Set(childEdges.values());
   const roots = pointers.filter(pointer => !pointer.from.startsWith("0x") && !pointer.dangling);
   const reachable = new Set<number>();
   const visit = (address: number) => {
@@ -57,12 +60,19 @@ export function renderModel(step: TraceStep): RenderModel {
     const raw = !!type && /^(?:int|char|short|long|float|double|void)(?:\s|$)/.test(type);
     const nextPointer = pointers.find(pointer => pointer.from === `${addressOf(allocation.address)}.next`);
     const scalarFields = object ? Object.entries(object.fields).filter(([field]) => !["next", "prev", "left", "right"].includes(field)) : [];
+    const left = childEdges.get(`${addressOf(allocation.address)}.left`);
+    const right = childEdges.get(`${addressOf(allocation.address)}.right`);
+    const readChild = (edge: number | undefined, value: string | undefined) => edge === 0 || value === "null" ? null : edge;
+    const treeChildren = !raw && (left !== undefined || right !== undefined || childTargets.has(allocation.address) ||
+      (object?.fields.left === "null" && object.fields.right === "null"))
+      ? {left:readChild(left, object?.fields.left), right:readChild(right, object?.fields.right)} : undefined;
     return {
       address: allocation.address, x: 20, y: 120, orphaned: !freed && !reachable.has(allocation.address), freed,
       freedAtStep: allocation.freeStep, label: addressOf(allocation.address),
       value: scalarFields.length === 1 ? scalarFields[0][1] : scalarFields.length ? scalarFields.map(([field, value]) => `${field}: ${value}`).join(" | ") : "—",
       fields: scalarFields.map(([field, value]) => `${field}: ${value}`),
       next: nextPointer ? addressOf(nextPointer.to) : "NULL", type, raw, size: allocation.size,
+      treeChildren,
       elementType: type && /^(int|char|short|long|float|double)$/.test(type) ? type : undefined,
     };
   });
@@ -99,9 +109,10 @@ export function renderModel(step: TraceStep): RenderModel {
   nodes.filter(node => !orderedAddresses.has(node.address)).forEach(node => ordered.push(node));
 
   const hasTreeEdges = heapEdges.some(pointer => pointer.label === "left" || pointer.label === "right");
+  const singletonRoots = nodes.filter(node => !node.freed && node.treeChildren?.left === null && node.treeChildren.right === null);
   const hasListEdges = heapEdges.some(pointer => pointer.label === "next");
   const shape: RenderShape = hasTreeEdges ? "tree" : queueEndpoints || (hasListEdges && rootNames.some(name => name.includes("front") || name.includes("rear"))) ? "queue"
-    : hasListEdges ? "singly-linked-list" : rootNames.some(name => name.includes("top") || name.includes("stack")) ? "stack" : "grid";
+    : hasListEdges ? "singly-linked-list" : singletonRoots.length ? "tree" : rootNames.some(name => name.includes("top") || name.includes("stack")) ? "stack" : "grid";
   const variableTagCounts = new Map<number, number>();
   for (const pointer of pointers) {
     if (!pointer.from.startsWith("0x")) variableTagCounts.set(pointer.to, (variableTagCounts.get(pointer.to) ?? 0) + 1);
@@ -158,7 +169,10 @@ export function renderModel(step: TraceStep): RenderModel {
       }
     }
     const childOf = (node: LayoutNode, side: "left" | "right") => branches.get(`${node.label}.${side}`);
-    const root = nodes.find(node => !children.has(node.address) && (childOf(node, "left") || childOf(node, "right")));
+    const isolatedRoots = singletonRoots.filter(node => !children.has(node.address));
+    const root = nodes.find(node => !children.has(node.address) && (childOf(node, "left") || childOf(node, "right"))) ??
+      isolatedRoots.find(node => roots.some(pointer => pointer.to === node.address && pointer.label === "root")) ??
+      isolatedRoots.find(node => reachable.has(node.address)) ?? isolatedRoots[0];
 
     type Subtree = {
       node: LayoutNode;
