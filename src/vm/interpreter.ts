@@ -1,9 +1,10 @@
 import { parse, type Expr, type FunctionDef, type Program, type Stmt } from "../lang/parser";
 import { Memory, MemoryFault, type Allocation } from "./memory";
 import { Trace, type FrameView } from "./trace";
+import { fixedArraySizeof, isFixedArrayBound } from "./fixedArraySizeof";
 
 type Value = number | string | null;
-type RuntimeVariable = { value: Value; type: string; pointer: boolean; pointerDepth?: number; array?: Value[]; dimensions?: number[]; elementSize?: number; arrayBase?: number; address?: number };
+type RuntimeVariable = { value: Value; type: string; pointer: boolean; pointerDepth?: number; array?: Value[]; dimensions?: number[]; fixedArrayBounds?: boolean; elementSize?: number; arrayBase?: number; address?: number };
 type Ref = { get: () => Value; set: (value: Value) => void; address?: number; allocation?: Allocation };
 type HeapObject = { address: number; fields: Map<string, Value>; type?: string };
 type FlowSignal = "break" | "continue";
@@ -36,6 +37,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
   // Promote these to basic execution-character codes, including digits and NUL.
   const asNum = (value: Value) => typeof value === "number" ? value : value === null ? 0 : value.length === 1 ? value.charCodeAt(0) : Number(value);
   const findVariable = (name: string) => [...frames].reverse().map(frame => frame.vars.get(name)).find(Boolean);
+  const sizeofContext = { constants: program.constants, floatingConstants: program.floatingConstants, functions: program.functions, lookup: findVariable };
   const pointerMeta = (expression: Expr) => expression.kind === "name" ? findVariable(expression.name) : undefined;
   const record = (line: number, event: "step" | "alloc" | "free" | "error" | "call" | "return" = "step", message?: string) => {
     const visible: FrameView[] = frames.map(frame => ({
@@ -229,6 +231,8 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
         runtimeError("missing scanf format argument", expression.line);
       if (expression.name === "sizeof") {
         const argument = args[0];
+        const arrayBytes = fixedArraySizeof(argument, sizeofContext, runtimeError);
+        if (arrayBytes !== undefined) return arrayBytes;
         if (argument?.kind === "literal") return argument.value;
         if (argument?.kind === "name" && argument.name === "char") return 1;
         if (argument?.kind === "name" && argument.name === "int") return 4;
@@ -545,7 +549,10 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
     if (statement.kind === "block") { for (const child of statement.body) execute(child); return; }
     if (statement.kind === "decl") {
       const variable: RuntimeVariable = { value: null, type: statement.type, pointer: statement.pointer, pointerDepth: statement.pointerDepth, elementSize: elementSize(statement.type) };
-      if (statement.arrayLength) { const dimensions = (statement.arrayLengths ?? [statement.arrayLength]).map(lengthExpr => asNum(evaluate(lengthExpr)));
+      if (statement.arrayLength) {
+        const bounds = statement.arrayLengths ?? [statement.arrayLength];
+        variable.fixedArrayBounds = bounds.every(bound => isFixedArrayBound(bound, sizeofContext));
+        const dimensions = bounds.map(lengthExpr => asNum(evaluate(lengthExpr)));
         if (dimensions.some(dimension => !Number.isSafeInteger(dimension) || dimension <= 0))
           runtimeError("array dimensions must be positive integers", statement.line);
         // Bound browser allocations before creating or initializing array storage.
