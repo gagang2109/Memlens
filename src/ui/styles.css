@@ -36,7 +36,7 @@ select{margin-left:auto;background:#182332;border:1px solid #3a4b60;color:var(--
 .diagram-tools button{min-height:34px;min-width:34px;padding:6px 10px;font-size:12px}
 .diagram-tools output{min-width:45px;text-align:center;font:12px ui-monospace,monospace;color:var(--ink)}
 .diagram-view-hint{font-size:11px;color:var(--muted);margin:6px 0 10px}
-.diagram-viewport{height:350px;max-width:100%;overflow:auto;border:1px solid var(--line);border-radius:8px;cursor:grab;overscroll-behavior:contain}
+.diagram-viewport{height:350px;max-width:100%;overflow:auto;scrollbar-gutter:stable;border:1px solid var(--line);border-radius:8px;cursor:grab;overscroll-behavior:contain}
 .diagram-viewport:focus-visible{outline:2px solid var(--cyan);outline-offset:3px}
 .diagram-viewport.is-dragging{cursor:grabbing;user-select:none}
 .structure-diagram .diagram-scaled-content svg{width:100%;height:100%;min-height:0;max-width:none}
@@ -163,6 +163,7 @@ main>.step-explanation{max-width:none;margin:12px 24px;padding:9px 12px;font-siz
 .structure-diagram{padding:10px;min-height:0;box-shadow:none}
 .diagram-tools{gap:5px;margin:8px 0}
 .diagram-tools button{background:#263548;color:#d9e7f5;min-height:30px;padding:5px 8px;font-size:11px}
+.diagram-tools button[aria-pressed="true"]{border-color:var(--cyan);color:var(--cyan)}
 .diagram-view-hint{font-size:10px;line-height:1.5}
 .diagram-viewport{height:260px}
 .structure-diagram.is-empty .diagram-caption,.structure-diagram.is-empty .diagram-tools,.structure-diagram.is-empty .diagram-view-hint,.structure-diagram.is-empty .diagram-viewport{display:none}

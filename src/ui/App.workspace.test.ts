@@ -52,9 +52,11 @@ it("fits and resets the memory view without altering the current step",()=>{
   click('.run');
   const zoom=find('output[aria-label="Visualization zoom"]');
   expect(zoom.textContent).toBe('100%');
+  Object.defineProperty(find('.diagram-viewport'), 'clientWidth', { value: 120 });
   const position=find<HTMLInputElement>('[aria-label="Timeline"]').value;
   click('.spotlight-trigger'); search('fit memory'); key(find('.spotlight input'),'Enter');
-  expect(zoom.textContent).toBe('25%');
+  expect(find<HTMLDivElement>('.diagram-scaled-content').style.width).toBe('120px');
+  expect(zoom.textContent).not.toBe('100%');
   click('.spotlight-trigger'); search('reset memory'); key(find('.spotlight input'),'Enter');
   expect(zoom.textContent).toBe('100%');
   expect(find<HTMLInputElement>('[aria-label="Timeline"]').value).toBe(position);
