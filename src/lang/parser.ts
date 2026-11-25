@@ -23,7 +23,7 @@ export type Stmt =
   | { kind: "break"; line: number }
   | { kind: "continue"; line: number }
   | { kind: "return"; value?: Expr; line: number };
-export type FunctionDef = { name: string; params: { name: string; pointer: boolean; array?: boolean; type: string }[]; body: Stmt; line: number };
+export type FunctionDef = { name: string; params: { name?: string; pointer: boolean; array?: boolean; type: string }[]; body: Stmt; line: number };
 export type Program = { functions: Map<string, FunctionDef>; structs: Map<string, string[]>; body: Stmt[]; constants: Map<string, number | string> };
 
 const types = new Set(["int", "char", "long", "long", "short", "unsigned", "float", "double", "void", "struct", "const", "static"]);
@@ -192,9 +192,24 @@ export function parse(source: string): Program {
       const save = p; const type = parseType(); const pointer = Boolean(peek("*") && take()); const name = take();
       if (peek("(")) {
         take("("); const params: FunctionDef["params"] = [];
+        const parameterNames = new Set<string>();
         while (!peek(")")) {
           if (peek("void") && ts[p + 1]?.value === ")") { take(); break; }
-          const parameterType = isType() ? parseType() : "int"; let parameterPointer = false; while (peek("*")) { take(); parameterPointer = true; } const parameterName = (peek(",") || peek(")") || peek("[") ? { value: `arg${params.length}` } : take()); const array = Boolean(peek("[")); if (array) { take("["); if (!peek("]")) parseExpression(); take("]"); } params.push({ name: parameterName.value, pointer: parameterPointer || array, array, type: parameterType }); if (!peek(",")) break; take(",");
+          const parameterType = isType() ? parseType() : "int";
+          let parameterPointer = false;
+          while (peek("*")) { take(); parameterPointer = true; }
+          const parameterName = peek(",") || peek(")") || peek("[") ? undefined : take();
+          if (parameterName) {
+            if (parameterNames.has(parameterName.value)) {
+              throw new Error(`line ${parameterName.line}: duplicate parameter '${parameterName.value}' in function '${name.value}'`);
+            }
+            parameterNames.add(parameterName.value);
+          }
+          const array = Boolean(peek("["));
+          if (array) { take("["); if (!peek("]")) parseExpression(); take("]"); }
+          params.push({ name: parameterName?.value, pointer: parameterPointer || array, array, type: parameterType });
+          if (!peek(",")) break;
+          take(",");
         }
         take(")");
         if (peek(";")) { take(); continue; }

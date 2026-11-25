@@ -429,7 +429,15 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       if (args.length !== fn.params.length)
         runtimeError(`function '${fn.name}' expects ${fn.params.length} arguments, received ${args.length}`, expression.line);
       if (frames.length >= recursionLimit) runtimeError("stack overflow", expression.line);
-      const values = args.map(argument => evaluate(argument)); frames.push({ name: fn.name, vars: new Map(fn.params.map((parameter, index) => [parameter.name, { value: values[index] ?? null, type: parameter.type, pointer: parameter.pointer, elementSize: elementSize(parameter.type) }])) }); record(expression.line, "call");
+      const values = args.map(argument => evaluate(argument));
+      const vars = new Map<string, RuntimeVariable>();
+      fn.params.forEach((parameter, index) => {
+        if (parameter.name !== undefined) {
+          vars.set(parameter.name, { value: values[index] ?? null, type: parameter.type, pointer: parameter.pointer, elementSize: elementSize(parameter.type) });
+        }
+      });
+      frames.push({ name: fn.name, vars });
+      record(expression.line, "call");
       let returned: Value = null; let failed = false;
       try { execute(fn.body); }
       catch (caught) {
