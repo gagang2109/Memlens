@@ -2,7 +2,7 @@ import { lex, type Token } from "./lexer";
 import { stripComments } from "./comments";
 
 export type Expr =
-  | { kind: "literal"; value: number | string | null; line: number; literalKind?: "string" | "char" }
+  | { kind: "literal"; value: number | string | null; line: number; literalKind?: "string" | "char" | "floating" }
   | { kind: "name"; name: string; line: number }
   | { kind: "binary"; op: string; left: Expr; right: Expr; line: number }
   | { kind: "conditional"; test: Expr; yes: Expr; no: Expr; line: number }
@@ -13,7 +13,7 @@ export type Expr =
   | { kind: "cast"; type: string; pointer: boolean; expr: Expr; line: number };
 export type Stmt =
   | { kind: "block"; body: Stmt[]; line: number }
-  | { kind: "decl"; type: string; pointer: boolean; name: string; init?: Expr; line: number; arrayLength?: Expr; arrayLengths?: Expr[]; arrayInitializer?: Expr[] }
+  | { kind: "decl"; type: string; pointer: boolean; pointerDepth?: number; name: string; init?: Expr; line: number; arrayLength?: Expr; arrayLengths?: Expr[]; arrayInitializer?: Expr[] }
   | { kind: "expr"; expr: Expr; line: number }
   | { kind: "if"; test: Expr; yes: Stmt; no?: Stmt; line: number }
   | { kind: "while"; test: Expr; body: Stmt; line: number }
@@ -23,8 +23,8 @@ export type Stmt =
   | { kind: "break"; line: number }
   | { kind: "continue"; line: number }
   | { kind: "return"; value?: Expr; line: number };
-export type FunctionDef = { name: string; params: { name?: string; pointer: boolean; array?: boolean; type: string }[]; body: Stmt; line: number };
-export type Program = { functions: Map<string, FunctionDef>; structs: Map<string, string[]>; body: Stmt[]; constants: Map<string, number | string> };
+export type FunctionDef = { name: string; returnType: string; returnsPointer: boolean; params: { name?: string; pointer: boolean; pointerDepth?: number; array?: boolean; type: string }[]; body: Stmt; line: number };
+export type Program = { functions: Map<string, FunctionDef>; structs: Map<string, string[]>; body: Stmt[]; constants: Map<string, number | string>; floatingConstants: Set<string> };
 
 const types = new Set(["int", "char", "long", "long", "short", "unsigned", "float", "double", "void", "struct", "const", "static"]);
 
@@ -45,6 +45,7 @@ function parseNumberLiteral(text: string, line: number): number {
 
 export function parse(source: string): Program {
   const constants = new Map<string, number | string>();
+  const floatingConstants = new Set<string>();
   const { text, continuedLines } = stripComments(source);
   const lines = text.split(/\r?\n/);
   for (let start = 0; start < lines.length;) {
@@ -68,6 +69,8 @@ export function parse(source: string): Program {
             ? rawValue
             : parseNumberLiteral(rawValue, valueLine + 1);
         constants.set(name, value);
+        if (typeof value === "number" && /^[+-]?(?:[0-9]+\.[0-9]*|\.[0-9]+|[0-9]+(?:\.[0-9]*)?[eE][+-]?[0-9]+)$/.test(rawValue)) floatingConstants.add(name);
+        else floatingConstants.delete(name);
       }
       lines.fill("", start, end + 1);
     }
@@ -111,7 +114,8 @@ export function parse(source: string): Program {
       const type = parseType(); const pointer = Boolean(peek("*") && take()); take(")");
       left = { kind: "cast", type, pointer, expr: parseExpression(12), line: token.line };
     } else if (token.value === "(") { left = parseExpression(); take(")"); }
-    else if (token.kind === "number") left = { kind: "literal", value: parseNumberLiteral(token.value, token.line), line: token.line };
+    else if (token.kind === "number") left = { kind: "literal", value: parseNumberLiteral(token.value, token.line), line: token.line,
+      ...(token.value.includes(".") ? { literalKind: "floating" as const } : {}) };
     else if (token.value === "struct" || token.value === "int" || token.value === "char" || token.value === "long" || knownTypes.has(token.value)) { if (token.value === "struct") take(); left = { kind: "literal", value: token.value === "char" ? 1 : token.value === "int" ? 4 : 16, line: token.line }; }
     else if (token.value === "NULL") left = { kind: "literal", value: null, line: token.line };
     else if (token.value === "sizeof" && !peek("(")) left = { kind: "call", name: "sizeof", args: [parseExpression(12)], line: token.line };
@@ -126,8 +130,8 @@ export function parse(source: string): Program {
       }
       if (peek("[")) { take("["); const index = parseExpression(); take("]"); left = { kind: "index", object: left, index, line: token.line }; continue; }
       if ((peek(".") || peek("->")) && (left.kind === "name" || left.kind === "member" || left.kind === "index" || left.kind === "unary")) { const op = take().value; const name = take(); left = { kind: "member", object: left, name: name.value, pointer: op === "->", line: name.line }; continue; }
-      const op = ts[p].kind === "symbol" ? ts[p].value : ""; const precedence = ({ ",": 0, "=": 1, "+=": 1, "-=": 1, "+": 6, "-": 6, "*": 7, "/": 7, "%": 7, "||": 2, "&&": 3, "==": 4, "!=": 4, "<": 5, ">": 5, "<=": 5, ">=": 5 } as Record<string, number>)[op] ?? -1;
-      if (precedence < min) break; take(); const right = parseExpression(precedence + (["=", "+=", "-="].includes(op) ? 0 : 1)); left = { kind: "binary", op, left, right, line: token.line };
+      const op = ts[p].kind === "symbol" ? ts[p].value : ""; const precedence = ({ ",": 0, "=": 1, "+=": 1, "-=": 1, "*=": 1, "/=": 1, "%=": 1, "+": 6, "-": 6, "*": 7, "/": 7, "%": 7, "||": 2, "&&": 3, "==": 4, "!=": 4, "<": 5, ">": 5, "<=": 5, ">=": 5 } as Record<string, number>)[op] ?? -1;
+      if (precedence < min) break; take(); const right = parseExpression(precedence + (["=", "+=", "-=", "*=", "/=", "%="].includes(op) ? 0 : 1)); left = { kind: "binary", op, left, right, line: token.line };
     }
     if (min <= 1 && peek("?")) {
       take(); const yes = parseExpression(); take(":"); const no = parseExpression(1);
@@ -140,7 +144,8 @@ export function parse(source: string): Program {
     if (peek(";")) { take(";"); return { kind: "block", body: [], line: start.line }; }
     const declarations: Stmt[] = [];
     while (true) {
-      let pointer = false; while (peek("*")) { take(); pointer = true; } const name = take();
+      let pointerDepth = 0; while (peek("*")) { take(); pointerDepth++; }
+      const pointer = pointerDepth > 0; const name = take();
       const arrayLengths: Expr[] = []; const omittedDimensions: number[] = [];
       while (peek("[")) { take("["); if (!peek("]")) arrayLengths.push(parseExpression(1)); else { omittedDimensions.push(arrayLengths.length); arrayLengths.push({ kind: "literal", value: 0, line: start.line }); } take("]"); }
       let init: Expr | undefined; let arrayInitializer: Expr[] | undefined;
@@ -163,7 +168,7 @@ export function parse(source: string): Program {
           throw new Error(`line ${start.line}: unsupported omitted array bound; specify explicit positive dimensions or use a one-dimensional initializer`);
         arrayLengths[0] = { kind: "literal", value: inferred, line: start.line };
       }
-      declarations.push({ kind: "decl", type, pointer, name: name.value, init, arrayLength: arrayLengths[0], arrayLengths: arrayLengths.length ? arrayLengths : undefined, arrayInitializer, line: start.line });
+      declarations.push({ kind: "decl", type, pointer, ...(pointerDepth ? { pointerDepth } : {}), name: name.value, init, arrayLength: arrayLengths[0], arrayLengths: arrayLengths.length ? arrayLengths : undefined, arrayInitializer, line: start.line });
       if (!peek(",")) break;
       take(",");
     }
@@ -196,8 +201,8 @@ export function parse(source: string): Program {
         while (!peek(")")) {
           if (peek("void") && ts[p + 1]?.value === ")") { take(); break; }
           const parameterType = isType() ? parseType() : "int";
-          let parameterPointer = false;
-          while (peek("*")) { take(); parameterPointer = true; }
+          let parameterDepth = 0;
+          while (peek("*")) { take(); parameterDepth++; }
           const parameterName = peek(",") || peek(")") || peek("[") ? undefined : take();
           if (parameterName) {
             if (parameterNames.has(parameterName.value)) {
@@ -207,16 +212,17 @@ export function parse(source: string): Program {
           }
           const array = Boolean(peek("["));
           if (array) { take("["); if (!peek("]")) parseExpression(); take("]"); }
-          params.push({ name: parameterName?.value, pointer: parameterPointer || array, array, type: parameterType });
+          const pointerDepth = parameterDepth + (array ? 1 : 0);
+          params.push({ name: parameterName?.value, pointer: pointerDepth > 0, ...(pointerDepth ? { pointerDepth } : {}), array, type: parameterType });
           if (!peek(",")) break;
           take(",");
         }
         take(")");
         if (peek(";")) { take(); continue; }
         if (functions.has(name.value)) throw new Error(`line ${name.line}: duplicate definition of function '${name.value}'`);
-        functions.set(name.value, { name: name.value, params, body: statement(), line: name.line });
+        functions.set(name.value, { name: name.value, returnType: type, returnsPointer: pointer, params, body: statement(), line: name.line });
       } else { p = save; body.push(statement()); }
     } else if (peek(";")) take(";"); else body.push(statement());
   }
-  return { functions, structs, body, constants };
+  return { functions, structs, body, constants, floatingConstants };
 }

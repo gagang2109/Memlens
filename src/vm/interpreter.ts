@@ -3,7 +3,7 @@ import { Memory, MemoryFault, type Allocation } from "./memory";
 import { Trace, type FrameView } from "./trace";
 
 type Value = number | string | null;
-type RuntimeVariable = { value: Value; type: string; pointer: boolean; array?: Value[]; dimensions?: number[]; elementSize?: number; arrayBase?: number; address?: number };
+type RuntimeVariable = { value: Value; type: string; pointer: boolean; pointerDepth?: number; array?: Value[]; dimensions?: number[]; elementSize?: number; arrayBase?: number; address?: number };
 type Ref = { get: () => Value; set: (value: Value) => void; address?: number; allocation?: Allocation };
 type HeapObject = { address: number; fields: Map<string, Value>; type?: string };
 type FlowSignal = "break" | "continue";
@@ -154,6 +154,50 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       let result = ""; for (let index = 0; index < 256; index++) { const cell = cells.get(value + index); if (cell === undefined || cell === 0 || cell === "\0") break; result += typeof cell === "number" ? String.fromCharCode(cell & 255) : String(cell); } return result; }
     return "";
   };
+  const signedBase = (type: string) => type.split(/\s+/).filter(word => word !== "const" && word !== "static").join(" ");
+  const promotedSignedInteger = (type: string) => ["int", "char", "short", "short int"].includes(signedBase(type));
+  // Determine the small signed-integer subset the VM can simulate correctly.
+  // A machine address or a whole-valued double is still not an integer operand.
+  // This reads type information only; it never evaluates an index or call.
+  const scalarLvalueType = (expr: Expr): string | undefined => {
+    if (expr.kind === "name") {
+      const variable = findVariable(expr.name);
+      return variable && !variable.pointer && !variable.array ? variable.type : undefined;
+    }
+    if (expr.kind === "index") {
+      const variable = pointerMeta(expr.object);
+      if (variable && (variable.array ? !variable.pointerDepth : variable.pointerDepth === 1) && (variable.dimensions?.length ?? 1) === 1) return variable.type;
+      if (expr.object.kind === "index") {
+        const matrix = pointerMeta(expr.object.object);
+        if (matrix?.array && !matrix.pointerDepth && matrix.dimensions?.length === 2) return matrix.type;
+      }
+    }
+    if (expr.kind === "unary" && expr.op === "*") {
+      const variable = pointerMeta(expr.expr);
+      if (variable?.pointerDepth === 1) return variable.type;
+    }
+  };
+  const hasIntegerProvenance = (expr: Expr): boolean => {
+    if (expr.kind === "literal") return expr.literalKind === "char"
+      || (expr.literalKind !== "floating" && typeof expr.value === "number");
+    if (expr.kind === "name") {
+      const variable = findVariable(expr.name);
+      if (variable) return !variable.pointer && !variable.array && promotedSignedInteger(variable.type);
+      return expr.name === "EOF" || (typeof program.constants.get(expr.name) === "number" && !program.floatingConstants.has(expr.name));
+    }
+    if (expr.kind === "call") {
+      if (["getchar", "strcmp", "printf", "scanf"].includes(expr.name)) return true;
+      const fn = program.functions.get(expr.name);
+      return Boolean(fn && !fn.returnsPointer && promotedSignedInteger(fn.returnType));
+    }
+    if (expr.kind === "conditional") return hasIntegerProvenance(expr.yes) && hasIntegerProvenance(expr.no);
+    if (expr.kind === "cast") return !expr.pointer && signedBase(expr.type) === "int" && hasIntegerProvenance(expr.expr);
+    if (expr.kind === "binary") return (expr.op === "," || hasIntegerProvenance(expr.left)) && hasIntegerProvenance(expr.right);
+    if (expr.kind === "unary" && ["!", "-", "++", "--"].includes(expr.op)) return hasIntegerProvenance(expr.expr);
+    const type = scalarLvalueType(expr);
+    return type !== undefined && promotedSignedInteger(type);
+  };
+  const fitsSignedInt = (value: number) => Number.isInteger(value) && value >= -2147483648 && value <= 2147483647;
   const evaluate = (expression: Expr): Value => {
     if (expression.kind === "literal") return expression.value;
     if (expression.kind === "name") {
@@ -433,7 +477,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       const vars = new Map<string, RuntimeVariable>();
       fn.params.forEach((parameter, index) => {
         if (parameter.name !== undefined) {
-          vars.set(parameter.name, { value: values[index] ?? null, type: parameter.type, pointer: parameter.pointer, elementSize: elementSize(parameter.type) });
+          vars.set(parameter.name, { value: values[index] ?? null, type: parameter.type, pointer: parameter.pointer, pointerDepth: parameter.pointerDepth, elementSize: elementSize(parameter.type) });
         }
       });
       frames.push({ name: fn.name, vars });
@@ -455,6 +499,27 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       return returned;
     }
     if (expression.kind === "binary") {
+      if (["*=", "/=", "%="].includes(expression.op)) {
+        const target = scalarLvalueType(expression.left);
+        const direct = pointerMeta(expression.left);
+        if (direct?.pointer || direct?.array) runtimeError("invalid arithmetic compound assignment to pointer or array", expression.line);
+        if (!target || signedBase(target) !== "int") runtimeError("arithmetic compound assignment requires a supported integer target (signed int)", expression.line);
+        if (target!.split(/\s+/).includes("const")) runtimeError("arithmetic compound assignment cannot modify a const target", expression.line);
+        if (!hasIntegerProvenance(expression.right)) runtimeError("arithmetic compound assignment requires supported integer operands", expression.line);
+        const reference = ref(expression.left);
+        const right = evaluate(expression.right);
+        const previous = reference.get();
+        const a = asNum(previous), b = asNum(right);
+        if (previous === null || right === null || !fitsSignedInt(a) || !fitsSignedInt(b))
+          runtimeError("arithmetic compound assignment requires supported integer operands in signed int range", expression.line);
+        if (expression.op === "/=" && b === 0) runtimeError("division by zero", expression.line);
+        if (expression.op === "%=" && b === 0) runtimeError("remainder by zero", expression.line);
+        if (expression.op !== "*=" && a === -2147483648 && b === -1)
+          runtimeError("arithmetic compound assignment overflows signed int", expression.line);
+        const value = expression.op === "*=" ? a * b : expression.op === "/=" ? Math.trunc(a / b) : a % b;
+        if (!fitsSignedInt(value)) runtimeError("arithmetic compound assignment overflows signed int", expression.line);
+        reference.set(value); record(expression.line); return value;
+      }
       if (["=", "+=", "-="].includes(expression.op)) { const reference = ref(expression.left); const right = evaluate(expression.right); const old = expression.op === "=" ? 0 : asNum(reference.get()); const pointer = pointerMeta(expression.left); const delta = pointer?.pointer ? (pointer.elementSize ?? 1) : 1; const value = expression.op === "=" ? right : old + (expression.op === "+=" ? asNum(right) * delta : -asNum(right) * delta); reference.set(value); record(expression.line); return value; }
       if (expression.op === ",") { evaluate(expression.left); return evaluate(expression.right); }
       // C logical operators evaluate the right operand only when needed.
@@ -479,7 +544,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
     if (steps >= stepLimit) runtimeError("step limit reached", statement.line);
     if (statement.kind === "block") { for (const child of statement.body) execute(child); return; }
     if (statement.kind === "decl") {
-      const variable: RuntimeVariable = { value: null, type: statement.type, pointer: statement.pointer, elementSize: elementSize(statement.type) };
+      const variable: RuntimeVariable = { value: null, type: statement.type, pointer: statement.pointer, pointerDepth: statement.pointerDepth, elementSize: elementSize(statement.type) };
       if (statement.arrayLength) { const dimensions = (statement.arrayLengths ?? [statement.arrayLength]).map(lengthExpr => asNum(evaluate(lengthExpr)));
         if (dimensions.some(dimension => !Number.isSafeInteger(dimension) || dimension <= 0))
           runtimeError("array dimensions must be positive integers", statement.line);

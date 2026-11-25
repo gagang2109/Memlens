@@ -124,6 +124,7 @@ It does not currently support:
 
 - This is a **subset interpreter**, not a standards-complete C implementation. Unsupported syntax or library calls may need a simpler equivalent.
 - Variable-length arrays, function pointers, unions, and the full C preprocessor/library are not supported.
+- `*=`, `/=`, and `%=` support writable signed `int` targets and supported signed integer expressions, including character literals. Floating-point compound arithmetic, unsigned/long arithmetic, and struct member targets are outside this subset. Division and remainder by zero, and signed overflow in these operations, stop with a diagnostic.
 - Addresses and object sizes are simulated; the app is not a substitute for a native debugger or sanitizer.
 - `sizeof` is not a general expression/type-size implementation. Basic forms such as `sizeof(int)`, `sizeof(char)`, and `sizeof(*p)` for a simple typed pointer use simulated sizes, but array, variable, and numeric-expression operands can return incorrect sizes without an error. Do not use `sizeof(array) / sizeof(array[0])` to derive loop bounds here; use an explicit element count until this limitation is resolved.
 - Local-array `memset` supports byte ranges in `char` arrays and zero-filling whole `int` elements. Partial-byte or nonzero fills of local integer arrays, and other local object representations, report an unsupported-operation error rather than guessing a machine layout.
