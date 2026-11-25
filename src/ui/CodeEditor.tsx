@@ -62,9 +62,25 @@ export function CodeEditor({ value, currentLine: line, onChange, onRun }: { valu
   }, [value]);
   useEffect(() => {
     const editor = view.current; if (!editor) return;
-    const effect = line && line > 0 && line <= editor.state.doc.lines ? setCurrentLine.of(line) : setCurrentLine.of(null);
-    editor.dispatch({ effects: effect });
-    if (line && line > 0 && line <= editor.state.doc.lines) editor.dispatch({ selection: { anchor: editor.state.doc.line(line).from }, scrollIntoView: true });
+    const activeLine = line && line > 0 && line <= editor.state.doc.lines ? line : null;
+    editor.dispatch({ effects: setCurrentLine.of(activeLine) });
+    editor.requestMeasure({
+      key: setCurrentLine,
+      read: current => {
+        const scroller = current.scrollDOM;
+        if (activeLine === null || activeLine > current.state.doc.lines || scroller.clientHeight === 0) return null;
+        const block = current.lineBlockAt(current.state.doc.line(activeLine).from);
+        const { top } = scroller.getBoundingClientRect();
+        const origin = current.documentTop - top - scroller.clientTop;
+        const blockTop = origin + block.top;
+        const blockBottom = origin + block.bottom;
+        // Follow the trace within the editor, without moving the caret or scrolling the page.
+        const delta = blockTop < 0 ? blockTop : blockBottom > scroller.clientHeight
+          ? Math.min(blockTop, blockBottom - scroller.clientHeight) : 0;
+        return delta === 0 ? null : scroller.scrollTop + delta;
+      },
+      write: (top, current) => { if (top !== null) current.scrollDOM.scrollTop = top; },
+    });
   }, [line]);
   return <div className="editor-shell">
     <div className="editor-toolbar"><span className="editor-file">main.c <small>C subset</small></span></div>

@@ -1,17 +1,18 @@
 // @vitest-environment jsdom
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { EditorView } from "@codemirror/view";
 import { CodeEditor } from "./CodeEditor";
 
 let cleanup: (() => void) | undefined;
-afterEach(() => cleanup?.());
+afterEach(() => { cleanup?.(); vi.restoreAllMocks(); });
 function mount() {
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   const container = document.body.appendChild(document.createElement("div"));
   const root = createRoot(container);
-  act(() => root.render(createElement(CodeEditor, { value: "int main() {\n  return 0;\n}", onChange: () => {} })));
+  const showLine = (currentLine?: number) => act(() => root.render(createElement(CodeEditor, { value: "int main() {\n  return 0;\n}", currentLine, onChange: () => {} })));
+  showLine();
   cleanup = () => { act(() => root.unmount()); container.remove(); };
   const content = container.querySelector<HTMLElement>(".cm-content")!;
   const editor = EditorView.findFromDOM(content)!;
@@ -20,8 +21,32 @@ function mount() {
     act(() => content.dispatchEvent(event));
     return event;
   }
-  return { container, content, editor, key };
+  return { container, content, editor, key, showLine };
 }
+it("follows a trace line inside the editor without moving the user's selection", () => {
+  const { container, editor, showLine } = mount();
+  act(() => editor.dispatch({ selection: { anchor: 2, head: 6 } }));
+  const scroller = editor.scrollDOM;
+  Object.defineProperty(scroller, "clientHeight", { configurable: true, value: 20 });
+  vi.spyOn(scroller, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 100, 200, 20));
+  vi.spyOn(editor, "documentTop", "get").mockReturnValue(100);
+  const from = editor.state.doc.line(3).from;
+  const block = editor.lineBlockAt(from);
+  vi.spyOn(editor, "lineBlockAt").mockReturnValue(Object.create(block, {
+    top: { value: 60 }, bottom: { value: 72 },
+  }));
+  const measure = vi.spyOn(editor, "requestMeasure");
+  container.scrollTop = 7;
+  showLine(3);
+  const follow = measure.mock.calls.map(([request]) => request).find(request => request?.key && request.write);
+  expect(follow).toBeDefined();
+  follow!.write!(follow!.read(editor), editor);
+  expect(scroller.scrollTop).toBe(52);
+  expect(container.scrollTop).toBe(7);
+  expect(editor.state.selection.main.anchor).toBe(2);
+  expect(editor.state.selection.main.head).toBe(6);
+  expect(container.querySelector(".cm-memlens-current")?.textContent).toBe("}");
+});
 it("comments with Ctrl+/, opens help from the bottom button, and preserves accessible focus", () => {
   const { container, content, editor, key } = mount();
   expect(container.querySelector(".cm-lineNumbers")).not.toBeNull();
