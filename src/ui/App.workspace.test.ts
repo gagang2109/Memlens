@@ -63,13 +63,13 @@ it("resizes adjacent desktop panes by keyboard without replacing their contents"
   const side=find('[aria-label="Resize code and memory"]');
   const end=find('[aria-label="Resize memory and terminal"]');
   const workspace=find('.workspace');
-  expect(workspace.style.getPropertyValue('--split-code')).toBe('36fr');
+  expect(workspace.style.getPropertyValue('--split-code')).toBe('28fr');
   key(side,'ArrowRight');
-  expect(workspace.style.getPropertyValue('--split-code')).toBe('38fr');
-  expect(workspace.style.getPropertyValue('--split-memory')).toBe('38fr');
+  expect(workspace.style.getPropertyValue('--split-code')).toBe('30fr');
+  expect(workspace.style.getPropertyValue('--split-memory')).toBe('47fr');
   key(end,'Home');
   expect(workspace.style.getPropertyValue('--split-memory')).toBe('20fr');
-  expect(workspace.style.getPropertyValue('--split-console')).toBe('42fr');
+  expect(workspace.style.getPropertyValue('--split-console')).toBe('50fr');
   expect(find('[data-editor]').textContent).toContain('original draft');
 });
 it("focuses a pane and restores the exact split widths, code, and trace",()=>{
@@ -110,6 +110,10 @@ it("switches presets without changing source or execution and docks the terminal
   });
   click('.run');
   const current=find<HTMLInputElement>('[aria-label="Timeline"]').value;
+  expect(find<HTMLSelectElement>('#workspace-layout').value).toBe('visualizer');
+  expect(find('.workspace').style.getPropertyValue('--split-memory')).toBe('49fr');
+  setLayout('balanced');
+  expect(find('.workspace').style.getPropertyValue('--split-memory')).toBe('40fr');
   setLayout('writing');
   expect(find('.workspace').style.getPropertyValue('--split-code')).toBe('56fr');
   setLayout('tracing');
@@ -122,4 +126,59 @@ it("switches presets without changing source or execution and docks the terminal
   expect(find('#console').classList.contains('console-window-docked')).toBe(true);
   expect(find('[data-editor]').textContent).toContain('original draft');
   expect(find<HTMLInputElement>('[aria-label="Timeline"]').value).toBe(current);
+});
+
+it("uses in-page expansion when native fullscreen rejects, and returns to the same layout and step", async () => {
+  click('.run');
+  const panel = find('#memory');
+  const fullscreenButton = find<HTMLButtonElement>('.visualizer-fullscreen');
+  Object.defineProperty(panel, 'requestFullscreen', { configurable:true, value:vi.fn().mockRejectedValue(new Error('unavailable')) });
+  const workspace = find('.workspace');
+  const sizes = workspace.getAttribute('style');
+  const timeline = find<HTMLInputElement>('[aria-label="Timeline"]');
+  const step = timeline.value;
+  expect(find('.columns')?.firstElementChild?.className).toBe('heap-column');
+  await act(async () => fullscreenButton.click());
+  expect(fullscreenButton.textContent).toBe('Exit enlarged view');
+  expect(panel.dataset.enlarged).toBe('true');
+  expect(find('#code').hidden).toBe(true);
+  expect(find('.terminal-panel').hidden).toBe(true);
+  expect(timeline.value).toBe(step);
+  key(fullscreenButton,'Escape');
+  expect(fullscreenButton.textContent).toBe('Fullscreen visualizer');
+  expect(document.activeElement).toBe(fullscreenButton);
+  expect(find('#code').hidden).toBe(false);
+  expect(workspace.getAttribute('style')).toBe(sizes);
+  expect(timeline.value).toBe(step);
+});
+
+it("requests browser fullscreen for only the visualizer and reacts to browser exit", async () => {
+  const panel = find('#memory');
+  const button = find<HTMLButtonElement>('.visualizer-fullscreen');
+  const own = Object.getOwnPropertyDescriptor(document,'fullscreenElement');
+  const setFullscreen = (element: HTMLElement | null) => {
+    Object.defineProperty(document,'fullscreenElement',{configurable:true,value:element});
+    document.dispatchEvent(new Event('fullscreenchange'));
+  };
+  const request = vi.fn(async () => setFullscreen(panel));
+  Object.defineProperty(panel,'requestFullscreen',{configurable:true,value:request});
+  try {
+    click('.run');
+    const position = find<HTMLInputElement>('[aria-label="Timeline"]').value;
+    await act(async () => button.click());
+    expect(request).toHaveBeenCalledOnce();
+    expect(document.fullscreenElement).toBe(panel);
+    expect(button.textContent).toBe('Exit fullscreen');
+    expect(panel.dataset.enlarged).toBe('true');
+    key(button,"k",{ctrlKey:true});
+    expect(panel.querySelector('.spotlight')).not.toBeNull();
+    key(find('.spotlight input'),'Escape');
+    act(() => setFullscreen(null));
+    expect(button.textContent).toBe('Fullscreen visualizer');
+    expect(document.activeElement).toBe(button);
+    expect(find<HTMLInputElement>('[aria-label="Timeline"]').value).toBe(position);
+  } finally {
+    if (own) Object.defineProperty(document,'fullscreenElement',own);
+    else Reflect.deleteProperty(document,'fullscreenElement');
+  }
 });
