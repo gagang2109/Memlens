@@ -253,3 +253,11 @@ footer{padding:16px 24px;font-size:10px}
 
 .trace-keys{margin:8px 0 0;color:#b8c7d8;font-size:11px;line-height:1.6}
 .trace-keys kbd{color:var(--ink);font:inherit;font-weight:700}
+.linked-sample,.sample-share{margin:8px 18px;padding:8px 12px;border:1px solid var(--line);border-radius:8px;color:var(--ink);font-size:12px}
+.linked-sample{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
+.linked-sample span,.sample-share-note{color:var(--muted)}
+.linked-sample strong{color:var(--cyan)}
+.sample-share summary{cursor:pointer}
+.sample-share label{display:inline-flex;align-items:center;flex-wrap:wrap;gap:8px;margin:8px 8px 4px 0}
+.sample-share input{width:min(28rem,68vw);max-width:100%}
+.sample-share-note{display:block;margin-top:4px}

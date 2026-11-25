@@ -28,6 +28,8 @@ Memlens is a browser-based learning tool for C data structures and memory. Edit 
 4. Step forward and backward. Watch the current explanation, console, call stack, and heap change together.
 5. Zoom or pan the memory view to follow pointers. When an error appears, step backward to find what caused it.
 
+Try a [shared Factorial example](https://memlensc.vercel.app/#sample=factorial): choose **Load sample**, then **Run** to trace the recursion that prints 120. Opening the link alone leaves your editor and test setup untouched. For any unedited built-in sample, **Share sample** gives you a link to the example, not to private editor contents or program input.
+
 ## What you can explore
 
 | Learn by doing | What Memlens shows |

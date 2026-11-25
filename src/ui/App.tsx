@@ -1,6 +1,7 @@
 import { PointerQuickLook } from "./PointerQuickLook";
 import { SplitDivider, balancedSplit, type SplitSizes } from "./SplitDivider";
 import { Spotlight, type SpotlightItem } from "./Spotlight";
+import { readSampleLink, SampleShare } from "./SampleShare";
 import { StarterScaffolds } from "./StarterScaffolds";
 import { starterScaffolds, type StarterKey } from "../starterScaffolds";
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
@@ -78,6 +79,7 @@ type FocusPane = "code" | "memory" | "terminal";
 
 export function App() {
   const workspace = useRef<HTMLElement>(null);
+  const samplesPicker = useRef<HTMLSelectElement>(null);
   const [splitSizes, setSplitSizes] = useState<SplitSizes>(balancedSplit);
   const [activeLayout, setActiveLayout] = useState<LayoutPreset | "custom">("balanced");
   const [dockRequest, setDockRequest] = useState(0);
@@ -107,6 +109,19 @@ export function App() {
     catch { return samples.requested.code; }
   });
   const [setup, setSetup] = useState(() => { try { return localStorage.getItem("memlens-test-setup") ?? ""; } catch { return ""; } });
+  const [linkedSample, setLinkedSample] = useState(() => readSampleLink(window.location.hash));
+  useEffect(() => {
+    const update = () => setLinkedSample(readSampleLink(window.location.hash));
+    window.addEventListener("hashchange", update);
+    return () => window.removeEventListener("hashchange", update);
+  }, []);
+  const dismissSampleLink = () => {
+    if (readSampleLink(window.location.hash)) {
+      window.history.replaceState(window.history.state, "", window.location.pathname + window.location.search);
+    }
+    setLinkedSample(undefined);
+    samplesPicker.current?.focus({ preventScroll: true });
+  };
   // Preserve an explicitly chosen alias, otherwise identify the actual editor content.
   const codeSample = code === samples[sample].code ? sample : (Object.keys(samples) as (keyof typeof samples)[]).find(key => samples[key].code === code) ?? "custom";
   const selectedSample = codeSample !== "custom" && setup === (codeSample === "tree-height" ? treeHeightSetup : "") ? codeSample : "custom";
@@ -218,6 +233,11 @@ export function App() {
   const selectSample = (key: keyof typeof samples) => {
     setSample(key); replaceDraft(samples[key].code, key === "tree-height" ? treeHeightSetup : "");
   };
+  const loadLinkedSample = () => {
+    if (!linkedSample || (selectedSample === "custom" && !window.confirm("Replace the current code and test setup with this sample?"))) return;
+    if (linkedSample !== selectedSample) selectSample(linkedSample);
+    dismissSampleLink();
+  };
   const spotlightItems: SpotlightItem[] = [
     { id: "run", label: "Run", detail: "Run the current code", action: runCode },
     ...(model ? [
@@ -236,9 +256,16 @@ export function App() {
   const lines = useMemo(() => code.split(/\r?\n/), [code]);
   return <main ref={workspace} tabIndex={-1} aria-label="Code execution workspace">
     <header><div className="brand"><img className="brand-mark" src="/memlens-mark.svg" width="36" height="36" alt="" aria-hidden="true" /> MEMLENS</div><div className="tag">Step through your C code and watch memory rewind.</div>
-      <select aria-label="Samples" value={selectedSample} onChange={e => { if (e.target.value !== "custom") selectSample(e.target.value as keyof typeof samples); }}><option value="custom" disabled>Custom code (current editor contents)</option>{Object.entries(sampleLabels).map(([key,label]) => <option key={key} value={key}>{label}</option>)}</select>
+      <select ref={samplesPicker} aria-label="Samples" value={selectedSample} onChange={e => { if (e.target.value !== "custom") selectSample(e.target.value as keyof typeof samples); }}><option value="custom" disabled>Custom code (current editor contents)</option>{Object.entries(sampleLabels).map(([key,label]) => <option key={key} value={key}>{label}</option>)}</select>
       <button type="button" className="spotlight-trigger" aria-keyshortcuts="Control+k Meta+k" onClick={event => { showSpotlight(); spotlightTrigger.current = event.currentTarget; }}>Spotlight <kbd>Ctrl / ⌘ K</kbd></button><button className="run" onClick={runCode} title="Run code (Ctrl / ⌘ + Enter)" aria-keyshortcuts="Control+Enter Meta+Enter">Run</button></header>
     <SectionNavigation />
+    {linkedSample && <section className="linked-sample" aria-label="Shared sample">
+      <strong>{sampleLabels[linkedSample]}</strong>
+      <span>Opening the link hasn’t changed your code or test setup.</span>
+      <button type="button" onClick={loadLinkedSample}>Load sample</button>
+      <button type="button" onClick={dismissSampleLink}>Dismiss</button>
+    </section>}
+    {selectedSample !== "custom" && <SampleShare key={selectedSample} sample={selectedSample} />}
     <div className="workspace-layouts"><label htmlFor="workspace-layout">Workspace layout</label>
       <select id="workspace-layout" value={activeLayout} onChange={event => { if (event.target.value !== "custom") selectLayout(event.target.value as LayoutPreset); }}>
         <option value="custom" disabled>Custom split</option>
