@@ -228,7 +228,7 @@ it("keeps all 100 rootless cycle nodes distinct and within scrollable bounds", (
   }
 });
 
-it("preserves rooted-tree horizontal positions while reserving vertical tag clearance", () => {
+it("centers the root between siblings while reserving vertical tag clearance", () => {
   const model = renderModel({
     index: 0, line: 1, stdout: "", frames: [],
     pointers: [
@@ -239,7 +239,10 @@ it("preserves rooted-tree horizontal positions while reserving vertical tag clea
       address, size: 16, allocStep: 0, line: 1,
     })) },
   });
-  expect(model.nodes.map(({ x, y }) => [x, y])).toEqual([[34, 60], [48, 200], [212, 200]]);
+  const [root, left, right] = model.nodes;
+  expect(root.x).toBe((left.x + right.x) / 2);
+  expect(left.x + 164).toBeLessThanOrEqual(right.x);
+  expect([root.y, left.y, right.y]).toEqual([60, 200, 200]);
 });
 
 it.each(["grid", "tree", "singly-linked-list", "stack"] as const)("keeps live and dangling variable tags inside horizontal bounds for %s", shape => {

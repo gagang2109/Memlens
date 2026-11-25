@@ -102,43 +102,52 @@ export function renderModel(step: TraceStep): RenderModel {
     });
   }
   if (shape === "tree") {
-    const children = new Set(heapEdges.filter(pointer => pointer.label === "left" || pointer.label === "right").map(pointer => pointer.to));
-    const root = nodes.find(node => !children.has(node.address));
-    const childOf = (address: number, label: string) => {
-      const pointer = heapEdges.find(edge => edge.from === `${addressOf(address)}.${label}`);
-      return pointer ? nodes.find(candidate => candidate.address === pointer.to) : undefined;
-    };
-    let leaf = 0;
-    const measured = new Set<number>();
-    const depthOf = (node: LayoutNode | undefined): number => {
-      if (!node || measured.has(node.address)) return 0;
-      measured.add(node.address);
-      return 1 + Math.max(depthOf(childOf(node.address, "left")), depthOf(childOf(node.address, "right")));
-    };
-    // Student pointer graphs can contain cycles or shared children. Visit each
-    // block once while retaining every pointer arrow for inspection.
-    const placed = new Set<number>();
-    const place = (node: LayoutNode, depth: number): number => {
-      if (placed.has(node.address)) return node.x;
-      placed.add(node.address);
-      const left = childOf(node.address, "left");
-      const right = childOf(node.address, "right");
-      if (left) place(left, depth + 1);
-      const x = left && right ? (left.x + right.x) / 2 : left ? left.x + 82 : right ? right.x - 82 : 48 + leaf++ * 164;
-      // Leave 40px for child alias tags plus a 78px parent card and
-      // 22px clearance. The prior 92px level stride put tags over parents.
-      node.x = x; node.y = 60 + depth * 140;
-      if (right) place(right, depth + 1);
-      return x;
-    };
-    if (root) {
-      place(root, 0);
-      const depth = depthOf(root);
-      const minX = Math.min(...nodes.map(node => node.x));
-      if (minX < 20) nodes.forEach(node => { node.x += 20 - minX; });
-      canvasWidth = Math.max(520, Math.max(...nodes.map(node => node.x)) + 164);
-      canvasHeight = 55 + depth * 140;
+    const byAddress = new Map(nodes.map(node => [node.address, node]));
+    const branches = new Map<string, LayoutNode>();
+    const children = new Set<number>();
+    for (const pointer of heapEdges) {
+      if (pointer.label !== "left" && pointer.label !== "right") continue;
+      const target = byAddress.get(pointer.to);
+      if (target && !branches.has(pointer.from)) {
+        branches.set(pointer.from, target);
+        children.add(target.address);
+      }
     }
+    const childOf = (node: LayoutNode, side: "left" | "right") => branches.get(`${node.label}.${side}`);
+    const root = nodes.find(node => !children.has(node.address) && (childOf(node, "left") || childOf(node, "right")));
+
+    type Subtree = {
+      node: LayoutNode;
+      rootX: number;
+      width: number;
+      left?: Subtree;
+      right?: Subtree;
+      rightOffset: number;
+    };
+    const placed = new Set<number>();
+    const halfGap = 82;
+    const measure = (node: LayoutNode | undefined): Subtree | undefined => {
+      if (!node || placed.has(node.address)) return;
+      // Student graphs can contain cycles or shared children. Each block
+      // occupies space once; all original arrows still appear in the canvas.
+      placed.add(node.address);
+      const left = measure(childOf(node, "left"));
+      const right = measure(childOf(node, "right"));
+      const rightOffset = left?.width ?? (right ? Math.max(0, halfGap - right.rootX) : 0);
+      const rootX = left && right ? (left.rootX + rightOffset + right.rootX) / 2
+        : left ? left.rootX + halfGap : right ? rightOffset + right.rootX - halfGap : 0;
+      const width = Math.max(rootX + 2 * halfGap, left?.width ?? 0, right ? rightOffset + right.width : 0);
+      return { node, rootX, width, left, right, rightOffset };
+    };
+    const place = (subtree: Subtree, offset: number, depth: number) => {
+      subtree.node.x = offset + subtree.rootX;
+      // Leave room for child alias tags above each card.
+      subtree.node.y = 60 + depth * 140;
+      if (subtree.left) place(subtree.left, offset, depth + 1);
+      if (subtree.right) place(subtree.right, offset + subtree.rightOffset, depth + 1);
+    };
+    const layout = measure(root);
+    if (layout) place(layout, 20, 0);
     // Rootless cycles and disconnected blocks are not part of the selected
     // tree. Keep them inspectable in a separate row instead of stacking them
     // at the default coordinates; preserve all real pointer arrows.
