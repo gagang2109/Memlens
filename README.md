@@ -52,7 +52,9 @@ The bundled BST sample during inorder traversal, with the diagram zoomed out to 
 
 | Where | Shortcut or control | Action |
 | --- | --- | --- |
+| Workspace or editor | Ctrl / ⌘ + Enter | Run the current code |
 | Editor | Ctrl / ⌘ + `/` | Toggle comments on selected lines |
+| Editor | Alt + Shift + A | Alternate comment toggle |
 | Editor | Ctrl / ⌘ + `F` | Find and replace |
 | Editor | Ctrl / ⌘ + `Z` / Ctrl / ⌘ + Shift + `Z` | Undo / redo |
 | Editor | **Keyboard shortcuts** button | Open the full editing guide |
@@ -127,6 +129,17 @@ It does not currently support:
 - Predict skips local-pointer questions when recursive calls share the same function name: the current trace labels cannot uniquely identify those frames. Stepping and playback still continue normally.
 - Source and Predict progress use browser localStorage, not an account or cloud sync. Browser storage can be cleared or unavailable.
 - The production JavaScript bundle includes CodeMirror and currently triggers Vite's large-chunk warning.
+
+### Floating terminal
+
+Select **Float terminal** to keep the console visible while reading the code or memory diagram. Drag **Move** to reposition it, or drag **Resize** to change its size. Both controls also work with the arrow keys when focused. **Minimize** tucks the terminal in the bottom corner without losing your input or output; **Restore terminal** brings it back, and **Dock** returns it below the editor.
+
+### Workspace shortcuts and layouts
+
+- **Spotlight** (Ctrl/⌘ + K) searches sample programs and actions. **Reset memory view** resets zoom and pan only. Spotlight asks before replacing edited code or test setup with a sample.
+- Drag either **Split View** divider to resize its neighboring panes on desktop, or focus the divider and use the arrow keys. **Focus code**, **Focus memory**, and **Focus terminal** temporarily fill the workspace; **Restore workspace** or Escape returns to your old split.
+- Use a pointer’s **Quick Look** button to inspect its recorded address and target without changing the current step.
+- **Workspace layout** presets rearrange pane space for writing, tracing, or console work without resetting source or execution.
 
 ## Run locally
 

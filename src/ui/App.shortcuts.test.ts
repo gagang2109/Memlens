@@ -38,8 +38,10 @@ it("does not steal editor/control keys while keeping canvas playback shortcuts",
   const play = container.querySelector<HTMLButtonElement>(".controls button")!;
   const editorLine = container.querySelector('[data-testid="editor"] span')!;
   expect(timeline.value).toBe("0");
+  expect(container.querySelector(".run")!.getAttribute("aria-keyshortcuts")).toBe("Control+Enter Meta+Enter");
+  expect(container.querySelector(".trace-keys")!.textContent).toContain("Space");
 
-  for (const target of [editorLine, play, container.querySelector('[aria-label="Playback speed"]')!]) {
+  for (const target of [editorLine, play, container.querySelector('[aria-label="Playback speed"]')!, container.querySelector(".usage-help summary")!]) {
     for (const key of ["ArrowRight", "End", " "]) {
       const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
       act(() => target.dispatchEvent(event));
@@ -49,6 +51,14 @@ it("does not steal editor/control keys while keeping canvas playback shortcuts",
     }
   }
 
+  for (const key of [" ", "ArrowRight"]) {
+    const modified = new KeyboardEvent("keydown", { key, shiftKey: true, bubbles: true, cancelable: true });
+    act(() => container.dispatchEvent(modified));
+    expect(modified.defaultPrevented).toBe(false);
+    expect(timeline.value).toBe("0");
+    expect(play.textContent).toContain("Play");
+  }
+
   act(() => container.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true })));
   expect(timeline.value).toBe("1");
   act(() => container.dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true })));
@@ -56,6 +66,10 @@ it("does not steal editor/control keys while keeping canvas playback shortcuts",
   const space = new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true });
   act(() => container.dispatchEvent(space));
   expect(space.defaultPrevented).toBe(true);
+  expect(play.textContent).toContain("Pause");
+  const heldSpace = new KeyboardEvent("keydown", { key: " ", repeat: true, bubbles: true, cancelable: true });
+  act(() => container.dispatchEvent(heldSpace));
+  expect(heldSpace.defaultPrevented).toBe(true);
   expect(play.textContent).toContain("Pause");
 });
 

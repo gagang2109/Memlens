@@ -30,3 +30,26 @@ it("keeps real heap pointers hexadecimal and clears their highlight when a numer
   act(() => slot("s").click());
   expect(container.querySelector(".highlighted-node")).toBeNull();
 });
+it("Quick Look shows the current target without stepping and restores button focus",()=>{
+  show('char *p=malloc(4);p[0]=65;printf("%c",p[0]);');
+  const position=container.querySelector<HTMLInputElement>('[aria-label="Timeline"]')!.value;
+  const button=slot("p").querySelector<HTMLButtonElement>('button')!;
+  act(()=>button.click());
+  const dialog=container.querySelector('[role="dialog"]')!;
+  expect(dialog.textContent).toContain('Quick Look: p');
+  expect(dialog.textContent).toContain('0x1000');
+  expect(dialog.textContent).toContain('0x41');
+  expect(container.querySelector<HTMLInputElement>('[aria-label="Timeline"]')!.value).toBe(position);
+  act(()=>dialog.querySelector('button')!.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true})));
+  expect(container.querySelector('[role="dialog"]')).toBeNull();
+  expect(document.activeElement).toBe(button);
+});
+it("Quick Look distinguishes null, string data, and freed allocations",()=>{
+  show('char *p=malloc(4);free(p);char *n=NULL;char *s="4096";');
+  for(const [name, expected] of [['p','not readable'],['n','No target'],['s','not a heap address']]){
+    act(()=>slot(name).querySelector<HTMLButtonElement>('button')!.click());
+    const dialog=container.querySelector('[role="dialog"]')!;
+    expect(dialog.textContent).toContain(expected);
+    act(()=>dialog.querySelector('button')!.click());
+  }
+});

@@ -8,6 +8,9 @@ import { toggleComment, redo, history, defaultKeymap, historyKeymap } from "@cod
 import { bracketMatching, indentOnInput } from "@codemirror/language";
 import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
 
+// CodeMirror may receive the shifted character A or an explicit Shift+a.
+const alternateComment = { keys: ["Alt-A", "Alt-Shift-a"], label: "Alt + Shift + A" };
+
 // Only load features used by this C-subset editor, not completion or lint engines.
 const editorSetup = [
   lineNumbers(), highlightActiveLineGutter(), highlightSpecialChars(),
@@ -42,7 +45,7 @@ export function CodeEditor({ value, currentLine: line, onChange, onRun }: { valu
       Prec.highest(keymap.of([
         { key: "Ctrl-Enter", mac: "Meta-Enter", run: () => { if (!onRunRef.current) return false; onRunRef.current(); return true; } },
         { key: "Mod-/", run: toggleComment },
-        { key: "Alt-A", run: toggleComment },
+        ...alternateComment.keys.map(key => ({ key, run: toggleComment })),
         { key: "Mod-Shift-z", run: redo },
       ])), EditorView.lineWrapping, EditorView.updateListener.of(update => { if (update.docChanged) onChangeRef.current(update.state.doc.toString());
       if (update.selectionSet || update.docChanged) {
@@ -71,9 +74,9 @@ export function CodeEditor({ value, currentLine: line, onChange, onRun }: { valu
       <strong>Code comfortably</strong>
       <p>Use Ctrl on Windows/Linux, or ⌘ on Mac, for “Mod” below. Shortcuts work while the editor is focused.</p>
       <dl>{[
-        ["Mod + Enter", "Run code, then use Left/Right arrows to step"],
+        ["Mod + Enter", "Run code"],
         ["Mod + /", "Toggle comment on selected lines"],
-        ["Alt + Shift + A", "Toggle comment on selected lines"],
+        [alternateComment.label, "Toggle comment on selected lines"],
         ["Mod + Z / Mod + Shift + Z", "Undo / redo"],
         ["Mod + F", "Open Find and Replace"],
         ["Mod + A", "Select all code"],
@@ -82,6 +85,7 @@ export function CodeEditor({ value, currentLine: line, onChange, onRun }: { valu
         ["Enter", "New line with automatic indentation"],
         ["Tab / Shift + Tab", "Move focus to the next / previous control"],
       ].map(([keys, action]) => <div key={keys}><dt><kbd>{keys}</kbd></dt><dd>{action}</dd></div>)}</dl>
+      <p>While stepping outside the editor, use Left/Right to move between steps. Space plays or pauses, and Home/End jump to the ends when not focused on an interactive control.</p>
       <p>Syntax highlighting and bracket matching help you edit; this is a supported C subset, not a full C compiler.</p>
       <button type="button" onClick={() => { setHelpOpen(false); view.current?.focus(); }}>Close guide and return to code</button>
     </section>}

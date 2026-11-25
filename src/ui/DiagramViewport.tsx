@@ -1,8 +1,10 @@
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+
+export type MemoryViewRequest = { type: "fit" | "reset" };
 
 const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 3;
-export function DiagramViewport({ width, height, children }: { width: number; height: number; children: ReactNode }) {
+export function DiagramViewport({ width, height, children, memoryViewRequest }: { width: number; height: number; children: ReactNode; memoryViewRequest?: MemoryViewRequest }) {
   const viewport = useRef<HTMLDivElement>(null);
   const drag = useRef<{ id: number; x: number; y: number; left: number; top: number }>();
   const [zoom, setZoom] = useState(1);
@@ -13,6 +15,8 @@ export function DiagramViewport({ width, height, children }: { width: number; he
     changeZoom(fit && element ? element.clientWidth / Math.max(1, width) : 1);
     if (element) { element.scrollLeft = 0; element.scrollTop = 0; }
   };
+  const previousRequest = useRef(memoryViewRequest);
+  useEffect(() => { if (memoryViewRequest && previousRequest.current !== memoryViewRequest) { previousRequest.current = memoryViewRequest; reset(memoryViewRequest.type === "fit"); } }, [memoryViewRequest]);
   const endDrag = () => { drag.current = undefined; setDragging(false); };
   return <>
     <div className="diagram-tools" role="group" aria-label="Memory visualization view controls">

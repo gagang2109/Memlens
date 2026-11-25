@@ -38,6 +38,10 @@ it("comments with Ctrl+/, opens help from the bottom button, and preserves acces
 });
 it("supports alternate comment, undo and search keymaps", () => {
   const { container, editor, key } = mount();
+  act(() => container.querySelector<HTMLButtonElement>(".editor-status button")!.click());
+  expect(container.querySelector("#editor-shortcuts")?.textContent).toContain("Alt + Shift + A");
+  key("a", { altKey: true, keyCode: 65 });
+  expect(editor.state.doc.toString()).not.toContain("//");
   key("A", { altKey: true, shiftKey: true, keyCode: 65 });
   expect(editor.state.doc.toString()).toContain("// int main()");
   key("z", { ctrlKey: true });

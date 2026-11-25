@@ -97,7 +97,7 @@ footer a{color:var(--cyan);text-underline-offset:3px}footer a:focus-visible{outl
 .input-mode{display:flex;align-items:center;gap:10px;padding:10px 12px;color:var(--muted);font-size:12px}
 .interactive-console{padding:12px;background:#0d151e;border:1px solid var(--line);border-radius:6px;margin-top:10px;min-width:0}
 .console-heading{width:100%;text-align:left;background:#20354a;color:var(--ink);padding:9px}
-.interactive-console pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:180px;overflow:auto;color:var(--green);font:13px/1.5 ui-monospace,monospace}
+.interactive-console pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:var(--console-output-max-height,180px);overflow:auto;color:var(--green);font:13px/1.5 ui-monospace,monospace}
 .console-state{font-size:12px;color:var(--amber)}
 .interactive-console label,.interactive-console small{display:block;font-size:12px;line-height:1.5;color:var(--muted);margin:8px 0}
 .console-input-row{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
@@ -140,8 +140,8 @@ main>.step-explanation{max-width:none;margin:12px 24px;padding:9px 12px;font-siz
 .editor-shell .code-editor{height:clamp(280px,44vh,480px)}
 .practice-setup{margin-top:10px;padding:10px 0;border-top:0;color:#b8c7d8;font-size:12px}
 .practice-setup summary{font-weight:500}
-.code-panel>.console{margin-top:12px;padding:14px;border:1px solid var(--line);border-radius:10px}
-.code-panel>.console pre{max-height:180px;overflow:auto;font-size:13px}
+.console-window-body>.console{margin-top:12px;padding:14px;border:1px solid var(--line);border-radius:10px}
+.console-window-body>.console pre{max-height:var(--console-output-max-height,180px);overflow:auto;font-size:13px}
 .memory-panel>.timeline{padding:14px;margin-bottom:18px;border:1px solid #3b4d61;border-radius:12px;background:linear-gradient(120deg,#1b2a3a,#15202d);box-shadow:0 8px 24px #0002}
 .timeline .panel-title{margin-bottom:8px;color:var(--amber)}
 .timeline .step-explanation{margin:0 0 10px;padding:8px 10px;font-size:12px;line-height:1.5;max-width:none}
@@ -180,3 +180,76 @@ footer{padding:16px 24px;font-size:10px}
 @media(max-width:700px){header{height:auto;padding:16px}.columns,.interactive-workspace .columns{grid-template-columns:minmax(0,1fr)}.code-panel,.memory-panel{padding:16px}.section-navigation{padding:8px 16px}.usage-help{margin:10px 16px}main>.step-explanation{margin:10px 16px}.editor-shell .code-editor{height:340px}.timeline .controls button{min-height:40px}.input-mode{flex-wrap:wrap}.input-mode select{max-width:100%}.stack-slot code{max-width:160px}}
 .waiting-console-link{display:block;margin:8px 0 12px;padding:9px 12px;border:1px solid #536776;border-radius:6px;color:var(--cyan);background:#122a31;font-size:12px;text-underline-offset:3px}
 .waiting-console-link:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
+
+/* The output height toggle applies to stdout only, not the submitted-input transcript. */
+.console-output{min-width:0}
+.console-output.is-expanded{--console-output-max-height:max(180px,min(62vh,36rem))}
+.console-output-toggle{background:#263548;color:var(--ink);margin:0 0 8px;padding:6px 10px;min-height:32px;font-size:12px}
+.console-output-toggle[aria-pressed="true"]{background:#4a3922;color:#f7dca6}
+.console-output pre:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+@media(max-width:700px){.console-output-toggle{min-height:44px}}
+
+/* One terminal stays mounted when docked, floating, or minimized. */
+.console-window{min-width:0;margin-top:12px}
+.console-window-bar{display:flex;align-items:center;flex-wrap:wrap;gap:6px;padding:7px 8px;background:#192638;border:1px solid var(--line);border-radius:8px}
+.console-window-title{flex:1;color:var(--muted);font:700 12px ui-monospace,monospace}
+.console-window button:is(.console-window-move,.console-window-resize),.console-window-bar button{background:#263548;color:var(--ink);font-size:12px;padding:6px 9px;min-height:32px}
+.console-window-body>.console,.console-window-body>.interactive-console{margin-top:6px}
+.console-window-floating,.console-window-minimized{position:fixed;z-index:24;margin:0;background:#0d151e;border:1px solid #536776;border-radius:10px;box-shadow:0 14px 38px #000a;overflow:hidden}
+.console-window-floating{display:flex;flex-direction:column}
+.console-window-floating .console-window-bar,.console-window-minimized .console-window-bar{flex-shrink:0;border:0;border-bottom:1px solid var(--line);border-radius:0}
+.console-window-floating .console-window-body{flex:1;min-height:0;overflow:auto;padding:0 6px 6px}
+.console-window-minimized{right:8px;bottom:8px;max-width:calc(100% - 16px)}
+.console-window-minimized .console-window-bar{border:0}
+.console-window-floating .console-window-title,.console-window-move,.console-window-resize{touch-action:none;user-select:none}
+.console-window-floating .console-window-title,.console-window-move{cursor:grab}
+.console-window-dot{display:inline-grid;place-items:center;width:13px;height:13px;margin-right:5px;border-radius:50%;background:var(--amber);color:#17120b;font-size:11px}
+.console-window-move:active{cursor:grabbing}
+.console-window-resize{align-self:flex-end;flex-shrink:0;margin:0 6px 6px;cursor:nwse-resize}
+@media(max-width:700px){.console-window button:is(.console-window-move,.console-window-resize),.console-window-bar button{min-height:44px}}
+.spotlight-trigger{background:#263548;color:var(--ink)}
+.spotlight-trigger kbd{color:var(--muted);font-size:10px;margin-left:3px}
+.spotlight-scrim{position:fixed;inset:0;z-index:40;display:grid;align-items:start;justify-items:center;padding:clamp(16px,12vh,100px) 12px 12px;background:#080c13b8}
+.spotlight{width:min(100%,560px);padding:14px;border:1px solid #536776;border-radius:15px;background:#172536;box-shadow:0 26px 75px #000a}
+.spotlight label{display:block;color:var(--cyan);font-weight:750;margin-bottom:7px}
+.spotlight input{width:100%;background:#0f1722;color:var(--ink);border:1px solid #536776;padding:11px;border-radius:7px}
+.spotlight ul{list-style:none;padding:0;margin:10px 0;max-height:min(45vh,320px);overflow:auto}
+.spotlight li{cursor:pointer;padding:8px 11px;border-radius:6px;display:flex;flex-direction:column}
+.spotlight li[aria-selected=true]{background:#29425b;color:var(--ink)}
+.spotlight-hint{color:var(--muted);font-size:11px;margin:0}
+@media(max-width:700px){.spotlight-trigger kbd{display:none}}
+.terminal-panel{padding:12px 16px;min-width:0}
+.split-divider{display:none}
+@media(min-width:1040px){
+  .workspace,.workspace.interactive-workspace{grid-template-columns:minmax(0,var(--split-code,36fr)) 10px minmax(0,var(--split-memory,40fr)) 10px minmax(0,var(--split-console,24fr))}
+  .workspace:has(.console-window:not(.console-window-docked)){grid-template-columns:minmax(0,var(--split-code,36fr)) 10px minmax(0,var(--split-memory,40fr))}
+  .workspace:has(.console-window:not(.console-window-docked)) .split-divider-1{display:none}
+  .workspace:has(.console-window:not(.console-window-docked)) .terminal-panel{padding:0}
+  .workspace .code-panel{border-right:0}
+  .workspace .columns,.workspace.interactive-workspace .columns{grid-template-columns:minmax(0,1fr)}
+  .split-divider{display:grid;place-items:start center;align-self:stretch;cursor:col-resize;background:#101821;touch-action:none;border-radius:5px}
+  .split-divider span{display:block;margin-top:22px;border-radius:3px;width:3px;height:26px;background:#536776;position:sticky;top:76px}
+  .split-divider:hover,.split-divider:focus-visible{background:#29425b;outline:2px solid var(--cyan)}
+}
+@media(max-width:1039px){.workspace,.workspace.interactive-workspace{grid-template-columns:minmax(0,1fr)}}
+.pane-focus{background:#263548;color:var(--ink);font-size:12px;padding:6px 9px;margin:0 0 7px}
+.workspace.has-focus,.workspace.has-focus:has(.console-window:not(.console-window-docked)){grid-template-columns:minmax(0,1fr)}
+.workspace.has-focus .split-divider,.workspace > [hidden]{display:none}
+.workspace.has-focus .code-editor{height:clamp(360px,68vh,1040px)}
+.console-window-focused{position:static;width:100%;height:auto;min-height:55vh}
+.console-window-focused .console-output pre{max-height:60vh}
+.console-window-focused .console-window-title{cursor:auto}
+.workspace.has-focus .terminal-panel:has(.console-window-focused){padding:12px 16px}
+.stack-slot.pointer-slot{flex-wrap:wrap;gap:6px}
+.stack-slot .quick-look-trigger{padding:4px 7px;color:var(--cyan);background:#162a3c;border:1px solid #536776;font:700 10px/1.2 ui-monospace,monospace}
+.pointer-quick-look h2{font-size:16px;color:var(--cyan);margin:0 0 12px}
+.pointer-quick-look dl{display:grid;grid-template-columns:auto minmax(0,1fr);gap:6px 12px;margin:8px 0}
+.pointer-quick-look dt{color:var(--muted)}
+.pointer-quick-look dd{margin:0;overflow-wrap:anywhere}
+.pointer-quick-look .quick-look-fields div{display:contents}
+.pointer-quick-look{max-height:75vh;overflow:auto}
+.workspace-layouts{display:flex;align-items:center;gap:8px;padding:7px 18px;color:var(--muted);font-size:12px;border-bottom:1px solid var(--line)}
+.workspace-layouts select{margin:0;padding:5px 8px}
+
+.trace-keys{margin:8px 0 0;color:#b8c7d8;font-size:11px;line-height:1.6}
+.trace-keys kbd{color:var(--ink);font:inherit;font-weight:700}

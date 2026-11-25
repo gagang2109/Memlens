@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
+import { ConsoleOutput } from "./ConsoleOutput";
 
-export function InteractiveConsole({ output, waiting, active, stale, atLatest, transcript, error, onSubmit, onEOF, onLatest, onStop }: {
-  output: string; waiting: boolean; active: boolean; stale: boolean; atLatest: boolean;
+export function InteractiveConsole({ output, outputExpanded, onToggleOutput, waiting, active, stale, atLatest, transcript, error, onSubmit, onEOF, onLatest, onStop }: {
+  output: string; outputExpanded: boolean; onToggleOutput: () => void; waiting: boolean; active: boolean; stale: boolean; atLatest: boolean;
   transcript: string; error: string; onSubmit: (line: string) => void; onEOF: () => void; onLatest: () => void; onStop: () => void;
 }) {
   const [line, setLine] = useState("");
@@ -14,7 +15,7 @@ export function InteractiveConsole({ output, waiting, active, stale, atLatest, t
     <button className="console-heading" type="button" aria-expanded={open} onClick={() => setOpen(value => !value)}>Interactive console {open ? "▾" : "▸"}</button>
     {open && <>
       <p className="console-state" role="status">{stale ? "Code or mode changed. Run again before entering input." : waiting ? "Waiting for input" : active ? "Run finished" : "Press Run to start an interactive program."}</p>
-      <pre aria-label="Program output">{output || "No output printed at this step."}</pre>
+      <ConsoleOutput expanded={outputExpanded} onToggle={onToggleOutput}>{output || "No output printed at this step."}</ConsoleOutput>
       {waiting && !atLatest && !stale && <button type="button" onClick={onLatest}>Return to waiting step</button>}
       <form onSubmit={event => { event.preventDefault(); if (waiting && !stale && atLatest) onSubmit(line); }}>
         <label htmlFor="interactive-input">Enter a line (Enter to send)</label>

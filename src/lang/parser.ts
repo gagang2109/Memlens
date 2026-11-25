@@ -1,4 +1,5 @@
 import { lex, type Token } from "./lexer";
+import { stripComments } from "./comments";
 
 export type Expr =
   | { kind: "literal"; value: number | string | null; line: number; literalKind?: "string" | "char" }
@@ -44,11 +45,34 @@ function parseNumberLiteral(text: string, line: number): number {
 
 export function parse(source: string): Program {
   const constants = new Map<string, number | string>();
-  const lines = source.split(/\r?\n/).map((line, index) => {
-    const define = line.match(/^\s*#define\s+([A-Za-z_]\w*)\s+(.+?)\s*$/);
-    if (define) { const value = /^".*"$/.test(define[2]) ? define[2].slice(1, -1) : Number.isNaN(Number(define[2])) && !/^[+-]?[0-9][0-9.]*$/.test(define[2]) ? define[2] : parseNumberLiteral(define[2], index + 1); constants.set(define[1], value); }
-    return line.trimStart().startsWith("#") ? "" : line;
-  });
+  const { text, continuedLines } = stripComments(source);
+  const lines = text.split(/\r?\n/);
+  for (let start = 0; start < lines.length;) {
+    let end = start;
+    while (continuedLines.has(end)) end++;
+    // A multiline block comment is whitespace within a directive, not a
+    // directive terminator. The lexer still needs every physical newline.
+    const directive = end === start ? lines[start] : lines.slice(start, end + 1).join(" ");
+    if (directive.trimStart().startsWith("#")) {
+      const define = directive.match(/^(\s*#\s*define\s+([A-Za-z_]\w*)\s+)(\S.*?)\s*$/);
+      if (define) {
+        const [, prefix, name, rawValue] = define;
+        let valueLine = start;
+        let valueOffset = prefix.length;
+        while (valueLine < end && valueOffset > lines[valueLine].length) {
+          valueOffset -= lines[valueLine++].length + 1;
+        }
+        const value = /^".*"$/.test(rawValue)
+          ? rawValue.slice(1, -1)
+          : Number.isNaN(Number(rawValue)) && !/^[+-]?[0-9][0-9.]*$/.test(rawValue)
+            ? rawValue
+            : parseNumberLiteral(rawValue, valueLine + 1);
+        constants.set(name, value);
+      }
+      lines.fill("", start, end + 1);
+    }
+    start = end + 1;
+  }
   const ts = lex(lines.join("\n")); let p = 0;
   const structs = new Map<string, string[]>(); const knownTypes = new Set(["int", "char", "long", "void"]); const aliasTypes = new Map<string, string>();
   const functions = new Map<string, FunctionDef>(); const body: Stmt[] = [];
