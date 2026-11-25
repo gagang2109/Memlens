@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { run } from "../vm/interpreter";
 import { samples } from "../samples";
-import { renderModel } from "./model";
+import { listReturnLink, renderModel } from "./model";
 
 describe("memory visualization model", () => {
   it("lays out next-linked heap nodes as a singly linked list", () => {
@@ -279,4 +279,25 @@ it("orders a recognized queue from front and leaves room for its pointer labels"
   expect(b.y).toBe(a.y);
   expect(b.x+27).toBeGreaterThan(a.x+27+2*76+72);
   expect(model.arrows).toEqual(pointers);
+});
+
+it("keeps a detached return link inside the canvas without changing straight or non-next links", () => {
+  const model = renderModel({
+    index:0,line:1,stdout:"",frames:[],
+    pointers:[
+      {from:"0x1000.next",label:"next",to:4112,dangling:false},
+      {from:"0x1010.next",label:"next",to:4096,dangling:false},
+    ],
+    memory:{bytes:[],shadows:[],allocations:[4096,4112].map(address=>({address,size:16,line:1,allocStep:0}))},
+  });
+  const [first, second] = model.nodes;
+  expect(first.orphaned && second.orphaned).toBe(true);
+  expect(listReturnLink(model.shape, "next", first, second)).toBeUndefined();
+  expect(listReturnLink(model.shape, "prev", second, first)).toBeUndefined();
+  expect(listReturnLink("tree", "next", second, first)).toBeUndefined();
+  expect(listReturnLink(model.shape, "next", second, {...first, y:0})).toBeUndefined();
+  const route = listReturnLink(model.shape, "next", second, first)!;
+  expect(route.bottom).toBeGreaterThan(first.y + 78);
+  expect(model.canvasHeight).toBeGreaterThan(route.bottom);
+  expect(model.arrows).toHaveLength(2);
 });

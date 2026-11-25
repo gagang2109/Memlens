@@ -22,6 +22,19 @@ export type RenderModel = { queueEndpoints?: [QueueEndpoint, QueueEndpoint]; nod
 
 const addressOf = (address: number) => `0x${address.toString(16)}`;
 
+// Route same-row next pointers that return to an earlier card (or to
+// themselves) below the row, rather than through opaque node rectangles.
+export function listReturnLink(shape: RenderShape, label: string, source: LayoutNode, target: LayoutNode) {
+  if ((shape !== "singly-linked-list" && shape !== "queue") || label !== "next" ||
+      source.y !== target.y || target.x > source.x) return undefined;
+  const exit = source.x + 126, gutter = exit + 9, entry = target.x + 63;
+  const top = source.y + 27, bottom = source.y + 94;
+  return {
+    bottom,
+    path: `M${exit} ${top} H${gutter - 4} Q${gutter} ${top} ${gutter} ${top + 4} V${bottom - 5} Q${gutter} ${bottom} ${gutter - 5} ${bottom} H${entry + 5} Q${entry} ${bottom} ${entry} ${bottom - 5} V${target.y + 78}`,
+  };
+}
+
 export function renderModel(step: TraceStep): RenderModel {
   const pointers = step.pointers ?? [];
   const heap = new Map((step.heap ?? []).map(object => [object.address, object]));
@@ -198,5 +211,16 @@ export function renderModel(step: TraceStep): RenderModel {
     const tagCount = variableTagCounts.get(node.address) ?? 0;
     if (tagCount) canvasWidth = Math.max(canvasWidth, node.x + 27 + (tagCount - 1) * 76 + 72 + 20);
   }
-  return { nodes, ...(shape === "queue" ? { queueEndpoints } : {}), arrows: pointers.filter(pointer => nodes.some(node => node.address === pointer.to)), shape, canvasWidth, canvasHeight };
+  const nodesByLabel = new Map(nodes.map(node => [node.label, node]));
+  const arrows = pointers.filter(pointer => nodesByLabel.has(addressOf(pointer.to)));
+  if (shape === "singly-linked-list" || shape === "queue") {
+    for (const arrow of arrows) {
+      if (arrow.label !== "next" || !arrow.from.startsWith("0x")) continue;
+      const source = nodesByLabel.get(arrow.from.split(".")[0]);
+      const target = nodesByLabel.get(addressOf(arrow.to))!;
+      const route = source && listReturnLink(shape, arrow.label, source, target);
+      if (route) canvasHeight = Math.max(canvasHeight, route.bottom + 14);
+    }
+  }
+  return { nodes, ...(shape === "queue" ? { queueEndpoints } : {}), arrows, shape, canvasWidth, canvasHeight };
 }

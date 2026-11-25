@@ -15,7 +15,7 @@ import { ConsoleWindow } from "./ConsoleWindow";
 import { run } from "../vm/interpreter";
 import { samples } from "../samples";
 import type { Trace, TraceStep, FrameVariable } from "../vm/trace";
-import { renderModel } from "../viz/model";
+import { listReturnLink, renderModel } from "../viz/model";
 import { DiagramViewport, type MemoryViewRequest } from "./DiagramViewport";
 import { CodeEditor } from "./CodeEditor";
 import { readSavedCount, saveCount } from "./storage";
@@ -56,6 +56,8 @@ function StructureDiagram({ model, highlighted, onHighlight, memoryViewRequest }
           const label = arrow.from.split(".").pop(); const left = label === "left"; const x1 = source.x + (left ? 20 : 106); const y1 = source.y + 18;
           return <line key={`arrow-${index}`} x1={x1} y1={y1} x2={target.x + 63} y2={target.y} className={arrow.dangling ? "dangling-arrow" : "pointer-arrow"} markerEnd="url(#arrow)" />;
         }
+        const returning = listReturnLink(model.shape, arrow.label, source, target);
+        if (returning) return <path key={`arrow-${index}`} d={returning.path} data-pointer-route="return" className={arrow.dangling ? "dangling-arrow" : "pointer-arrow"} markerEnd="url(#arrow)"><title>{`${source.label}.next → ${target.label}${source === target ? " (same node)" : ""}${arrow.dangling ? " (freed node)" : ""}`}</title></path>;
         const targetX = target.x >= source.x ? target.x : target.x + 126;
         return <line key={`arrow-${index}`} x1={source.x + 95} y1={source.y + 27} x2={targetX} y2={target.y + 27} className={arrow.dangling ? "dangling-arrow" : "pointer-arrow"} markerEnd="url(#arrow)" />;
       })}
