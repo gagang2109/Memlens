@@ -11,13 +11,14 @@ export type LayoutNode = {
   value: string;
   fields?: string[];
   next: string;
+  listLinks?: { next: string; prev: string };
   treeChildren?: Partial<Record<"left" | "right", number | null>>;
   type?: string;
   raw: boolean;
   size: number;
   elementType?: string;
 };
-export type RenderShape = "singly-linked-list" | "tree" | "stack" | "queue" | "grid";
+export type RenderShape = "singly-linked-list" | "doubly-linked-list" | "tree" | "stack" | "queue" | "grid";
 export type QueueEndpoint = { role: "front" | "rear"; from: string; address: number | null };
 export type RenderModel = { queueEndpoints?: [QueueEndpoint, QueueEndpoint]; nodes: LayoutNode[]; arrows: PointerArrow[]; shape: RenderShape; canvasWidth: number; canvasHeight: number };
 
@@ -26,7 +27,7 @@ const addressOf = (address: number) => `0x${address.toString(16)}`;
 // Route same-row next pointers that return to an earlier card (or to
 // themselves) below the row, rather than through opaque node rectangles.
 export function listReturnLink(shape: RenderShape, label: string, source: LayoutNode, target: LayoutNode) {
-  if ((shape !== "singly-linked-list" && shape !== "queue") || label !== "next" ||
+  if ((shape !== "singly-linked-list" && shape !== "doubly-linked-list" && shape !== "queue") || label !== "next" ||
       source.y !== target.y || target.x > source.x) return undefined;
   const exit = source.x + 126, gutter = exit + 9, entry = target.x + 63;
   const top = source.y + 27, bottom = source.y + 94;
@@ -34,6 +35,15 @@ export function listReturnLink(shape: RenderShape, label: string, source: Layout
     bottom,
     path: `M${exit} ${top} H${gutter - 4} Q${gutter} ${top} ${gutter} ${top + 4} V${bottom - 5} Q${gutter} ${bottom} ${gutter - 5} ${bottom} H${entry + 5} Q${entry} ${bottom} ${entry} ${bottom - 5} V${target.y + 78}`,
   };
+}
+
+export function previousListLink(source: LayoutNode, target: LayoutNode) {
+  const top = source.y + 45, exit = source.x;
+  if (source.y !== target.y || (target.x < source.x && target.x + 145 >= source.x)) {
+    return { bottom: 0, path: `M${exit} ${top} L${target.x + 126} ${target.y + 45}` };
+  }
+  const bottom = source.y + 94, gutter = exit - 9, entry = target.x + 33;
+  return { bottom, path: `M${exit} ${top} H${gutter} V${bottom} H${entry} V${target.y + 78}` };
 }
 
 export function renderModel(step: TraceStep): RenderModel {
@@ -59,7 +69,12 @@ export function renderModel(step: TraceStep): RenderModel {
     const type = object?.type ?? allocation.type;
     const raw = !!type && /^(?:int|char|short|long|float|double|void)(?:\s|$)/.test(type);
     const nextPointer = pointers.find(pointer => pointer.from === `${addressOf(allocation.address)}.next`);
-    const scalarFields = object ? Object.entries(object.fields).filter(([field]) => !["next", "prev", "left", "right"].includes(field)) : [];
+    const scalarFields = object ? Object.entries(object.fields).filter(([field]) => !["next", "left", "right"].includes(field) && (field !== "prev" || !object.doublyLinked)) : [];
+    const listField = (field: "next" | "prev") => {
+      const value = object?.fields[field];
+      const edge = heapEdges.find(pointer => pointer.from === `${addressOf(allocation.address)}.${field}`);
+      return value === "null" || value === "0" ? "NULL" : edge ? addressOf(edge.to) : "—";
+    };
     const left = childEdges.get(`${addressOf(allocation.address)}.left`);
     const right = childEdges.get(`${addressOf(allocation.address)}.right`);
     const readChild = (edge: number | undefined, value: string | undefined) => edge === 0 || value === "null" ? null : edge;
@@ -73,6 +88,7 @@ export function renderModel(step: TraceStep): RenderModel {
       fields: scalarFields.map(([field, value]) => `${field}: ${value}`),
       next: nextPointer ? addressOf(nextPointer.to) : "NULL", type, raw, size: allocation.size,
       treeChildren,
+      ...(object?.doublyLinked ? {listLinks:{next:listField("next"),prev:listField("prev")}} : {}),
       elementType: type && /^(int|char|short|long|float|double)$/.test(type) ? type : undefined,
     };
   });
@@ -105,21 +121,37 @@ export function renderModel(step: TraceStep): RenderModel {
   };
   const frontAddress = queueEndpoints?.[0].address;
   if (frontAddress && reachable.has(frontAddress)) followNext(frontAddress);
-  [...preferredRoots, ...roots].forEach(root => followNext(root.to));
+  const nextByFrom = new Map(heapEdges.filter(edge => edge.label === "next" && !edge.dangling).map(edge => [edge.from, edge.to]));
+  const prevByFrom = new Map(heapEdges.filter(edge => edge.label === "prev" && !edge.dangling).map(edge => [edge.from, edge.to]));
+  const listStart = (address: number) => {
+    const seen = new Set<number>();
+    let current = address;
+    while (!seen.has(current)) {
+      seen.add(current);
+      const predecessor = prevByFrom.get(`${addressOf(current)}.prev`);
+      if (predecessor === undefined || !reachable.has(predecessor) || nextByFrom.get(`${addressOf(predecessor)}.next`) !== current) return current;
+      current = predecessor;
+    }
+    // A circle has no head; keep the actual root as its entry point.
+    return address;
+  };
+  [...preferredRoots, ...roots].forEach(root => {
+    if (!orderedAddresses.has(root.to)) followNext(listStart(root.to));
+  });
   nodes.filter(node => !orderedAddresses.has(node.address)).forEach(node => ordered.push(node));
 
   const hasTreeEdges = heapEdges.some(pointer => pointer.label === "left" || pointer.label === "right");
   const singletonRoots = nodes.filter(node => !node.freed && node.treeChildren?.left === null && node.treeChildren.right === null);
   const hasListEdges = heapEdges.some(pointer => pointer.label === "next");
   const shape: RenderShape = hasTreeEdges ? "tree" : queueEndpoints || (hasListEdges && rootNames.some(name => name.includes("front") || name.includes("rear"))) ? "queue"
-    : hasListEdges ? "singly-linked-list" : singletonRoots.length ? "tree" : rootNames.some(name => name.includes("top") || name.includes("stack")) ? "stack" : "grid";
+    : nodes.some(node => node.listLinks && !node.freed) ? "doubly-linked-list" : hasListEdges ? "singly-linked-list" : singletonRoots.length ? "tree" : rootNames.some(name => name.includes("top") || name.includes("stack")) ? "stack" : "grid";
   const variableTagCounts = new Map<number, number>();
   for (const pointer of pointers) {
     if (!pointer.from.startsWith("0x")) variableTagCounts.set(pointer.to, (variableTagCounts.get(pointer.to) ?? 0) + 1);
   }
   let canvasWidth = 520;
   let canvasHeight = 285;
-  if (shape === "singly-linked-list" || shape === "queue") {
+  if (shape === "singly-linked-list" || shape === "doubly-linked-list" || shape === "queue") {
     const reachableNodes = ordered.filter(node => reachable.has(node.address));
     const otherNodes = ordered.filter(node => !reachable.has(node.address));
     const placeRow = (row: LayoutNode[], y: number) => {
@@ -127,8 +159,8 @@ export function renderModel(step: TraceStep): RenderModel {
       for (const node of row) {
         node.x = x; node.y = y;
         const tagCount = variableTagCounts.get(node.address) ?? 0;
-        const queueTagWidth = shape === "queue" && tagCount ? 27 + (tagCount - 1) * 76 + 72 + 16 : 0;
-        x += Math.max(145, queueTagWidth);
+        const aliasWidth = shape !== "singly-linked-list" && tagCount ? 27 + (tagCount - 1) * 76 + 72 + 16 : 0;
+        x += Math.max(145, aliasWidth);
       }
     };
     placeRow(reachableNodes, 105);
@@ -227,12 +259,12 @@ export function renderModel(step: TraceStep): RenderModel {
   }
   const nodesByLabel = new Map(nodes.map(node => [node.label, node]));
   const arrows = pointers.filter(pointer => nodesByLabel.has(addressOf(pointer.to)));
-  if (shape === "singly-linked-list" || shape === "queue") {
+  if (shape === "singly-linked-list" || shape === "doubly-linked-list" || shape === "queue") {
     for (const arrow of arrows) {
-      if (arrow.label !== "next" || !arrow.from.startsWith("0x")) continue;
+      if (!["next", "prev"].includes(arrow.label) || !arrow.from.startsWith("0x")) continue;
       const source = nodesByLabel.get(arrow.from.split(".")[0]);
       const target = nodesByLabel.get(addressOf(arrow.to))!;
-      const route = source && listReturnLink(shape, arrow.label, source, target);
+      const route = source && (arrow.label === "prev" ? previousListLink(source,target) : listReturnLink(shape, arrow.label, source, target));
       if (route) canvasHeight = Math.max(canvasHeight, route.bottom + 14);
     }
   }

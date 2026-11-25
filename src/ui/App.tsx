@@ -15,7 +15,7 @@ import { ConsoleWindow } from "./ConsoleWindow";
 import { run } from "../vm/interpreter";
 import { samples } from "../samples";
 import type { Trace, TraceStep, FrameVariable } from "../vm/trace";
-import { listReturnLink, renderModel } from "../viz/model";
+import { listReturnLink, previousListLink, renderModel } from "../viz/model";
 import { DiagramViewport, type MemoryViewRequest } from "./DiagramViewport";
 import { CodeEditor } from "./CodeEditor";
 import { readSavedCount, saveCount } from "./storage";
@@ -33,7 +33,7 @@ function StructureDiagram({ model, highlighted, onHighlight, memoryViewRequest }
   const queueEmpty = endpoints?.every(endpoint => endpoint.address === null);
   const sameNode = endpoints && endpoints[0].address !== null && endpoints[0].address === endpoints[1].address;
   return <div className={`structure-diagram ${model.shape}${model.nodes.length === 0 ? " is-empty" : ""}`} aria-label={`${model.shape} visualization`}>
-    <div className="diagram-caption">{model.shape === "singly-linked-list" ? "HEAD → linked nodes" : model.shape === "queue" ? "FRONT → REAR" : model.shape === "stack" ? "TOP → BOTTOM" : model.shape === "tree" ? "ROOT → children" : "heap objects"}</div>
+    <div className="diagram-caption">{model.shape === "singly-linked-list" ? "HEAD → linked nodes" : model.shape === "doubly-linked-list" ? "PREV ← nodes → NEXT" : model.shape === "queue" ? "FRONT → REAR" : model.shape === "stack" ? "TOP → BOTTOM" : model.shape === "tree" ? "ROOT → children" : "heap objects"}</div>
     {endpoints && <div className="queue-endpoints" role="group" aria-label="Queue endpoints">
       {endpoints.map(endpoint => {
         const node = endpoint.address === null ? undefined : nodeByAddress.get(endpoint.address);
@@ -47,7 +47,7 @@ function StructureDiagram({ model, highlighted, onHighlight, memoryViewRequest }
     </div>}
     <DiagramViewport width={model.canvasWidth} height={model.canvasHeight} memoryViewRequest={memoryViewRequest}>
     <svg viewBox={`0 0 ${model.canvasWidth} ${model.canvasHeight}`} preserveAspectRatio="xMinYMin meet" role="img" aria-label="Heap nodes and pointer connections">
-      <defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="currentColor" /></marker><pattern id="freed-hatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line y1="0" y2="8" stroke="#aab3bd" strokeWidth="2" /></pattern></defs>
+      <defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="currentColor" /></marker><marker id="prev-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="var(--cyan)" /></marker><pattern id="freed-hatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line y1="0" y2="8" stroke="#aab3bd" strokeWidth="2" /></pattern></defs>
       {model.arrows.map((arrow, index) => {
         const target = nodeByAddress.get(arrow.to); if (!target) return null;
         if (!arrow.from.startsWith("0x")) { const tags = tagsByTarget.get(arrow.to) ?? []; const tagIndex = tags.indexOf(arrow); const width = 72; const x = target.x + 27 + tagIndex * (width + 4); return <line key={`arrow-${index}`} x1={x + width / 2} y1={target.y - 22} x2={target.x + 63} y2={target.y} className={arrow.dangling ? "dangling-arrow" : "pointer-arrow"} markerEnd="url(#arrow)" />; }
@@ -55,6 +55,10 @@ function StructureDiagram({ model, highlighted, onHighlight, memoryViewRequest }
         if (model.shape === "tree" && (arrow.label === "left" || arrow.label === "right")) {
           const label = arrow.from.split(".").pop(); const left = label === "left"; const x1 = source.x + (left ? 20 : 106); const y1 = source.y + 18;
           return <line key={`arrow-${index}`} x1={x1} y1={y1} x2={target.x + 63} y2={target.y} className={arrow.dangling ? "dangling-arrow" : "pointer-arrow"} markerEnd="url(#arrow)" />;
+        }
+        if (arrow.label === "prev" && (model.shape === "doubly-linked-list" || model.shape === "queue")) {
+          const route = previousListLink(source, target);
+          return <path key={`arrow-${index}`} d={route.path} data-pointer-route="prev" className={arrow.dangling ? "dangling-arrow" : "pointer-arrow list-prev-arrow"} markerEnd={arrow.dangling ? "url(#arrow)" : "url(#prev-arrow)"}><title>{`${source.label}.prev → ${target.label}${arrow.dangling ? " (freed node)" : ""}`}</title></path>;
         }
         const returning = listReturnLink(model.shape, arrow.label, source, target);
         if (returning) return <path key={`arrow-${index}`} d={returning.path} data-pointer-route="return" className={arrow.dangling ? "dangling-arrow" : "pointer-arrow"} markerEnd="url(#arrow)"><title>{`${source.label}.next → ${target.label}${source === target ? " (same node)" : ""}${arrow.dangling ? " (freed node)" : ""}`}</title></path>;
@@ -77,7 +81,7 @@ function StructureDiagram({ model, highlighted, onHighlight, memoryViewRequest }
             {child === null ? <circle cx={x} cy="18" r="4" className="null-stub" fill="none" stroke="currentColor" /> : child !== undefined ? <text x={x} y="22" textAnchor="middle" className="next-dot">●</text> : null}
             <text x="7" y={42 + index * 12} textAnchor="start" className="node-kind">{side} → {child === null ? "NULL" : child === undefined ? "—" : `0x${child.toString(16)}`}</text>
           </g>;
-        })}</> : <><rect width="126" height="78" rx="7" /><line x1="63" y1="0" x2="63" y2="54" className="node-divider" />{(node.fields?.length ?? 0) > 1 ? node.fields!.map((field, index) => <text key={field} x="8" y={17 + index * 14} textAnchor="start" className="node-kind">{field}</text>) : <text x="31" y="24" textAnchor="middle">{node.value}</text>}<text x="95" y="24" textAnchor="middle" className="next-dot">●</text><text x="8" y="51" textAnchor="start" className="node-kind">next → {node.next}</text></>}<text x="8" y="70" textAnchor="start" className="node-address"><title>{`Simulated address ${node.label}${node.freed ? `; freed at step ${node.freedAtStep}` : ""}`}</title>{node.freed ? `${node.label} freed #${node.freedAtStep}` : `@ ${node.label}`}</text>
+        })}</> : node.listLinks ? <><rect width="126" height="78" rx="7" /><text x="63" y="21" textAnchor="middle">{node.value}</text><text x="8" y="38" className="node-kind">next → {node.listLinks.next}</text><text x="8" y="54" className="node-kind list-prev-label">prev → {node.listLinks.prev}</text></> : <><rect width="126" height="78" rx="7" /><line x1="63" y1="0" x2="63" y2="54" className="node-divider" />{(node.fields?.length ?? 0) > 1 ? node.fields!.map((field, index) => <text key={field} x="8" y={17 + index * 14} textAnchor="start" className="node-kind">{field}</text>) : <text x="31" y="24" textAnchor="middle">{node.value}</text>}<text x="95" y="24" textAnchor="middle" className="next-dot">●</text><text x="8" y="51" textAnchor="start" className="node-kind">next → {node.next}</text></>}<text x="8" y="70" textAnchor="start" className="node-address"><title>{`Simulated address ${node.label}${node.freed ? `; freed at step ${node.freedAtStep}` : ""}`}</title>{node.freed ? `${node.label} freed #${node.freedAtStep}` : `@ ${node.label}`}</text>
       </g>)}
     </svg>
     </DiagramViewport>

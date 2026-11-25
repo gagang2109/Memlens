@@ -304,3 +304,6 @@ footer{padding:16px 24px;font-size:10px}
 .queue-endpoint-tag .pointer-tag{stroke-width:1.6}
 .queue-endpoint-tag.queue-endpoint-rear .pointer-tag{stroke:var(--cyan)}
 .queue-endpoint-tag .tag-text{font-weight:800}
+
+.pointer-arrow.list-prev-arrow{stroke:var(--cyan)}
+.diagram-node .list-prev-label{fill:var(--cyan)}

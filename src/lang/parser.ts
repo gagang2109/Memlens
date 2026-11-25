@@ -24,7 +24,7 @@ export type Stmt =
   | { kind: "continue"; line: number }
   | { kind: "return"; value?: Expr; line: number };
 export type FunctionDef = { name: string; returnType: string; returnsPointer: boolean; params: { name?: string; pointer: boolean; pointerDepth?: number; array?: boolean; type: string }[]; body: Stmt; line: number };
-export type Program = { functions: Map<string, FunctionDef>; structs: Map<string, string[]>; body: Stmt[]; constants: Map<string, number | string>; floatingConstants: Set<string> };
+export type Program = { functions: Map<string, FunctionDef>; structs: Map<string, string[]>; structPointerFields: Map<string, ReadonlySet<string>>; body: Stmt[]; constants: Map<string, number | string>; floatingConstants: Set<string> };
 
 const types = new Set(["int", "char", "long", "long", "short", "unsigned", "float", "double", "void", "struct", "const", "static"]);
 
@@ -77,7 +77,7 @@ export function parse(source: string): Program {
     start = end + 1;
   }
   const ts = lex(lines.join("\n")); let p = 0;
-  const structs = new Map<string, string[]>(); const knownTypes = new Set(["int", "char", "long", "void"]); const aliasTypes = new Map<string, string>();
+  const structs = new Map<string, string[]>(); const structPointerFields = new Map<string, ReadonlySet<string>>(); const knownTypes = new Set(["int", "char", "long", "void"]); const aliasTypes = new Map<string, string>();
   const functions = new Map<string, FunctionDef>(); const body: Stmt[] = [];
   const peek = (value?: string) => value === undefined ? ts[p] : (ts[p]?.kind === "symbol" || ts[p]?.kind === "id") && ts[p]?.value === value;
   const take = (value?: string) => { const token = ts[p]; if (value && !peek(value)) throw new Error(`line ${token.line}: expected '${value}'`); p++; return token; };
@@ -96,14 +96,21 @@ export function parse(source: string): Program {
     if (name) knownTypes.add(name);
     if (anonymous || peek("{")) {
       if (!anonymous) take("{"); const fields: string[] = [];
+      const pointerFields = new Set<string>();
+      const field = () => {
+        const pointer = peek("*");
+        while (peek("*")) take();
+        const label = take().value;
+        fields.push(label);
+        if (pointer) pointerFields.add(label);
+      };
       while (!peek("}")) {
         if (peek("struct")) { take(); take(); } else take();
-        while (peek("*")) take();
-        fields.push(take().value);
-        while (peek(",")) { take(); while (peek("*")) take(); fields.push(take().value); }
+        field();
+        while (peek(",")) { take(); field(); }
         take(";");
       }
-      take("}"); structs.set(name, fields);
+      take("}"); structs.set(name, fields); structPointerFields.set(`struct${name ? ` ${name}` : ""}`, pointerFields);
     }
     return `struct${name ? ` ${name}` : ""}`;
   };
@@ -224,5 +231,5 @@ export function parse(source: string): Program {
       } else { p = save; body.push(statement()); }
     } else if (peek(";")) take(";"); else body.push(statement());
   }
-  return { functions, structs, body, constants, floatingConstants };
+  return { functions, structs, structPointerFields, body, constants, floatingConstants };
 }

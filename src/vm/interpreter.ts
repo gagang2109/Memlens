@@ -46,8 +46,18 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       variables: Object.fromEntries([...frame.vars].map(([key, variable]) => [key, { type: `${variable.type}${variable.pointer ? " *" : ""}`, value: variable.array ? `[${variable.array.join(", ")}]` : String(variable.value), pointer: variable.pointer, ...(variable.pointer && !variable.array && typeof variable.value === "string" ? { stringPointer: true } : {}) }])),
     }));
     const pointers = frames.flatMap(frame => [...frame.vars].flatMap(([name, variable]) => variable.pointer && typeof variable.value === "number" ? [{ from: `${frame.name}.${name}`, to: variable.value, label: name, dangling: Boolean(memory.allocations.find(a => a.address === variable.value)?.freeStep !== undefined) }] : []));
-    for (const object of heap.values()) for (const [label, value] of object.fields) if (["next", "left", "right"].includes(label) && typeof value === "number") pointers.push({ from: `0x${object.address.toString(16)}.${label}`, to: value, label, dangling: Boolean(memory.allocations.find(a => a.address === value)?.freeStep !== undefined) });
-    trace.add({ line, stdout, memory: memory.snapshot(), frames: visible, heap: [...heap.values()].map(object => ({ address: object.address, type: object.type, fields: Object.fromEntries([...object.fields].map(([key, value]) => [key, String(value)])) })), pointers, event, message });
+    const heapViews = [...heap.values()].map(object => {
+      // An anonymous struct has no unique runtime type name in this VM.
+      const fields = object.type && object.type !== "struct" ? program.structPointerFields.get(object.type) : undefined;
+      const doublyLinked = fields?.has("next") && fields.has("prev");
+      for (const [label, value] of object.fields) {
+        if (typeof value !== "number" || (!(["next", "left", "right"].includes(label)) && !(doublyLinked && label === "prev"))) continue;
+        if (label === "prev" && value === 0) continue;
+        pointers.push({ from: `0x${object.address.toString(16)}.${label}`, to: value, label, dangling: Boolean(memory.allocations.find(a => a.address === value)?.freeStep !== undefined) });
+      }
+      return { address: object.address, type: object.type, fields: Object.fromEntries([...object.fields].map(([key, value]) => [key, String(value)])), ...(doublyLinked ? {doublyLinked:true as const} : {}) };
+    });
+    trace.add({ line, stdout, memory: memory.snapshot(), frames: visible, heap: heapViews, pointers, event, message });
     steps++;
   };
   // An open interactive stream is not EOF. Replay starts with fresh VM state;
