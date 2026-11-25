@@ -30,12 +30,13 @@ function moveOrResize(bounds: Bounds, action: Action, dx: number, dy: number): B
     : { ...bounds, width: bounds.width + dx, height: bounds.height + dy }, action);
 }
 
-export function ConsoleWindow({ children, waiting, focused, onFocusPane, dockRequest }: { children: ReactNode; waiting: boolean; focused: boolean; onFocusPane: () => void; dockRequest: number }) {
+export function ConsoleWindow({ children, waiting, focused, onFocusPane, dockRequest, revealRequest }: { children: ReactNode; waiting: boolean; focused: boolean; onFocusPane: () => void; dockRequest: number; revealRequest: number }) {
   const [mode, setMode] = useState<Mode>("docked");
   const [bounds, setBounds] = useState<Bounds>();
   const picker = useRef<HTMLButtonElement>(null);
   const nextFocus = useRef(false);
   const previousDock = useRef(dockRequest);
+  const previousReveal = useRef(revealRequest);
   const drag = useRef<{ pointer: number; action: Action; x: number; y: number; bounds: Bounds }>();
   function changeMode(next: Mode, focus = true) {
     drag.current = undefined;
@@ -55,6 +56,12 @@ export function ConsoleWindow({ children, waiting, focused, onFocusPane, dockReq
       setMode("docked");
     }
   }, [dockRequest]);
+  useEffect(() => {
+    if (previousReveal.current !== revealRequest) {
+      previousReveal.current = revealRequest;
+      if (mode === "minimized") changeMode("floating", false);
+    }
+  }, [revealRequest, mode]);
   useEffect(() => {
     if (nextFocus.current) {
       nextFocus.current = false;

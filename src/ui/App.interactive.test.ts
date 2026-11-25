@@ -194,3 +194,65 @@ it('reveals the terminal for scanf if a different pane was maximized',()=>{
   expect(container.querySelector<HTMLElement>('.terminal-panel')!.hidden).toBe(false);
   expect(document.activeElement?.id).toBe('interactive-input');
 });
+
+const followConsoleLink = async () => {
+  const link = container.querySelector<HTMLAnchorElement>('.waiting-console-link')!;
+  await act(async () => link.click());
+  await act(async () => new Promise<void>(resolve => window.requestAnimationFrame(() => resolve())));
+};
+it('opens the actual input from Focus memory even if the console was collapsed', async () => {
+  start();
+  click('.console-heading');
+  click('#memory .pane-focus');
+  expect(container.querySelector<HTMLElement>('.terminal-panel')?.hidden).toBe(true);
+  await followConsoleLink();
+  expect(container.querySelector<HTMLElement>('.terminal-panel')?.hidden).toBe(false);
+  expect(document.activeElement?.id).toBe('interactive-input');
+  submit('3'); submit('5');
+  expect(output()).toBe('first: second: sum 8');
+});
+it('restores a minimized console without moving the trace and focuses the waiting-step action', async () => {
+  start(); submit('4'); type('6');
+  click('.controls button:nth-child(2)');
+  const timeline = container.querySelector<HTMLInputElement>('[aria-label="Timeline"]')!;
+  const position = timeline.value;
+  act(() => action('Float terminal').click());
+  act(() => action('Minimize').click());
+  click('#memory .pane-focus');
+  await followConsoleLink();
+  expect(terminal().classList.contains('console-window-floating')).toBe(true);
+  expect(timeline.value).toBe(position);
+  expect(document.activeElement?.textContent).toBe('Return to waiting step');
+  act(() => (document.activeElement as HTMLButtonElement).click());
+  expect(document.activeElement?.id).toBe('interactive-input');
+  expect(container.querySelector<HTMLInputElement>('#interactive-input')?.value).toBe('6');
+  act(() => container.querySelector('form')!.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true})));
+  expect(output()).toBe('first: second: sum 10');
+});
+it.each(['expanded', 'native'])('returns from the %s visualizer straight to waiting input', async mode => {
+  start();
+  const panel = container.querySelector<HTMLElement>('#memory')!;
+  const descriptors = ['fullscreenElement','fullscreenEnabled','exitFullscreen'].map(key => [key,Object.getOwnPropertyDescriptor(document,key)] as const);
+  const setFullscreen = (value: HTMLElement | null) => {
+    Object.defineProperty(document, 'fullscreenElement', {configurable:true,value});
+    document.dispatchEvent(new Event('fullscreenchange'));
+  };
+  try {
+    Object.defineProperty(document, 'fullscreenEnabled', {configurable:true,value:mode === 'native'});
+    if (mode === 'native') {
+      Object.defineProperty(panel,'requestFullscreen',{configurable:true,value:async () => setFullscreen(panel)});
+      Object.defineProperty(document,'exitFullscreen',{configurable:true,value:async () => setFullscreen(null)});
+    }
+    await act(async () => container.querySelector<HTMLButtonElement>('.visualizer-fullscreen')!.click());
+    expect(panel.dataset.enlarged).toBe('true');
+    await followConsoleLink();
+    expect(panel.dataset.enlarged).toBe('false');
+    expect(container.querySelector<HTMLElement>('.terminal-panel')?.hidden).toBe(false);
+    expect(document.activeElement?.id).toBe('interactive-input');
+  } finally {
+    for (const [key, previous] of descriptors) {
+      if (previous) Object.defineProperty(document,key,previous);
+      else Reflect.deleteProperty(document,key);
+    }
+  }
+});
