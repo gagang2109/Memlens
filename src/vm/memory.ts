@@ -9,7 +9,7 @@ export class Memory {
   private next = 0x1000;
   private snapshotData?: Pick<MemorySnapshot, "bytes" | "shadows">;
   malloc(size: number, step: number, line: number, label?: string): number {
-    if (size <= 0 || this.next + size >= 0x8000) throw new Error("out of simulated memory");
+    if (size <= 0 || this.next + size >= 0x8000) throw new MemoryFault("out of simulated memory", line, step);
     this.snapshotData = undefined;
     const address = this.next; this.next += size;
     for (let i = address; i < address + size; i++) this.shadows[i] = "allocated-uninitialized";
