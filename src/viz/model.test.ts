@@ -261,3 +261,22 @@ it.each(["grid", "tree", "singly-linked-list", "stack"] as const)("keeps live an
   expect(model.arrows.filter(arrow=>!arrow.from.startsWith("0x"))).toEqual(aliases);
  }
 });
+
+it("orders a recognized queue from front and leaves room for its pointer labels", () => {
+  const front = 4096, rear = 4112;
+  const pointer = (label: string, to: number) => ({ from: `main.${label}`, label, to, dangling: false });
+  const pointers = [pointer("rear", rear), pointer("front", front), pointer("cursor", front), pointer("alias", front), { from: "0x1000.next", label: "next", to: rear, dangling:false }];
+  const vars = (value: number) => ({type:"struct node *", pointer:true, value:String(value)});
+  const model = renderModel({
+    index:0,line:1,stdout:"",pointers,
+    frames:[{name:"main",locals:{},variables:{front:vars(front),rear:vars(rear)}}],
+    memory:{bytes:[],shadows:[],allocations:[rear,front].map(address=>({address,size:16,line:1,allocStep:0,type:"struct node"}))},
+  });
+  expect(model.shape).toBe("queue");
+  expect(model.queueEndpoints?.map(endpoint => endpoint.address)).toEqual([front,rear]);
+  const a = model.nodes.find(node=>node.address===front)!;
+  const b = model.nodes.find(node=>node.address===rear)!;
+  expect(b.y).toBe(a.y);
+  expect(b.x+27).toBeGreaterThan(a.x+27+2*76+72);
+  expect(model.arrows).toEqual(pointers);
+});

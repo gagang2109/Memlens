@@ -29,8 +29,22 @@ function StructureDiagram({ model, highlighted, onHighlight, memoryViewRequest }
   const variableArrows = model.arrows.filter(arrow => !arrow.from.startsWith("0x") && nodeByAddress.has(arrow.to));
   const tagsByTarget = new Map<number, typeof variableArrows>();
   variableArrows.forEach(arrow => tagsByTarget.set(arrow.to, [...(tagsByTarget.get(arrow.to) ?? []), arrow]));
+  const endpoints = model.queueEndpoints;
+  const queueEmpty = endpoints?.every(endpoint => endpoint.address === null);
+  const sameNode = endpoints && endpoints[0].address !== null && endpoints[0].address === endpoints[1].address;
   return <div className={`structure-diagram ${model.shape}${model.nodes.length === 0 ? " is-empty" : ""}`} aria-label={`${model.shape} visualization`}>
     <div className="diagram-caption">{model.shape === "singly-linked-list" ? "HEAD → linked nodes" : model.shape === "queue" ? "FRONT → REAR" : model.shape === "stack" ? "TOP → BOTTOM" : model.shape === "tree" ? "ROOT → children" : "heap objects"}</div>
+    {endpoints && <div className="queue-endpoints" role="group" aria-label="Queue endpoints">
+      {endpoints.map(endpoint => {
+        const node = endpoint.address === null ? undefined : nodeByAddress.get(endpoint.address);
+        return <div className={`queue-endpoint queue-endpoint-${endpoint.role}`} key={endpoint.role}>
+          <div><b>{endpoint.role.toUpperCase()}</b><small>{endpoint.role === "front" ? "Dequeue here" : "Enqueue here"}</small></div>
+          <code>{endpoint.address === null ? "NULL" : `0x${endpoint.address.toString(16)}`}</code>
+          {endpoint.address !== null && (node?.freed ? <small>Freed</small> : !node ? <small>No tracked node</small> : null)}
+        </div>;
+      })}
+      {(queueEmpty || sameNode) && <p className="queue-state">{queueEmpty ? "Queue is empty" : "Front and rear point to the same node"}</p>}
+    </div>}
     <DiagramViewport width={model.canvasWidth} height={model.canvasHeight} memoryViewRequest={memoryViewRequest}>
     <svg viewBox={`0 0 ${model.canvasWidth} ${model.canvasHeight}`} preserveAspectRatio="xMinYMin meet" role="img" aria-label="Heap nodes and pointer connections">
       <defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="currentColor" /></marker><pattern id="freed-hatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line y1="0" y2="8" stroke="#aab3bd" strokeWidth="2" /></pattern></defs>
@@ -45,7 +59,15 @@ function StructureDiagram({ model, highlighted, onHighlight, memoryViewRequest }
         const targetX = target.x >= source.x ? target.x : target.x + 126;
         return <line key={`arrow-${index}`} x1={source.x + 95} y1={source.y + 27} x2={targetX} y2={target.y + 27} className={arrow.dangling ? "dangling-arrow" : "pointer-arrow"} markerEnd="url(#arrow)" />;
       })}
-      {variableArrows.map((arrow, index) => { const tags = tagsByTarget.get(arrow.to) ?? []; const tagIndex = tags.indexOf(arrow); return <g key={`tag-${index}`}><rect x={nodeByAddress.get(arrow.to)!.x + 27 + tagIndex * 76} y={nodeByAddress.get(arrow.to)!.y - 40} width="72" height="18" rx="4" className="pointer-tag" /><text x={nodeByAddress.get(arrow.to)!.x + 63 + tagIndex * 76} y={nodeByAddress.get(arrow.to)!.y - 27} textAnchor="middle" className="tag-text">{arrow.label}</text></g>; })}
+      {variableArrows.map((arrow, index) => {
+        const node = nodeByAddress.get(arrow.to)!;
+        const tagIndex = (tagsByTarget.get(arrow.to) ?? []).indexOf(arrow);
+        const endpoint = endpoints?.find(end => end.from === arrow.from && end.address === arrow.to);
+        return <g key={`tag-${index}`} className={endpoint ? `queue-endpoint-tag queue-endpoint-${endpoint.role}` : undefined}>
+          <rect x={node.x + 27 + tagIndex * 76} y={node.y - 40} width="72" height="18" rx="4" className="pointer-tag" />
+          <text x={node.x + 63 + tagIndex * 76} y={node.y - 27} textAnchor="middle" className="tag-text">{endpoint ? endpoint.role.toUpperCase() : arrow.label}</text>
+        </g>;
+      })}
       {model.shape === "tree" && model.nodes.flatMap(node => ["left", "right"].filter(label => !model.arrows.some(arrow => arrow.from === `0x${node.address.toString(16)}.${label}`)).map(label => <g key={`stub-${node.address}-${label}`} className="null-stub"><circle cx={node.x + (label === "left" ? 20 : 106)} cy={node.y + 18} r="5" /></g>))}
       {model.nodes.map(node => <g key={node.address} transform={`translate(${node.x},${node.y})`} className={`${node.freed ? "diagram-node freed-node" : node.orphaned ? "diagram-node orphan-node" : "diagram-node"} ${highlighted === node.address ? "highlighted-node" : ""}`} onClick={() => onHighlight(node.address)}>
         {node.raw ? <><rect width="126" height="78" rx="7" /><text x="63" y="18" textAnchor="middle">raw block</text>{Array.from({ length: Math.max(1, Math.min(4, Math.ceil(node.size / 4))) }, (_, index) => <g key={index}><line x1={12 + index * 26} y1="25" x2={12 + index * 26} y2="43" className="node-divider" /><text x={25 + index * 26} y="38" textAnchor="middle" className="node-kind">{node.elementType ? node.elementType : "byte"}</text></g>)}<text x="63" y="52" textAnchor="middle" className="node-kind">{node.size} bytes</text></> : model.shape === "tree" ? <><rect width="126" height="76" rx="7" /><text x="20" y="22" textAnchor="middle" className="next-dot">●</text><text x="63" y="22" textAnchor="middle">{node.value}</text><text x="106" y="22" textAnchor="middle" className="next-dot">●</text><text x="7" y="42" textAnchor="start" className="node-kind">left → {model.arrows.find(arrow => arrow.from === `0x${node.address.toString(16)}.left`)?.to ? `0x${model.arrows.find(arrow => arrow.from === `0x${node.address.toString(16)}.left`)!.to.toString(16)}` : "NULL"}</text><text x="7" y="54" textAnchor="start" className="node-kind">right → {model.arrows.find(arrow => arrow.from === `0x${node.address.toString(16)}.right`)?.to ? `0x${model.arrows.find(arrow => arrow.from === `0x${node.address.toString(16)}.right`)!.to.toString(16)}` : "NULL"}</text></> : <><rect width="126" height="78" rx="7" /><line x1="63" y1="0" x2="63" y2="54" className="node-divider" />{(node.fields?.length ?? 0) > 1 ? node.fields!.map((field, index) => <text key={field} x="8" y={17 + index * 14} textAnchor="start" className="node-kind">{field}</text>) : <text x="31" y="24" textAnchor="middle">{node.value}</text>}<text x="95" y="24" textAnchor="middle" className="next-dot">●</text><text x="8" y="51" textAnchor="start" className="node-kind">next → {node.next}</text></>}<text x="8" y="70" textAnchor="start" className="node-address"><title>{`Simulated address ${node.label}${node.freed ? `; freed at step ${node.freedAtStep}` : ""}`}</title>{node.freed ? `${node.label} freed #${node.freedAtStep}` : `@ ${node.label}`}</text>

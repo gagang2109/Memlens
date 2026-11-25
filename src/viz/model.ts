@@ -17,7 +17,8 @@ export type LayoutNode = {
   elementType?: string;
 };
 export type RenderShape = "singly-linked-list" | "tree" | "stack" | "queue" | "grid";
-export type RenderModel = { nodes: LayoutNode[]; arrows: PointerArrow[]; shape: RenderShape; canvasWidth: number; canvasHeight: number };
+export type QueueEndpoint = { role: "front" | "rear"; from: string; address: number | null };
+export type RenderModel = { queueEndpoints?: [QueueEndpoint, QueueEndpoint]; nodes: LayoutNode[]; arrows: PointerArrow[]; shape: RenderShape; canvasWidth: number; canvasHeight: number };
 
 const addressOf = (address: number) => `0x${address.toString(16)}`;
 
@@ -53,6 +54,20 @@ export function renderModel(step: TraceStep): RenderModel {
     };
   });
 
+  // Keep the same queue layout before the first link is made and after the
+  // last removal, when a next edge alone cannot identify the structure.
+  let queueEndpoints: [QueueEndpoint, QueueEndpoint] | undefined;
+  for (const frame of [...step.frames].reverse()) {
+    const front = frame.variables?.front;
+    const rear = frame.variables?.rear;
+    if (!front?.pointer || !rear?.pointer || front.stringPointer || rear.stringPointer ||
+        front.type !== rear.type || !/^struct .+ \*$/.test(front.type)) continue;
+    const address = (value: string) => value === "null" || value === "0" ? null : Number(value);
+    const first = address(front.value), last = address(rear.value);
+    if ([first, last].some(value => value !== null && (!Number.isSafeInteger(value) || value < 1))) continue;
+    queueEndpoints = [{role:"front",from:`${frame.name}.front`,address:first}, {role:"rear",from:`${frame.name}.rear`,address:last}];
+    break;
+  }
   const rootNames = roots.map(root => root.from.toLowerCase());
   const preferredRoots = roots.filter(root => /(?:list|head|first)/.test(root.from.toLowerCase()));
   const ordered: LayoutNode[] = [];
@@ -65,21 +80,37 @@ export function renderModel(step: TraceStep): RenderModel {
     const next = heapEdges.find(pointer => pointer.from === `${addressOf(address)}.next`);
     if (next) followNext(next.to);
   };
+  const frontAddress = queueEndpoints?.[0].address;
+  if (frontAddress && reachable.has(frontAddress)) followNext(frontAddress);
   [...preferredRoots, ...roots].forEach(root => followNext(root.to));
   nodes.filter(node => !orderedAddresses.has(node.address)).forEach(node => ordered.push(node));
 
   const hasTreeEdges = heapEdges.some(pointer => pointer.label === "left" || pointer.label === "right");
   const hasListEdges = heapEdges.some(pointer => pointer.label === "next");
-  const shape: RenderShape = hasTreeEdges ? "tree" : hasListEdges ? (rootNames.some(name => name.includes("front") || name.includes("rear")) ? "queue" : "singly-linked-list") : rootNames.some(name => name.includes("top") || name.includes("stack")) ? "stack" : "grid";
+  const shape: RenderShape = hasTreeEdges ? "tree" : queueEndpoints || (hasListEdges && rootNames.some(name => name.includes("front") || name.includes("rear"))) ? "queue"
+    : hasListEdges ? "singly-linked-list" : rootNames.some(name => name.includes("top") || name.includes("stack")) ? "stack" : "grid";
+  const variableTagCounts = new Map<number, number>();
+  for (const pointer of pointers) {
+    if (!pointer.from.startsWith("0x")) variableTagCounts.set(pointer.to, (variableTagCounts.get(pointer.to) ?? 0) + 1);
+  }
   let canvasWidth = 520;
   let canvasHeight = 285;
   if (shape === "singly-linked-list" || shape === "queue") {
     const reachableNodes = ordered.filter(node => reachable.has(node.address));
     const otherNodes = ordered.filter(node => !reachable.has(node.address));
-    reachableNodes.forEach((node, index) => { node.x = 20 + index * 145; node.y = 105; });
+    const placeRow = (row: LayoutNode[], y: number) => {
+      let x = 20;
+      for (const node of row) {
+        node.x = x; node.y = y;
+        const tagCount = variableTagCounts.get(node.address) ?? 0;
+        const queueTagWidth = shape === "queue" && tagCount ? 27 + (tagCount - 1) * 76 + 72 + 16 : 0;
+        x += Math.max(145, queueTagWidth);
+      }
+    };
+    placeRow(reachableNodes, 105);
     // Leave room for the lower row's variable tags (40px above each node),
     // plus clearance below the preceding 78px node.
-    otherNodes.forEach((node, index) => { node.x = 20 + index * 145; node.y = 245; });
+    placeRow(otherNodes, 245);
     canvasWidth = Math.max(520, (ordered.length ? Math.max(...ordered.map(node => node.x)) : 0) + 146);
   } else if (shape === "stack") {
     ordered.forEach((node, index) => { node.x = 175; node.y = 60 + index * 140; });
@@ -160,10 +191,6 @@ export function renderModel(step: TraceStep): RenderModel {
   // The SVG clips at its viewBox even when the outer viewport is scrollable.
   // Include every row (especially freed/orphaned blocks and tall stacks), plus
   // room for the 78px node, its address label, stroke and drop shadow.
-  const variableTagCounts = new Map<number, number>();
-  for (const pointer of pointers) {
-    if (!pointer.from.startsWith("0x")) variableTagCounts.set(pointer.to, (variableTagCounts.get(pointer.to) ?? 0) + 1);
-  }
   for (const node of nodes) {
     canvasHeight = Math.max(canvasHeight, node.y + 78 + 20);
     // StructureDiagram places 72px variable tags at x + 27, 76px apart.
@@ -171,5 +198,5 @@ export function renderModel(step: TraceStep): RenderModel {
     const tagCount = variableTagCounts.get(node.address) ?? 0;
     if (tagCount) canvasWidth = Math.max(canvasWidth, node.x + 27 + (tagCount - 1) * 76 + 72 + 20);
   }
-  return { nodes, arrows: pointers.filter(pointer => nodes.some(node => node.address === pointer.to)), shape, canvasWidth, canvasHeight };
+  return { nodes, ...(shape === "queue" ? { queueEndpoints } : {}), arrows: pointers.filter(pointer => nodes.some(node => node.address === pointer.to)), shape, canvasWidth, canvasHeight };
 }

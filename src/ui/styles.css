@@ -291,3 +291,15 @@ footer{padding:16px 24px;font-size:10px}
   .workspace .memory-panel .columns:not(.empty-heap){grid-template-columns:minmax(0,1fr) minmax(175px,31%)}
 }
 .memory-panel:fullscreen .visualizer-toolbar{position:sticky;top:0;z-index:3;background:#101821;padding:5px 0}
+
+.queue-endpoints{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,142px),1fr));gap:8px;margin:8px 0 12px}
+.queue-endpoint{--queue-role:var(--amber);display:flex;align-items:center;flex-wrap:wrap;gap:4px 10px;padding:7px 9px;border:1px solid var(--line);border-inline-start:3px solid var(--queue-role);border-radius:6px;background:#172536}
+.queue-endpoint-rear{--queue-role:var(--cyan)}
+.queue-endpoint b{color:var(--queue-role);font:800 11px ui-monospace,monospace;letter-spacing:.05em}
+.queue-endpoint div{flex:1}
+.queue-endpoint div small{display:block}
+.queue-endpoint code{color:var(--ink);font-size:11px}
+.queue-state{grid-column:1/-1;margin:0;color:var(--muted);font-size:12px}
+.queue-endpoint-tag .pointer-tag{stroke-width:1.6}
+.queue-endpoint-tag.queue-endpoint-rear .pointer-tag{stroke:var(--cyan)}
+.queue-endpoint-tag .tag-text{font-weight:800}
