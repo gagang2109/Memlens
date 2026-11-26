@@ -48,7 +48,7 @@ it("displays unexpected run failures and clears them on a successful retry", () 
 it("disables playback without a trace and restores it after a successful run", () => {
   localStorage.setItem("memlens-code", "int main( {");
   act(() => root.render(createElement(App)));
-  const controls = () => Array.from(container.querySelectorAll<HTMLButtonElement>(".controls > button"));
+  const controls = () => Array.from(container.querySelectorAll<HTMLButtonElement>(".controls > button")).filter(button => button.hasAttribute("data-step-navigation") || /^(?:Play|Pause)/.test(button.textContent ?? ""));
   const expectUnavailable = () => {
     expect(controls()).toHaveLength(3);
     for (const button of controls()) expect(button.disabled).toBe(true);
@@ -163,7 +163,7 @@ it("uses one visible free-step number in the fault, timeline, node and Quick Loo
   clickRun();
   act(() => container.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true })));
   const tick = container.querySelector<HTMLButtonElement>(".tick-free")!;
-  const index = Array.from(container.querySelectorAll(".event-tick")).indexOf(tick);
+  const index = Number(tick.dataset.traceIndex);
   expect(index).toBeGreaterThan(0);
   const number = index + 1;
   expect(tick.getAttribute("aria-label")).toBe(`free tick ${number}`);

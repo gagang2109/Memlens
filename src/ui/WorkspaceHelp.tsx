@@ -11,6 +11,7 @@ const shortcuts = {
     ["Step backward / forward", "← / →"],
     ["Play or pause", "Space"],
     ["First / last step", "Home / End"],
+    ["Jump to an exact call, return, allocation, free, warning or error", "Previous / Next event"],
   ],
   "Source editor": [
     ["New line with automatic indentation", "Enter"],

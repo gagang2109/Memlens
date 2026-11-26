@@ -70,6 +70,7 @@ The bundled BST sample during inorder traversal, with the diagram zoomed out to 
 | Playback | `←` / `→` | Step backward / forward |
 | Playback | `Space` | Play / pause |
 | Playback | `Home` / `End` | Jump to the first / last step |
+| Playback | **Previous event** / **Next event** | Jump to calls, returns, allocations, frees, warnings and errors |
 | Memory view | `−` / `+`, **Fit width**, **Reset view** | Adjust the diagram from 25% to 300% zoom |
 | Memory view | Drag empty space, scroll, or swipe | Move around the diagram |
 
@@ -77,7 +78,7 @@ In **Call Stack**, one-dimensional arrays show zero-based indexes, and matrices 
 
 Gold highlights show changed stack values, array cells, and recorded heap fields relative to the previous recorded step. Hover a changed heap card for its before/after values. Rewind selects the original highlights for that earlier step.
 
-Playback shortcuts stay out of the editor and interactive controls. **Tab** moves focus between controls rather than trapping it inside the editor.
+The timeline slider reaches every recorded step. Long traces show fewer clickable markers, but the event buttons still reach every recorded event. Playback shortcuts stay out of the editor and interactive controls. **Tab** moves focus between controls rather than trapping it inside the editor.
 
 ## Practice without `main`
 
