@@ -1,11 +1,13 @@
 import { fixedStructBytes, fixedStructLayout, parse, type Expr, type FunctionDef, type Program, type Stmt } from "../lang/parser";
 import { Memory, MemoryFault, type Allocation } from "./memory";
 import { Trace, type ArraySnapshot, type FrameVariable, type FrameView } from "./trace";
+import { parseScanset } from "./scanfScanset";
 import { localArraySizeof, isFixedArrayBound } from "./fixedArraySizeof";
 
 type Value = number | string | null;
+type LocalArrayOwner = { vars: Map<string, RuntimeVariable>; name: string; variable: RuntimeVariable };
 type LocalArray = { values: Value[]; type: string; dimensions: number[];
-  owner?: { vars: Map<string, RuntimeVariable>; name: string; variable: RuntimeVariable } };
+  owner?: LocalArrayOwner; scanBufferOwner?: LocalArrayOwner };
 type RuntimeVariable = { value: Value; type: string; pointer: boolean; pointerDepth?: number; array?: Value[]; dimensions?: number[]; fixedArrayBounds?: boolean; matrixColumnCount?: number; elementSize?: number; arrayBase?: number; address?: number };
 type Ref = { get: () => Value; set: (value: Value) => void; address?: number; allocation?: Allocation };
 type HeapObject = { address: number; fields: Map<string, Value>; type?: string };
@@ -540,16 +542,28 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
             if (stdin[stdinCursor] !== literal) break;
             stdinCursor++; continue;
           }
-          const conversion = format.slice(i).match(/^%(\*)?(\d*)([dcs])/);
+          const conversion = format.slice(i).match(/^%(\*)?(\d*)([dcs\[])/);
           if (!conversion) runtimeError("unsupported scanf conversion", expression.line);
           const [, suppressed, widthText, specifier] = conversion!;
           i += conversion![0].length - 1;
+          const scanset = specifier === "[" ? parseScanset(format, i + 1) : undefined;
+          if (specifier === "[") {
+            if (!scanset) return runtimeError("invalid or unsupported scanf scanset", expression.line);
+            i = scanset.end;
+          }
           const width = widthText ? Number(widthText) : specifier === "c" ? 1 : Infinity;
           if (width < 1) runtimeError("invalid scanf field width", expression.line);
-          if (specifier !== "c") while (stdinCursor < stdin.length && /\s/.test(stdin[stdinCursor])) stdinCursor++;
+          if (specifier === "d" || specifier === "s") while (stdinCursor < stdin.length && /\s/.test(stdin[stdinCursor])) stdinCursor++;
           if (stdinCursor >= stdin.length) { if (inputOpen) needInput(expression.line); inputFailure = true; break; }
           const remaining = stdin.slice(stdinCursor, Number.isFinite(width) ? stdinCursor + width : undefined);
-          const token = specifier === "d" ? remaining.match(/^[+-]?\d+/)?.[0] : specifier === "s" ? remaining.match(/^\S+/)?.[0] : remaining;
+          let token: string | undefined;
+          if (scanset) {
+            let matched = 0;
+            while (matched < remaining.length && scanset.includes(remaining[matched])) matched++;
+            token = remaining.slice(0, matched);
+          } else {
+            token = specifier === "d" ? remaining.match(/^[+-]?\d+/)?.[0] : specifier === "s" ? remaining.match(/^\S+/)?.[0] : remaining;
+          }
           // A token at the end of an open stream may still grow. A field-width
           // boundary completes it; %c instead needs exactly its requested width.
           if (inputOpen && stdinCursor + remaining.length === stdin.length &&
@@ -569,11 +583,14 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
           else {
             // Validate the entire conversion against its starting buffer. Checking
             // each byte independently can silently spill into an adjacent object.
-            const bytes = token.length + (specifier === "s" ? 1 : 0);
+            const terminate = specifier === "s" || scanset !== undefined;
+            const bytes = token.length + Number(terminate);
             const allocation = memory.find(destination);
             if (allocation?.freeStep !== undefined) runtimeError("use-after-free", expression.line, allocation);
             // Match write()'s existing dispatch order. Simulated stack and heap
             // numbers can overlap; this guard must not change which object wins.
+            if (scanset && locations.has(destination))
+              runtimeError("scanf scanset requires a character buffer", expression.line);
             if (!locations.has(destination)) {
               const local = [...arrayRefs].find(([base, array]) => {
                 const size = elementSize(array.type); const offset = destination - base;
@@ -581,14 +598,22 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
               });
               if (local) {
                 const [base, array] = local;
+                if (scanset) {
+                  const owner = array.scanBufferOwner;
+                  if (!owner) return runtimeError("scanf scanset requires a writable one-dimensional character buffer declared directly in a function body", expression.line);
+                  if (!frames.some(frame => frame.vars === owner.vars) || owner.vars.get(owner.name) !== owner.variable)
+                    runtimeError("scanf scanset buffer used outside its lifetime", expression.line);
+                }
                 if (elementSize(array.type) === 1 && bytes > base + array.values.length - destination)
                   runtimeError("scanf exceeds local array bounds", expression.line);
               } else if (allocation && bytes > allocation.address + allocation.size - destination) {
                 runtimeError("scanf exceeds heap allocation bounds", expression.line, allocation);
+              } else if (scanset && !allocation) {
+                runtimeError("scanf scanset requires a character buffer", expression.line);
               }
             }
             for (let offset = 0; offset < token.length; offset++) write(destination + offset, token[offset]);
-            if (specifier === "s") write(destination + token.length, "\0");
+            if (terminate) write(destination + token.length, "\0");
           }
           assigned++;
         }
@@ -796,7 +821,10 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
         const owner = allowDirectLocal && statement.type === "int" && !statement.pointer &&
           !statement.staticStorage && !statement.readOnly && dimensions.length === 1
           ? { vars: current(), name: statement.name, variable } : undefined;
-        arrayRefs.set(variable.arrayBase, { values: variable.array, type: statement.type, dimensions, owner });
+        const scanBufferOwner = allowDirectLocal && statement.type === "char" && !statement.pointer &&
+          !statement.staticStorage && !statement.readOnly && dimensions.length === 1
+          ? { vars: current(), name: statement.name, variable } : undefined;
+        arrayRefs.set(variable.arrayBase, { values: variable.array, type: statement.type, dimensions, owner, scanBufferOwner });
         if (statement.type.startsWith("struct") && !statement.pointer) {
           for (let index = 0; index < length; index++) {
             const address = memory.malloc(16, steps, statement.line);
