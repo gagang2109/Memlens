@@ -1,3 +1,4 @@
+import { describeChange, frameKey, showCell, stepChanges, type VariableChange } from "./stepChanges";
 import { useVisualizerFullscreen } from "./visualizerFullscreen";
 import { PointerQuickLook } from "./PointerQuickLook";
 import { SplitDivider, balancedSplit, type SplitSizes } from "./SplitDivider";
@@ -25,7 +26,28 @@ import { SectionNavigation } from "./SectionNavigation";
 import { shouldHandlePlaybackShortcut, shouldOpenWorkspaceHelp, workspaceRunShortcut } from "./shortcuts";
 import { checkPrediction, nextPointerPrediction, type PointerPrediction } from "../vm/predict";
 
-function StructureDiagram({ model, highlighted, onHighlight, memoryViewRequest }: { model: ReturnType<typeof renderModel>; highlighted?: number; onHighlight: (address?: number) => void; memoryViewRequest: MemoryViewRequest | undefined }) {
+function StackValue({ variable, change }: { variable: FrameVariable; change?: VariableChange }) {
+  const cells = variable.array?.cells ?? (!variable.stringPointer && variable.value.startsWith("[") ? variable.value.slice(1,-1).split(", ") : undefined);
+  if (cells) return <span className="array-cells">{cells.map((cell, index) => {
+    const delta = change && "cells" in change ? change.cells.get(index) : undefined;
+    const width = variable.array?.dimensions.length === 2 ? variable.array.dimensions[1] : undefined;
+    const label = width ? `[${Math.floor(index/width)}][${index%width}]` : `[${index}]`;
+    return <span className={`array-cell${delta ? " step-changed-cell" : ""}`} key={index} data-cell={label}
+      title={delta ? `${label}: ${describeChange(delta)}` : undefined}>
+      <small>{delta && width ? label : `[${index}]`}</small>
+      {delta && <small className="step-value-before">{delta.before} →</small>}
+      {variable.array ? showCell(cell) : cell}
+    </span>;
+  })}</span>;
+  const delta = change && "before" in change ? change : undefined;
+  return <code title={delta ? describeChange(delta) : undefined}>
+    {delta && <small className="step-value-before">{delta.before} → </small>}
+    {delta ? delta.after : variable.stringPointer ? `string ${JSON.stringify(variable.value)}` : variable.pointer && variable.value !== "null"
+      ? `0x${Number(variable.value).toString(16)}` : variable.value}
+  </code>;
+}
+
+function StructureDiagram({ model, highlighted, onHighlight, memoryViewRequest, changedHeap }: { changedHeap: ReadonlyMap<number, string>; model: ReturnType<typeof renderModel>; highlighted?: number; onHighlight: (address?: number) => void; memoryViewRequest: MemoryViewRequest | undefined }) {
   const nodeByAddress = new Map(model.nodes.map(node => [node.address, node]));
   const variableArrows = model.arrows.filter(arrow => !arrow.from.startsWith("0x") && nodeByAddress.has(arrow.to));
   const tagsByTarget = new Map<number, typeof variableArrows>();
@@ -77,7 +99,8 @@ function StructureDiagram({ model, highlighted, onHighlight, memoryViewRequest }
           <text x={x + VARIABLE_TAG_WIDTH / 2} y={node.y - 27} textAnchor="middle" className="tag-text">{endpoint ? endpoint.role.toUpperCase() : arrow.label}</text>
         </g>;
       })}
-      {model.nodes.map(node => <g key={node.address} transform={`translate(${node.x},${node.y})`} className={`${node.freed ? "diagram-node freed-node" : node.orphaned ? "diagram-node orphan-node" : "diagram-node"} ${highlighted === node.address ? "highlighted-node" : ""}`} onClick={() => onHighlight(node.address)}>
+      {model.nodes.map(node => <g key={node.address} transform={`translate(${node.x},${node.y})`} className={`${node.freed ? "diagram-node freed-node" : node.orphaned ? "diagram-node orphan-node" : "diagram-node"} ${highlighted === node.address ? "highlighted-node" : ""}${changedHeap.has(node.address) ? " step-changed-node" : ""}`} onClick={() => onHighlight(node.address)}>
+        {changedHeap.has(node.address) && <title>{changedHeap.get(node.address)}</title>}
         {node.raw ? <><rect width="126" height="78" rx="7" /><text x="63" y="18" textAnchor="middle">raw block</text>{Array.from({ length: Math.max(1, Math.min(4, Math.ceil(node.size / 4))) }, (_, index) => <g key={index}><line x1={12 + index * 26} y1="25" x2={12 + index * 26} y2="43" className="node-divider" /><text x={25 + index * 26} y="38" textAnchor="middle" className="node-kind">{node.elementType ? node.elementType : "byte"}</text></g>)}<text x="63" y="52" textAnchor="middle" className="node-kind">{node.size} bytes</text></> : model.shape === "tree" && node.treeChildren ? <><rect width="126" height="76" rx="7" /><text x="63" y="22" textAnchor="middle">{node.value}</text>{(["left", "right"] as const).map((side, index) => {
           const child = node.treeChildren![side], x = side === "left" ? 20 : 106;
           return <g key={side}>
@@ -196,6 +219,7 @@ export function App() {
   const location = (line: number) => displayedSource.active ? displayedSource.location(line) : `line ${line}`;
   const diagnostic = (message: string) => displayedSource.diagnostic(message);
   const view = trace?.steps[cursor];
+  const changes = useMemo(() => stepChanges(stale ? undefined : trace?.steps[cursor-1], view), [trace, cursor, stale, view]);
   useEffect(() => { setQuickLook(undefined); }, [view]);
   const allocations = view?.memory.allocations ?? [];
   const model = view ? renderModel(view) : undefined;
@@ -385,8 +409,21 @@ export function App() {
         else reveal();
       }}>Waiting for input · Open console ↓</a>}<div className="timeline-track"><input aria-label="Timeline" type="range" min="0" max={Math.max(0, (trace?.steps.length ?? 1) - 1)} value={cursor} onChange={e => moveTo(Number(e.target.value))} disabled={!trace || emptyRun} />{trace?.steps.map((step, index) => <button aria-label={`${step.event ?? "step"} tick ${index + 1}`} className={`event-tick tick-${step.event ?? "step"}`} style={{ left: `${trace.steps.length > 1 ? index / (trace.steps.length - 1) * 100 : 0}%` }} key={index} onClick={() => moveTo(index)} />)}</div><div className="controls"><button disabled={(trace?.steps.length ?? 0) < 2} onClick={() => setPlaying(value => !value)}>{playing ? "Pause" : "Play"} ▶</button><button data-step-navigation="true" aria-keyshortcuts="ArrowLeft" disabled={(trace?.steps.length ?? 0) < 2} onClick={() => moveTo(cursor - 1)}>← step back</button><button data-step-navigation="true" aria-keyshortcuts="ArrowRight" title="Use Left/Right arrow keys to step" disabled={(trace?.steps.length ?? 0) < 2} onClick={() => moveTo(cursor + 1)}>step forward →</button><select aria-label="Playback speed" value={speed} onChange={e => setSpeed(Number(e.target.value))}><option value="0.5">0.5x</option><option value="1">1x</option><option value="2">2x</option><option value="4">4x</option></select><label className="predict-toggle"><input type="checkbox" disabled={stale} checked={predictMode} onChange={e => { setPredictMode(e.target.checked); setPrediction(undefined); setPredictionResult(undefined); }} /> Predict</label><span>{view ? `${location(view.line)} · ${view.event ?? "step"}` : emptyRun ? "Run finished · no recorded steps" : "No trace loaded"} · score {score} · streak {streak}</span></div>{prediction && <div className="prediction"><b>Where will {prediction.label} point after this line?</b><button disabled={predictionResult !== undefined} onClick={() => answerPrediction(null)}>NULL</button>{predictionNodes.map(node => <button key={node.address} disabled={predictionResult !== undefined} onClick={() => answerPrediction(node.address)}>{`0x${node.address.toString(16)}`}{node.freeStep !== undefined ? " (freed)" : !allocations.some(allocation => allocation.address === node.address) ? " (new block)" : ""}</button>)}{predictionResult !== undefined && <strong className={predictionResult ? "correct" : "incorrect"}>{predictionResult ? "Correct!" : "Not quite"}</strong>}</div>}</div>
         <div className={`columns${!model?.nodes.length && !arrayStackStep ? " empty-heap" : ""}`}>
-          <div className="heap-column"><h3>{arrayStackStep ? "DATA STRUCTURE" : "HEAP STRUCTURE"} <small>{arrayStackStep ? "stack" : model?.shape ?? "ready"}</small></h3>{arrayStackStep && <ArrayStackDiagram stack={readArrayStack(arrayStackStep)} />}{(!arrayStackStep || model?.nodes.length) ? model ? <StructureDiagram model={model} highlighted={highlightedAddress} onHighlight={setHighlightedAddress} memoryViewRequest={memoryViewRequest} /> : <div className="diagram-empty">{emptyRun ? "No heap activity was recorded." : "Run a program to visualize its structure."}</div> : null}<div className="heap-summary">{allocations.filter(allocation => allocation.freeStep === undefined).length} live · {allocations.filter(allocation => allocation.freeStep !== undefined).length} freed · {model?.nodes.filter(node => node.orphaned).length ?? 0} orphaned</div></div>
-          <div><h3>CALL STACK</h3><div className="stack-visual"><div className="stack-label">Active functions and local variables</div>{view && view.frames.slice().reverse().map((frame, frameIndex) => <div key={`${frame.name}-${frameIndex}`} className="frame"><small className="frame-name">{executionMode === "snippet" && frameIndex === view.frames.length - 1 ? "snippet" : `${frame.name}()`}</small>{Object.entries(frame.variables ?? {}).map(([key, variable]) => <div className={`stack-slot ${variable.pointer ? "pointer-slot" : ""}`} key={key} title={`${variable.type} ${key}`} onMouseEnter={() => variable.pointer && setHighlightedAddress(!variable.stringPointer && variable.value !== "null" ? Number(variable.value) : undefined)} onClick={() => variable.pointer && setHighlightedAddress(!variable.stringPointer && variable.value !== "null" ? Number(variable.value) : undefined)}><span><b>{key}</b><small>{variable.type}</small></span>{!variable.stringPointer && variable.value.startsWith("[") ? <span className="array-cells">{variable.value.slice(1, -1).split(", ").map((cell, index) => <span className="array-cell" key={index}><small>[{index}]</small>{cell}</span>)}</span> : <code>{variable.stringPointer ? `string ${JSON.stringify(variable.value)}` : variable.pointer && variable.value !== "null" ? `0x${Number(variable.value).toString(16)}` : variable.value}</code>}{variable.pointer && <button className="quick-look-trigger" type="button" aria-label={`Quick Look pointer ${key}`} onClick={event => { event.stopPropagation(); setPlaying(false); setQuickLook({ name:key, variable, step:view, trigger:event.currentTarget }); }}>Quick Look</button>}</div>)}</div>)}{!view && <div className="diagram-empty">{emptyRun ? "No variables or calls were recorded." : "Run a program to inspect its function calls and variables."}</div>}</div></div>
+          <div className="heap-column"><h3>{arrayStackStep ? "DATA STRUCTURE" : "HEAP STRUCTURE"} <small>{arrayStackStep ? "stack" : model?.shape ?? "ready"}</small></h3>{arrayStackStep && <ArrayStackDiagram stack={readArrayStack(arrayStackStep)} />}{(!arrayStackStep || model?.nodes.length) ? model ? <StructureDiagram model={model} highlighted={highlightedAddress} onHighlight={setHighlightedAddress} memoryViewRequest={memoryViewRequest} changedHeap={changes.heap} /> : <div className="diagram-empty">{emptyRun ? "No heap activity was recorded." : "Run a program to visualize its structure."}</div> : null}<div className="heap-summary">{allocations.filter(allocation => allocation.freeStep === undefined).length} live · {allocations.filter(allocation => allocation.freeStep !== undefined).length} freed · {model?.nodes.filter(node => node.orphaned).length ?? 0} orphaned</div></div>
+          <div><h3>CALL STACK</h3><div className="stack-visual"><div className="stack-label">Active functions and local variables</div>{view && view.frames.slice().reverse().map((frame, frameIndex) => <div key={frameKey(frame.invocation, frame.name, view.frames.length-1-frameIndex)} className="frame" data-invocation={frame.invocation}>
+              <small className="frame-name">{executionMode === "snippet" && frameIndex === view.frames.length - 1 ? "snippet" : `${frame.name}()`}</small>
+              {Object.entries(frame.variables ?? {}).map(([key, variable]) => {
+                const change = frame.invocation === undefined ? undefined : changes.frames.get(frame.invocation)?.get(key);
+                return <div className={`stack-slot ${variable.pointer ? "pointer-slot" : ""}${change ? " step-changed-slot" : ""}`} key={key}
+                  title={`${variable.type} ${key}`}
+                  onMouseEnter={() => variable.pointer && setHighlightedAddress(!variable.stringPointer && variable.value !== "null" ? Number(variable.value) : undefined)}
+                  onClick={() => variable.pointer && setHighlightedAddress(!variable.stringPointer && variable.value !== "null" ? Number(variable.value) : undefined)}>
+                  <span><b>{key}</b><small>{variable.type}</small></span>
+                  <StackValue variable={variable} change={change} />
+                  {variable.pointer && <button className="quick-look-trigger" type="button" aria-label={`Quick Look pointer ${key}`} onClick={event => { event.stopPropagation(); setPlaying(false); setQuickLook({ name:key, variable, step:view, trigger:event.currentTarget }); }}>Quick Look</button>}
+                </div>;
+              })}
+            </div>)}{!view && <div className="diagram-empty">{emptyRun ? "No variables or calls were recorded." : "Run a program to inspect its function calls and variables."}</div>}</div></div>
         </div>
         {error && !fault && <div className="crime" role="alert"><b>PROGRAM COULD NOT RUN</b><span>{diagnostic(error)}</span></div>}
         {fault && !faultReached && faultStep >= 0 && <div className="error-ahead">Error ahead at step {faultStep + 1}</div>}

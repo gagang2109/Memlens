@@ -1,6 +1,6 @@
 import { parse, type Expr, type FunctionDef, type Program, type Stmt } from "../lang/parser";
 import { Memory, MemoryFault, type Allocation } from "./memory";
-import { Trace, type FrameView } from "./trace";
+import { Trace, type ArraySnapshot, type FrameView } from "./trace";
 import { localArraySizeof, isFixedArrayBound } from "./fixedArraySizeof";
 
 type Value = number | string | null;
@@ -31,7 +31,9 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
   }
   const memory = new Memory(); const heap = new Map<number, HeapObject>(); const cells = new Map<number, Value>();
   const arrayRefs = new Map<number, LocalArray>(); const locations = new Map<number, Ref>(); let nextStackAddress = 0x7000;
-  const frames: { name: string; vars: Map<string, RuntimeVariable> }[] = [{ name: "main", vars: new Map() }];
+  const frames: { invocation: number; name: string; vars: Map<string, RuntimeVariable> }[] = [{ invocation: 0, name: "main", vars: new Map() }];
+  let nextInvocation = 1;
+  let previousArrays = new Map<number, ArraySnapshot>();
   let stdout = ""; let stdinCursor = 0; let steps = 0; let error: MemoryFault | undefined;
   const current = () => frames[frames.length - 1].vars;
   // Character values use one-character strings in the existing VM representation.
@@ -41,11 +43,28 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
   const sizeofContext = { constants: program.constants, floatingConstants: program.floatingConstants, functions: program.functions, lookup: findVariable };
   const pointerMeta = (expression: Expr) => expression.kind === "name" ? findVariable(expression.name) : undefined;
   const record = (line: number, event: "step" | "alloc" | "free" | "error" | "call" | "return" = "step", message?: string) => {
-    const visible: FrameView[] = frames.map(frame => ({
-      name: frame.name,
-      locals: Object.fromEntries([...frame.vars].map(([key, variable]) => [key, variable.array ? `[${variable.array.join(", ")}]` : String(variable.value)])),
-      variables: Object.fromEntries([...frame.vars].map(([key, variable]) => [key, { type: `${variable.type}${variable.pointer ? " *" : ""}`, value: variable.array ? `[${variable.array.join(", ")}]` : String(variable.value), pointer: variable.pointer, ...(variable.pointer && !variable.array && typeof variable.value === "string" ? { stringPointer: true } : {}) }])),
-    }));
+    const arrays = new Map<number, ArraySnapshot>();
+    const visible: FrameView[] = frames.map(frame => {
+      const variables = Object.fromEntries([...frame.vars].map(([key, variable]) => {
+        const { array, arrayBase, dimensions, address } = variable;
+        let snapshot: ArraySnapshot | undefined;
+        if (array && arrayBase !== undefined && dimensions) {
+          const previous = previousArrays.get(arrayBase);
+          // Share unchanged snapshots; copy a changed array so rewind cannot
+          // see writes that happened after the selected step.
+          snapshot = previous?.cells.length === array.length && array.every((value,i) => Object.is(value, previous.cells[i]))
+            ? previous : { base: arrayBase, dimensions: [...dimensions], cells: [...array] };
+          arrays.set(arrayBase, snapshot);
+        }
+        return [key, { type: `${variable.type}${variable.pointer ? " *" : ""}`,
+          value: array ? `[${array.join(", ")}]` : String(variable.value), pointer: variable.pointer,
+          ...(address !== undefined ? {storage:address} : {}), ...(snapshot ? {array:snapshot} : {}),
+          ...(variable.pointer && !array && typeof variable.value === "string" ? { stringPointer: true } : {}) }];
+      }));
+      return { invocation: frame.invocation, name: frame.name, variables,
+        locals: Object.fromEntries(Object.entries(variables).map(([key, variable]) => [key, variable.value])) };
+    });
+    previousArrays = arrays;
     const pointers = frames.flatMap(frame => [...frame.vars].flatMap(([name, variable]) => variable.pointer && typeof variable.value === "number" ? [{ from: `${frame.name}.${name}`, to: variable.value, label: name, dangling: Boolean(memory.allocations.find(a => a.address === variable.value)?.freeStep !== undefined) }] : []));
     const heapViews = [...heap.values()].map(object => {
       // An anonymous struct has no unique runtime type name in this VM.
@@ -535,7 +554,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
             pointerDepth: parameter.pointerDepth, elementSize: elementSize(parameter.type), matrixColumnCount });
         }
       });
-      frames.push({ name: fn.name, vars });
+      frames.push({ invocation: nextInvocation++, name: fn.name, vars });
       record(expression.line, "call");
       let returned: Value = null; let failed = false;
       try { execute(fn.body); }

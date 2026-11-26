@@ -4,9 +4,11 @@ it("preserves string pointer provenance without changing existing numeric/null s
   const result = run('int main(){char *s="4096";char *p=malloc(4);char *n=NULL;}');
   expect(result.status).toBe("ok");
   const vars = result.trace.steps.at(-1)!.frames[0].variables!;
-  expect(vars.s).toEqual({type:"char *", value:"4096", pointer:true, stringPointer:true});
-  expect(vars.p).toEqual({type:"char *", value:"4096", pointer:true});
-  expect(vars.n).toEqual({type:"char *", value:"null", pointer:true});
+  expect(vars.s).toMatchObject({type:"char *", value:"4096", pointer:true, stringPointer:true});
+  expect(vars.p).toMatchObject({type:"char *", value:"4096", pointer:true});
+  expect(vars.n).toMatchObject({type:"char *", value:"null", pointer:true});
+  expect(vars.p.stringPointer).toBeUndefined();
+  expect(vars.n.stringPointer).toBeUndefined();
 });
 it("recomputes presentation provenance on reassignment and preserves previous snapshots", () => {
   const result = run('int main(){char *s="123";s=malloc(4);}');
