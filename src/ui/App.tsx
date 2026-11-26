@@ -15,7 +15,7 @@ import { ConsoleWindow } from "./ConsoleWindow";
 import { run } from "../vm/interpreter";
 import { samples } from "../samples";
 import type { Trace, TraceStep, FrameVariable } from "../vm/trace";
-import { listReturnLink, previousListLink, renderModel } from "../viz/model";
+import { listReturnLink, previousListLink, renderModel, VARIABLE_TAG_WIDTH, variableTagX } from "../viz/model";
 import { DiagramViewport, type MemoryViewRequest } from "./DiagramViewport";
 import { CodeEditor } from "./CodeEditor";
 import { readSavedCount, saveCount } from "./storage";
@@ -50,7 +50,7 @@ function StructureDiagram({ model, highlighted, onHighlight, memoryViewRequest }
       <defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="currentColor" /></marker><marker id="prev-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="var(--cyan)" /></marker><pattern id="freed-hatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line y1="0" y2="8" stroke="#aab3bd" strokeWidth="2" /></pattern></defs>
       {model.arrows.map((arrow, index) => {
         const target = nodeByAddress.get(arrow.to); if (!target) return null;
-        if (!arrow.from.startsWith("0x")) { const tags = tagsByTarget.get(arrow.to) ?? []; const tagIndex = tags.indexOf(arrow); const width = 72; const x = target.x + 27 + tagIndex * (width + 4); return <line key={`arrow-${index}`} x1={x + width / 2} y1={target.y - 22} x2={target.x + 63} y2={target.y} className={arrow.dangling ? "dangling-arrow" : "pointer-arrow"} markerEnd="url(#arrow)" />; }
+        if (!arrow.from.startsWith("0x")) { const tags = tagsByTarget.get(arrow.to) ?? []; const tagIndex = tags.indexOf(arrow); const x = variableTagX(target.x, tagIndex); return <line key={`arrow-${index}`} x1={x + VARIABLE_TAG_WIDTH / 2} y1={target.y - 22} x2={target.x + 63} y2={target.y} className={arrow.dangling ? "dangling-arrow" : "pointer-arrow"} markerEnd="url(#arrow)" />; }
         const source = nodeByAddress.get(Number.parseInt(arrow.from.slice(2).split(".")[0], 16)); if (!source) return null;
         if (model.shape === "tree" && (arrow.label === "left" || arrow.label === "right")) {
           const label = arrow.from.split(".").pop(); const left = label === "left"; const x1 = source.x + (left ? 20 : 106); const y1 = source.y + 18;
@@ -68,10 +68,11 @@ function StructureDiagram({ model, highlighted, onHighlight, memoryViewRequest }
       {variableArrows.map((arrow, index) => {
         const node = nodeByAddress.get(arrow.to)!;
         const tagIndex = (tagsByTarget.get(arrow.to) ?? []).indexOf(arrow);
+        const x = variableTagX(node.x, tagIndex);
         const endpoint = endpoints?.find(end => end.from === arrow.from && end.address === arrow.to);
         return <g key={`tag-${index}`} className={endpoint ? `queue-endpoint-tag queue-endpoint-${endpoint.role}` : undefined}>
-          <rect x={node.x + 27 + tagIndex * 76} y={node.y - 40} width="72" height="18" rx="4" className="pointer-tag" />
-          <text x={node.x + 63 + tagIndex * 76} y={node.y - 27} textAnchor="middle" className="tag-text">{endpoint ? endpoint.role.toUpperCase() : arrow.label}</text>
+          <rect x={x} y={node.y - 40} width={VARIABLE_TAG_WIDTH} height="18" rx="4" className="pointer-tag" />
+          <text x={x + VARIABLE_TAG_WIDTH / 2} y={node.y - 27} textAnchor="middle" className="tag-text">{endpoint ? endpoint.role.toUpperCase() : arrow.label}</text>
         </g>;
       })}
       {model.nodes.map(node => <g key={node.address} transform={`translate(${node.x},${node.y})`} className={`${node.freed ? "diagram-node freed-node" : node.orphaned ? "diagram-node orphan-node" : "diagram-node"} ${highlighted === node.address ? "highlighted-node" : ""}`} onClick={() => onHighlight(node.address)}>

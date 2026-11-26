@@ -22,6 +22,10 @@ export type RenderShape = "singly-linked-list" | "doubly-linked-list" | "tree" |
 export type QueueEndpoint = { role: "front" | "rear"; from: string; address: number | null };
 export type RenderModel = { queueEndpoints?: [QueueEndpoint, QueueEndpoint]; nodes: LayoutNode[]; arrows: PointerArrow[]; shape: RenderShape; canvasWidth: number; canvasHeight: number };
 
+export const VARIABLE_TAG_WIDTH = 72;
+export const variableTagX = (nodeX: number, index: number) => nodeX + 27 + index * (VARIABLE_TAG_WIDTH + 4);
+const variableTagRight = (count: number) => count ? variableTagX(0, count - 1) + VARIABLE_TAG_WIDTH : 0;
+
 const addressOf = (address: number) => `0x${address.toString(16)}`;
 
 // Route same-row next pointers that return to an earlier card (or to
@@ -159,7 +163,7 @@ export function renderModel(step: TraceStep): RenderModel {
       for (const node of row) {
         node.x = x; node.y = y;
         const tagCount = variableTagCounts.get(node.address) ?? 0;
-        const aliasWidth = shape !== "singly-linked-list" && tagCount ? 27 + (tagCount - 1) * 76 + 72 + 16 : 0;
+        const aliasWidth = shape !== "singly-linked-list" && tagCount ? variableTagRight(tagCount) + 16 : 0;
         x += Math.max(145, aliasWidth);
       }
     };
@@ -184,7 +188,7 @@ export function renderModel(step: TraceStep): RenderModel {
       node.x = x;
       node.y = 60 + Math.floor(index / 3) * 140;
       const tags = tagCounts.get(node.address) ?? 0;
-      x += Math.max(164, tags ? 27 + (tags - 1) * 76 + 72 + 20 : 0);
+      x += Math.max(164, tags ? variableTagRight(tags) + 20 : 0);
       canvasWidth = Math.max(canvasWidth, x);
     });
   }
@@ -221,6 +225,8 @@ export function renderModel(step: TraceStep): RenderModel {
     };
     const placed = new Set<number>();
     const halfGap = 82;
+    const occupiedWidth = (node: LayoutNode) => Math.max(126, variableTagRight(variableTagCounts.get(node.address) ?? 0));
+    const spacedWidth = (node: LayoutNode) => Math.max(2 * halfGap, occupiedWidth(node) + 16);
     const measure = (node: LayoutNode | undefined): Subtree | undefined => {
       if (!node || placed.has(node.address)) return;
       // Student graphs can contain cycles or shared children. Each block
@@ -231,7 +237,8 @@ export function renderModel(step: TraceStep): RenderModel {
       const rightOffset = left?.width ?? (right ? Math.max(0, halfGap - right.rootX) : 0);
       const rootX = left && right ? (left.rootX + rightOffset + right.rootX) / 2
         : left ? left.rootX + halfGap : right ? rightOffset + right.rootX - halfGap : 0;
-      const width = Math.max(rootX + 2 * halfGap, left?.width ?? 0, right ? rightOffset + right.width : 0);
+      // Reserve room for aliases at any depth before placing the right subtree.
+      const width = Math.max(rootX + spacedWidth(node), left?.width ?? 0, right ? rightOffset + right.width : 0);
       return { node, rootX, width, left, right, rightOffset };
     };
     let componentRight = 20;
@@ -239,9 +246,7 @@ export function renderModel(step: TraceStep): RenderModel {
       subtree.node.x = offset + subtree.rootX;
       // Leave room for child alias tags above each card.
       subtree.node.y = 60 + depth * 140;
-      const tagCount = variableTagCounts.get(subtree.node.address) ?? 0;
-      const occupied = Math.max(126, tagCount ? 27 + (tagCount - 1) * 76 + 72 : 0);
-      componentRight = Math.max(componentRight, subtree.node.x + occupied);
+      componentRight = Math.max(componentRight, subtree.node.x + occupiedWidth(subtree.node));
       if (subtree.left) place(subtree.left, offset, depth + 1);
       if (subtree.right) place(subtree.right, offset + subtree.rightOffset, depth + 1);
     };
@@ -257,7 +262,12 @@ export function renderModel(step: TraceStep): RenderModel {
     const unplaced = nodes.filter(node => !placed.has(node.address));
     const placedNodes = nodes.filter(node => placed.has(node.address));
     const extraY = placedNodes.length ? Math.max(...placedNodes.map(node => node.y)) + 140 : 60;
-    unplaced.forEach((node, index) => { node.x = 20 + index * 164; node.y = extraY; });
+    let extraX = 20;
+    unplaced.forEach(node => {
+      node.x = extraX;
+      node.y = extraY;
+      extraX += spacedWidth(node);
+    });
     canvasWidth = Math.max(canvasWidth, ...nodes.map(node => node.x + 164));
   }
   // The SVG clips at its viewBox even when the outer viewport is scrollable.
@@ -265,10 +275,9 @@ export function renderModel(step: TraceStep): RenderModel {
   // room for the 78px node, its address label, stroke and drop shadow.
   for (const node of nodes) {
     canvasHeight = Math.max(canvasHeight, node.y + 78 + 20);
-    // StructureDiagram places 72px variable tags at x + 27, 76px apart.
     // Count dangling aliases too, so their labels remain reachable when panning.
     const tagCount = variableTagCounts.get(node.address) ?? 0;
-    if (tagCount) canvasWidth = Math.max(canvasWidth, node.x + 27 + (tagCount - 1) * 76 + 72 + 20);
+    if (tagCount) canvasWidth = Math.max(canvasWidth, node.x + variableTagRight(tagCount) + 20);
   }
   const nodesByLabel = new Map(nodes.map(node => [node.label, node]));
   const arrows = pointers.filter(pointer => nodesByLabel.has(addressOf(pointer.to)));

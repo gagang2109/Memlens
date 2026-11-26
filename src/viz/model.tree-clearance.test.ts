@@ -102,3 +102,28 @@ it('keeps a shared child card unique when two different roots point to it', () =
  expect(model.nodes[2].y).toBeGreaterThan(model.nodes[0].y);
  expect(model.arrows.filter(arrow=>arrow.to===c)).toHaveLength(2);
 });
+
+it('reserves alias space in deeper sibling subtrees and on the disconnected row', () => {
+ const addresses = [4096, 4112, 4128, 4144, 4160, 4176, 4192];
+ const alias = (label: string, index: number) => ({from:`main.${label}`,label,to:addresses[index],dangling:false});
+ const branch = (from: number, label: string, to: number) => ({
+  from:`0x${addresses[from].toString(16)}.${label}`,label,to:addresses[to],dangling:false,
+ });
+ const manyAliases = (index: number) => Array.from({length:5}, (_,i)=>alias(`alias${index}_${i}`, index));
+ const pointers = [
+  alias('root',0),branch(0,'left',1),branch(0,'right',2),branch(1,'right',3),branch(2,'left',4),
+  ...manyAliases(3),alias('rightLeaf',4),...manyAliases(5),alias('extra',6),
+ ];
+ const model = renderModel({
+  index:0,line:1,stdout:'',frames:[],pointers,
+  memory:{bytes:[],shadows:[],allocations:addresses.map(address=>({address,size:16,line:1,allocStep:0}))},
+ });
+ expect(model.shape).toBe('tree');
+ for (const [a,b] of [[model.nodes[3],model.nodes[4]],[model.nodes[5],model.nodes[6]]]) {
+  expect(a.y).toBe(b.y);
+  const lastLeftTagRight = a.x + 27 + 4 * 76 + 72;
+  expect(lastLeftTagRight + 16).toBeLessThanOrEqual(b.x + 27);
+  expect(model.canvasWidth).toBeGreaterThanOrEqual(b.x+126);
+ }
+ expect(model.arrows).toEqual(pointers);
+});
