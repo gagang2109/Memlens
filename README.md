@@ -32,6 +32,8 @@ Try a [shared Factorial example](https://memlensc.vercel.app/#sample=factorial):
 
 Try the [doubly linked list sample](https://memlensc.vercel.app/#sample=doubly-linked-list) to follow `next` from head to tail and `prev` back again. Step through the two print loops to see the current pointer move over the same three nodes in opposite directions.
 
+Try [Swap two tree children](https://memlensc.vercel.app/#sample=tree-swap) and step through its three pointer assignments. In the middle, both links point to the same node while `saved` keeps the original left child reachable. After the swap, the children trade sides but keep their addresses.
+
 ## What you can explore
 
 | Learn by doing | What Memlens shows |

@@ -91,6 +91,51 @@ int main() {
     return 0;
 }`,
   },
+  "tree-swap": {
+    name: "Swap two tree children",
+    code: `#include <stdio.h>
+#include <stdlib.h>
+
+typedef struct Node {
+    int value;
+    struct Node *left;
+    struct Node *right;
+} Node;
+
+Node *make_node(int value) {
+    Node *node = malloc(sizeof(Node));
+    if (node) {
+        node->value = value;
+        node->left = NULL;
+        node->right = NULL;
+    }
+    return node;
+}
+
+int main(void) {
+    Node *root = make_node(4);
+    if (!root) return 1;
+    root->left = make_node(2);
+    root->right = make_node(6);
+    if (!root->left || !root->right) {
+        free(root->left);
+        free(root->right);
+        free(root);
+        return 1;
+    }
+
+    printf("Before: left=%d, right=%d\\n", root->left->value, root->right->value);
+    Node *saved = root->left; // Keep the original left child reachable.
+    root->left = root->right; // Both links now point to one node, not two copies.
+    root->right = saved;      // Reattach the original left child on the right.
+    printf("After: left=%d, right=%d\\n", root->left->value, root->right->value);
+
+    free(root->left);
+    free(root->right);
+    free(root);
+    return 0;
+}`,
+  },
   tree: {
     name: "BST insert and inorder",
     code: `#include <stdio.h>

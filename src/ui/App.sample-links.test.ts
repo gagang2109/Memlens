@@ -117,3 +117,62 @@ it("copies the clean link and selects it when clipboard permission is denied", a
     else Reflect.deleteProperty(navigator, "clipboard");
   }
 });
+
+it("shows all three tree swap states and keeps the same memory addresses on rewind", () => {
+  route("/#sample=tree-swap");
+  render();
+  expect(locate(".linked-sample")?.textContent).toContain("Swap two tree children");
+  click("Load sample");
+  expect(locate<HTMLInputElement>(".sample-share input")?.value).toBe(window.location.origin + "/#sample=tree-swap");
+  click("Run");
+  const ticks = [...host.querySelectorAll<HTMLButtonElement>(".event-tick")];
+  const diagram = () => locate('[aria-label="tree visualization"]');
+  const cards = () => [...diagram()!.querySelectorAll(".diagram-node")];
+  const address = (card: Element) => /@ (0x[\da-f]+)/.exec(card.textContent!)![1];
+  const cardX = (card: Element) => Number(/translate\(([^,]+),/.exec(card.getAttribute("transform")!)![1]);
+  const seek = (i: number) => act(() => ticks[i].click());
+  const pair = () => {
+    const parent = cards()[0].textContent!;
+    return ["left", "right"].map(side => new RegExp(`${side} → (0x[\\da-f]+)`).exec(parent)?.[1]);
+  };
+  // The first output marks the initial tree; take the first snapshot where
+  // the two fields refer to the same child, before either child is freed.
+  let middle = -1;
+  for (let i = 0; i < ticks.length; i++) {
+    seek(i);
+    if (!locate(".console-output pre")?.textContent?.startsWith("Before:") || !diagram()) continue;
+    const [left, right] = pair();
+    if (left && left === right) { middle = i; break; }
+  }
+  expect(middle).toBeGreaterThan(0);
+  const [shared] = pair();
+  expect(cards()).toHaveLength(3);
+  expect(cards().filter(card => address(card) === shared)).toHaveLength(1);
+  expect(diagram()?.textContent).toContain("saved");
+  expect(cards().some(card => card.classList.contains("orphan-node"))).toBe(false);
+
+  seek(middle - 1);
+  const [initialLeft, initialRight] = pair();
+  const x = (id: string | undefined) => cardX(cards().find(card => address(card) === id)!);
+  expect(initialLeft).not.toBe(initialRight);
+  expect(initialRight).toBe(shared);
+  expect(x(initialLeft)).toBeLessThan(x(initialRight));
+  Object.defineProperty(locate(".diagram-viewport"), "clientWidth", {value:400});
+  click("Fit width");
+
+  let swapped = -1;
+  for (let i = middle + 1; i < ticks.length; i++) {
+    seek(i);
+    if (pair()[1] === initialLeft) { swapped = i; break; }
+  }
+  expect(swapped).toBeGreaterThan(middle);
+  expect(pair()).toEqual([initialRight, initialLeft]);
+  expect(x(initialRight)).toBeLessThan(x(initialLeft));
+  seek(middle);
+  expect(pair()).toEqual([shared, shared]);
+  expect(button("Fit width").getAttribute("aria-pressed")).toBe("true");
+  expect(locate<HTMLDivElement>(".diagram-scaled-content")?.style.width).toBe("400px");
+  seek(ticks.length - 1);
+  expect(locate(".console-output pre")?.textContent).toBe("Before: left=2, right=6\nAfter: left=6, right=2\n");
+  expect(locate(".leak-report")).toBeNull();
+});

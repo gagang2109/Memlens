@@ -96,6 +96,7 @@ const sampleLabels: Record<keyof typeof samples, string> = {
   'snippet': 'Array sum snippet — no main needed',
   'requested': 'Push/reverse list — intentional use-after-free',
   'requested-uaf': 'Push/reverse use-after-free — same intentional error example',
+  'tree-swap': 'Swap two tree children — trace the saved pointer',
   'tree': 'BST insert and inorder — traverse a binary tree',
   'tree-menu': 'Tree menu — insert, traverse, and delete a leaf',
   'doubly-linked-list': 'Doubly linked list — walk next and prev',
