@@ -4,7 +4,8 @@ import { Trace, type ArraySnapshot, type FrameVariable, type FrameView } from ".
 import { localArraySizeof, isFixedArrayBound } from "./fixedArraySizeof";
 
 type Value = number | string | null;
-type LocalArray = { values: Value[]; type: string; dimensions: number[] };
+type LocalArray = { values: Value[]; type: string; dimensions: number[];
+  owner?: { vars: Map<string, RuntimeVariable>; name: string; variable: RuntimeVariable } };
 type RuntimeVariable = { value: Value; type: string; pointer: boolean; pointerDepth?: number; array?: Value[]; dimensions?: number[]; fixedArrayBounds?: boolean; matrixColumnCount?: number; elementSize?: number; arrayBase?: number; address?: number };
 type Ref = { get: () => Value; set: (value: Value) => void; address?: number; allocation?: Allocation };
 type HeapObject = { address: number; fields: Map<string, Value>; type?: string };
@@ -32,7 +33,10 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
     return { trace, status: "error", error, leaks: [], orphanedAtExit: [] };
   }
   const memory = new Memory(); const heap = new Map<number, HeapObject>(); const cells = new Map<number, Value>();
-  const arrayRefs = new Map<number, LocalArray>(); const locations = new Map<number, Ref>(); let nextStackAddress = 0x7000;
+  const arrayRefs = new Map<number, LocalArray>(); const locations = new Map<number, Ref>();
+  // Local storage uses virtual addresses outside both the simulated heap and
+  // the separate bounded struct storage. Numeric equality must not alias them.
+  let nextStackAddress = 0x200000;
   const frames: { invocation: number; name: string; vars: Map<string, RuntimeVariable> }[] = [{ invocation: 0, name: "main", vars: new Map() }];
   const fixedObjects = new Map<number, FixedLocalStruct>();
   const fixedArrays = new Map<number, FixedMember>();
@@ -149,6 +153,25 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
     // is resolved. Validate at each actual read/write, not just ref creation.
     return { ...reference, get: () => { check(); return reference.get(); }, set: value => { check(); reference.set(value); } };
   };
+  const addressedArrayCells = new Map<number, { array: LocalArray; index: number; owner: NonNullable<LocalArray["owner"]> }>();
+  const rememberArrayCell = (base: number, index: number, variable?: RuntimeVariable) => {
+    const array = arrayRefs.get(base), owner = array?.owner;
+    if (!array || !owner || variable && (variable.type !== "int" || variable.pointer && variable.pointerDepth !== 1)) return;
+    const address = base + 4 * index;
+    // The holder records the owning array, not a detached value. The line is
+    // supplied by the operations below so a later access can point to the fault.
+    addressedArrayCells.set(address, { array, index, owner });
+  };
+  const addressedCellRef = (address: number, line: number): Ref | undefined => {
+    const cell = addressedArrayCells.get(address);
+    if (!cell) return undefined;
+    const { owner, array, index } = cell;
+    const check = () => {
+      if (!frames.some(frame => frame.vars === owner.vars) || owner.vars.get(owner.name) !== owner.variable)
+        runtimeError("local array cell used outside its lifetime", line);
+    };
+    return { address, get: () => { check(); return array.values[index]; }, set: value => { check(); array.values[index] = value; } };
+  };
   const ref = (expression: Expr, addressOnly = false): Ref => {
     if (expression.kind === "name") {
       const variable = findVariable(expression.name); if (!variable) throw new Error(`line ${expression.line}: unknown variable ${expression.name}`);
@@ -221,8 +244,17 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       const member = fixedArrays.get(base);
       if (member) return fixedCell(member, index, expression.line, addressOnly);
       const variable = pointerMeta(expression.object); const array = expression.object.kind === "name" ? findVariable(expression.object.name)?.array : undefined;
-      if (array) { if (!Number.isInteger(index) || index < 0 || index >= array.length) runtimeError(`array index out of bounds (${index})`, expression.line); return { get: () => array[index], set: value => { array[index] = value; }, address: (findVariable(expression.object.kind === "name" ? expression.object.name : "")?.arrayBase ?? 0) + index * (variable?.elementSize ?? 4) }; }
-      const baseArray = arrayRefs.get(base); if (baseArray) { if (!Number.isInteger(index) || index < 0 || index >= baseArray.values.length) runtimeError(`pointer index out of bounds (${index})`, expression.line); return { get: () => baseArray.values[index], set: value => { baseArray.values[index] = value; }, address: base + index * (variable?.elementSize ?? elementSize(baseArray.type)) }; }
+      if (array) {
+        if (!Number.isInteger(index) || index < 0 || index >= array.length) runtimeError(`array index out of bounds (${index})`, expression.line);
+        if (addressOnly) rememberArrayCell(base, index, variable);
+        return { get: () => array[index], set: value => { array[index] = value; }, address: base + index * (variable?.elementSize ?? 4) };
+      }
+      const baseArray = arrayRefs.get(base);
+      if (baseArray) {
+        if (!Number.isInteger(index) || index < 0 || index >= baseArray.values.length) runtimeError(`pointer index out of bounds (${index})`, expression.line);
+        if (addressOnly) rememberArrayCell(base, index, variable);
+        return { get: () => baseArray.values[index], set: value => { baseArray.values[index] = value; }, address: base + index * (variable?.elementSize ?? elementSize(baseArray.type)) };
+      }
       const size = variable?.elementSize ?? memory.allocationAt(base)?.elementSize ?? 1; const address = base + index * size; const allocation = memory.allocationAt(address);
       if (!allocation || address < allocation.address || address + size > allocation.address + allocation.size) runtimeError(`pointer index out of bounds (${index})`, expression.line, allocation);
       return {
@@ -238,6 +270,8 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       const address = asNum(evaluate(expression.expr)); const allocation = memory.find(address);
       const location = locations.get(address);
       if (location) return liveRef(location, expression.line);
+      const localCell = addressedCellRef(address, expression.line);
+      if (localCell) return localCell;
       const fixedArray = fixedArrays.get(address);
       if (fixedArray) return fixedCell(fixedArray, 0, expression.line);
       if (!allocation) runtimeError(address === 0 ? "null pointer dereference" : "invalid pointer dereference", expression.line);
@@ -705,18 +739,18 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
   // at a function boundary rather than allowing them to control a caller's loop.
   class BreakSignal { readonly message: string; constructor(public readonly line: number) { this.message = `line ${line}: break outside loop or switch`; } }
   class ContinueSignal { readonly message: string; constructor(public readonly line: number) { this.message = `line ${line}: continue outside loop`; } }
-  const execute = (statement: Stmt, allowFixedLocal = false): void => {
+  const execute = (statement: Stmt, allowDirectLocal = false): void => {
     if (steps >= stepLimit) runtimeError("step limit reached", statement.line);
     if (statement.kind === "block") {
       for (const child of statement.body)
-        execute(child, allowFixedLocal && (child.kind !== "block" || child.declarationGroup === true));
+        execute(child, allowDirectLocal && (child.kind !== "block" || child.declarationGroup === true));
       return;
     }
     if (statement.kind === "decl") {
       const variable: RuntimeVariable = { value: null, type: statement.type, pointer: statement.pointer, pointerDepth: statement.pointerDepth, elementSize: elementSize(statement.type) };
       const fixed = !statement.pointer && program.fixedStructFields.get(statement.type);
       if (fixed) {
-        if (!allowFixedLocal || statement.staticStorage || statement.readOnly)
+        if (!allowDirectLocal || statement.staticStorage || statement.readOnly)
           runtimeError("fixed array structs currently need a non-static, non-const declaration directly in a function body", statement.line);
         if (statement.arrayLength || statement.init || statement.arrayInitializer)
           runtimeError("arrays of these structs and whole-struct initializers are not yet supported", statement.line);
@@ -752,7 +786,30 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
         const maxLocalArrayBytes = 65536;
         const length = dimensions.reduce((total, dimension) => total * dimension, 1);
         if (!Number.isSafeInteger(length) || length > maxLocalArrayBytes / variable.elementSize!)
-          runtimeError("local array exceeds simulator limit (65536 bytes)", statement.line); variable.dimensions = dimensions; variable.array = Array.from({ length }, () => statement.type.includes("char") ? "\0" : 0); variable.pointer = false; variable.arrayBase = nextStackAddress; nextStackAddress += Math.max(1, length * variable.elementSize!); arrayRefs.set(variable.arrayBase, { values: variable.array, type: statement.type, dimensions }); if (statement.type.startsWith("struct") && !statement.pointer) for (let index = 0; index < length; index++) { const address = memory.malloc(16, steps, statement.line); heap.set(address, { address, fields: new Map(), type: statement.type }); variable.array[index] = address; } if (statement.arrayInitializer) statement.arrayInitializer.forEach((value, index) => { if (index < variable.array!.length) variable.array![index] = evaluate(value); }); if (statement.init?.kind === "literal" && typeof statement.init.value === "string") statement.init.value.split("").forEach((character, index) => { if (index < variable.array!.length) variable.array![index] = character; }); }
+          runtimeError("local array exceeds simulator limit (65536 bytes)", statement.line);
+        variable.dimensions = dimensions;
+        variable.array = Array.from({ length }, () => statement.type.includes("char") ? "\0" : 0);
+        variable.pointer = false;
+        variable.arrayBase = nextStackAddress;
+        nextStackAddress += Math.max(1, length * variable.elementSize!);
+        const owner = allowDirectLocal && statement.type === "int" && !statement.pointer &&
+          !statement.staticStorage && !statement.readOnly && dimensions.length === 1
+          ? { vars: current(), name: statement.name, variable } : undefined;
+        arrayRefs.set(variable.arrayBase, { values: variable.array, type: statement.type, dimensions, owner });
+        if (statement.type.startsWith("struct") && !statement.pointer) {
+          for (let index = 0; index < length; index++) {
+            const address = memory.malloc(16, steps, statement.line);
+            heap.set(address, { address, fields: new Map(), type: statement.type });
+            variable.array[index] = address;
+          }
+        }
+        if (statement.arrayInitializer) statement.arrayInitializer.forEach((value, index) => {
+          if (index < variable.array!.length) variable.array![index] = evaluate(value);
+        });
+        if (statement.init?.kind === "literal" && typeof statement.init.value === "string") statement.init.value.split("").forEach((character, index) => {
+          if (index < variable.array!.length) variable.array![index] = character;
+        });
+      }
       else if (statement.init) variable.value = evaluate(statement.init);
       if (!variable.pointer && statement.type.startsWith("struct")) { const address = memory.malloc(16, steps, statement.line); heap.set(address, { address, fields: new Map(), type: statement.type }); variable.value = address; }
       if (!variable.array && !variable.address) variable.address = nextStackAddress++;
