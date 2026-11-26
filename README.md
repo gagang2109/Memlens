@@ -34,6 +34,8 @@ Try the [doubly linked list sample](https://memlensc.vercel.app/#sample=doubly-l
 
 Try [Swap two tree children](https://memlensc.vercel.app/#sample=tree-swap) and step through its three pointer assignments. In the middle, both links point to the same node while `saved` keeps the original left child reachable. After the swap, the children trade sides but keep their addresses.
 
+Try [BFS / DFS](https://memlensc.vercel.app/#sample=graph-traversal) to follow the waiting BFS queue and the active recursive DFS calls as you step or rewind. For your own code, select **View as graph** on a square numeric adjacency matrix with up to 16 vertices. Each nonzero entry is an edge, including weighted edges and self-loops. The default is directed; you can choose an undirected view when the matrix is symmetric. Traversal labels are provided for the bundled sample only, not inferred from arbitrary variable names.
+
 ## What you can explore
 
 | Learn by doing | What Memlens shows |

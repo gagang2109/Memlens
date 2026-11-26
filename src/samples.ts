@@ -1,5 +1,10 @@
+import graphLab from "../tests/labs/12_graph_traversals.c?raw";
 import { treeHeightCode } from "./ui/practiceHarness";
 export const samples = {
+  "graph-traversal": {
+    name: "BFS / DFS — adjacency graph and traversal",
+    code: graphLab.replace('    int start;\n    scanf("%d", &start);', "    int start = 0;").trimEnd(),
+  },
   "tree-height": { name: "Practice tree height — separate test setup", code: treeHeightCode },
   snippet: {
     name: "Array sum snippet — no main needed",

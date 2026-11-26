@@ -349,3 +349,22 @@ footer{padding:16px 24px;font-size:10px}
 .array-page-row{display:flex;align-items:center;gap:5px}
 .array-paging button{padding:3px 6px;min-width:24px;min-height:25px;border:1px solid #41627e;border-radius:4px;background:#263548;color:inherit;font:inherit;font-size:11px}
 .array-paging button:disabled{opacity:.45}
+
+.graph-diagram{display:grid;gap:8px;padding:10px;background:#142334;border:1px solid #36506b;border-radius:8px}
+.graph-header{display:flex;align-items:center;gap:6px 12px;flex-wrap:wrap;color:#c1d6e9;font-size:11px}
+.graph-header label{display:flex;align-items:center;gap:3px}
+.graph-trigger,.graph-header button{justify-self:start;background:#263548;border:1px solid #41627e;border-radius:4px;color:#d9e7f5;padding:4px 7px;font:11px ui-monospace,monospace}
+.graph-trigger[aria-pressed="true"]{border-color:var(--cyan)}
+.graph-caption,.graph-diagram p{font-size:11px;color:#a7bfd6}
+.graph-diagram svg{display:block;width:100%;max-height:300px;color:#9bb3c9}
+.graph-edge{fill:none;stroke:currentColor;stroke-width:1.6}
+.graph-diagram text{fill:#e1efff;text-anchor:middle;dominant-baseline:middle;font:700 11px ui-monospace,monospace}
+.graph-diagram .graph-weight{paint-order:stroke;stroke:#142334;stroke-width:4}
+.graph-vertex circle{fill:#22384b;stroke:#aac0d4;stroke-width:1.5}
+.graph-discovered circle{fill:#21433f;stroke:var(--green)}
+.graph-queued circle{fill:#1f4154;stroke:var(--cyan);stroke-dasharray:2.5 1.5;stroke-width:2.5}
+.graph-active circle{fill:#493929;stroke:var(--amber);stroke-width:3}
+.graph-state{display:grid;gap:6px;margin:0;font-size:11px}
+.graph-state>div{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:5px;border-top:1px solid #334e66;padding-top:5px}
+.graph-state dt{color:#a7bfd6}
+.graph-state dd{margin:0;color:#e1efff;font-family:ui-monospace,monospace}

@@ -1,3 +1,5 @@
+import { GraphDiagram } from "./GraphDiagram";
+import { graphSize } from "../viz/graph";
 import { IndexedArray } from "./IndexedArray";
 import { describeChange, frameKey, stepChanges, type VariableChange } from "./stepChanges";
 import { useVisualizerFullscreen } from "./visualizerFullscreen";
@@ -107,6 +109,7 @@ function StructureDiagram({ model, highlighted, onHighlight, memoryViewRequest, 
 
 
 const sampleLabels: Record<keyof typeof samples, string> = {
+  'graph-traversal': samples['graph-traversal'].name,
   'tree-height': 'Practice tree height — separate test setup',
   'snippet': 'Array sum snippet — no main needed',
   'requested': 'Push/reverse list — intentional use-after-free',
@@ -188,6 +191,7 @@ export function App() {
   const selectedSample = codeSample !== "custom" && setup === (codeSample === "tree-height" ? treeHeightSetup : "") ? codeSample : "custom";
   const [previousDraft, setPreviousDraft] = useState<{ code: string; setup: string }>();
   const [runGeneration, setRunGeneration] = useState(0);
+  const [selectedGraph, setSelectedGraph] = useState<{ generation: number; base: number; name: string }>();
   const session = useRef<InteractiveRun>();
   const [inputMode, setInputMode] = useState<"ahead" | "interactive">("ahead");
   const [waiting, setWaiting] = useState(false);
@@ -215,6 +219,12 @@ export function App() {
   const model = view ? renderModel(view) : undefined;
   const arrayStackStep = lastRun?.setup === ""
     && (lastRun.code === samples.stack.code || lastRun.code === starterScaffolds.stack.code) ? view : undefined;
+  const customGraph = selectedGraph?.generation === runGeneration ? selectedGraph : undefined;
+  const labGraph = lastRun?.code === samples["graph-traversal"].code && lastRun.setup === "";
+  const matrix = customGraph
+    ? view?.frames.flatMap(frame => Object.values(frame.variables ?? {})).find(item => item.array?.base === customGraph.base)?.array
+    : labGraph ? view?.frames.find(frame => frame.name === "main")?.variables?.g?.array : undefined;
+  const showGraph = Boolean(view && (customGraph || matrix && labGraph));
   // Include newly allocated and freed blocks: a pointer can target either.
   // Derive choices from both snapshots, never from the correct answer itself.
   const predictionNodes = prediction && trace ? [...new Map([
@@ -398,18 +408,33 @@ export function App() {
         if (visualizer.fullscreen) void visualizer.exitFullscreen().then(reveal);
         else reveal();
       }}>Waiting for input · Open console ↓</a>}<div className="timeline-track"><input aria-label="Timeline" type="range" min="0" max={Math.max(0, (trace?.steps.length ?? 1) - 1)} value={cursor} onChange={e => moveTo(Number(e.target.value))} disabled={!trace || emptyRun} />{trace?.steps.map((step, index) => <button aria-label={`${step.event ?? "step"} tick ${index + 1}`} className={`event-tick tick-${step.event ?? "step"}`} style={{ left: `${trace.steps.length > 1 ? index / (trace.steps.length - 1) * 100 : 0}%` }} key={index} onClick={() => moveTo(index)} />)}</div><div className="controls"><button disabled={(trace?.steps.length ?? 0) < 2} onClick={() => setPlaying(value => !value)}>{playing ? "Pause" : "Play"} ▶</button><button data-step-navigation="true" aria-keyshortcuts="ArrowLeft" disabled={(trace?.steps.length ?? 0) < 2} onClick={() => moveTo(cursor - 1)}>← step back</button><button data-step-navigation="true" aria-keyshortcuts="ArrowRight" title="Use Left/Right arrow keys to step" disabled={(trace?.steps.length ?? 0) < 2} onClick={() => moveTo(cursor + 1)}>step forward →</button><select aria-label="Playback speed" value={speed} onChange={e => setSpeed(Number(e.target.value))}><option value="0.5">0.5x</option><option value="1">1x</option><option value="2">2x</option><option value="4">4x</option></select><label className="predict-toggle"><input type="checkbox" disabled={stale} checked={predictMode} onChange={e => { setPredictMode(e.target.checked); setPrediction(undefined); setPredictionResult(undefined); }} /> Predict</label><span>{view ? `${location(view.line)} · ${view.event ?? "step"}` : emptyRun ? "Run finished · no recorded steps" : "No trace loaded"} · score {score} · streak {streak}</span></div>{prediction && <div className="prediction"><b>Where will {prediction.label} point after this line?</b><button disabled={predictionResult !== undefined} onClick={() => answerPrediction(null)}>NULL</button>{predictionNodes.map(node => <button key={node.address} disabled={predictionResult !== undefined} onClick={() => answerPrediction(node.address)}>{`0x${node.address.toString(16)}`}{node.freeStep !== undefined ? " (freed)" : !allocations.some(allocation => allocation.address === node.address) ? " (new block)" : ""}</button>)}{predictionResult !== undefined && <strong className={predictionResult ? "correct" : "incorrect"}>{predictionResult ? "Correct!" : "Not quite"}</strong>}</div>}</div>
-        <div className={`columns${!model?.nodes.length && !arrayStackStep ? " empty-heap" : ""}`}>
-          <div className="heap-column"><h3>{arrayStackStep ? "DATA STRUCTURE" : "HEAP STRUCTURE"} <small>{arrayStackStep ? "stack" : model?.shape ?? "ready"}</small></h3>{arrayStackStep && <ArrayStackDiagram stack={readArrayStack(arrayStackStep)} />}{(!arrayStackStep || model?.nodes.length) ? model ? <StructureDiagram model={model} highlighted={highlightedAddress} onHighlight={setHighlightedAddress} memoryViewRequest={memoryViewRequest} changedHeap={changes.heap} /> : <div className="diagram-empty">{emptyRun ? "No heap activity was recorded." : "Run a program to visualize its structure."}</div> : null}<div className="heap-summary">{allocations.filter(allocation => allocation.freeStep === undefined).length} live · {allocations.filter(allocation => allocation.freeStep !== undefined).length} freed · {model?.nodes.filter(node => node.orphaned).length ?? 0} orphaned</div></div>
+        <div className={`columns${!model?.nodes.length && !arrayStackStep && !showGraph ? " empty-heap" : ""}`}>
+          <div className="heap-column">
+            <h3>{arrayStackStep || showGraph ? "DATA STRUCTURE" : "HEAP STRUCTURE"} <small>{showGraph ? "graph" : arrayStackStep ? "stack" : model?.shape ?? "ready"}</small></h3>
+            {arrayStackStep && <ArrayStackDiagram stack={readArrayStack(arrayStackStep)} />}
+            {showGraph && view && <GraphDiagram
+              key={`${runGeneration}:${customGraph?.base ?? "lab"}`}
+              name={customGraph?.name ?? "g"} array={matrix} step={view}
+              exactLab={labGraph && customGraph === undefined}
+              onClose={customGraph ? () => setSelectedGraph(undefined) : undefined} />}
+            {((!arrayStackStep && !showGraph) || Boolean(model?.nodes.length)) && (model
+              ? <StructureDiagram model={model} highlighted={highlightedAddress} onHighlight={setHighlightedAddress} memoryViewRequest={memoryViewRequest} changedHeap={changes.heap} />
+              : <div className="diagram-empty">{emptyRun ? "No heap activity was recorded." : "Run a program to visualize its structure."}</div>)}
+            <div className="heap-summary">{allocations.filter(allocation => allocation.freeStep === undefined).length} live · {allocations.filter(allocation => allocation.freeStep !== undefined).length} freed · {model?.nodes.filter(node => node.orphaned).length ?? 0} orphaned</div>
+          </div>
           <div><h3>CALL STACK</h3><div className="stack-visual"><div className="stack-label">Active functions and local variables</div>{view && view.frames.slice().reverse().map((frame, frameIndex) => <div key={frameKey(frame.invocation, frame.name, view.frames.length-1-frameIndex)} className="frame" data-invocation={frame.invocation}>
               <small className="frame-name">{executionMode === "snippet" && frameIndex === view.frames.length - 1 ? "snippet" : `${frame.name}()`}</small>
               {Object.entries(frame.variables ?? {}).map(([key, variable]) => {
                 const change = frame.invocation === undefined ? undefined : changes.frames.get(frame.invocation)?.get(key);
+                const candidate = !labGraph && variable.array && graphSize(variable.array) > 0 ? variable.array : undefined;
                 return <div className={`stack-slot ${variable.pointer ? "pointer-slot" : ""}${change ? " step-changed-slot" : ""}`} key={key}
                   title={`${variable.type} ${key}`}
                   onMouseEnter={() => variable.pointer && setHighlightedAddress(!variable.stringPointer && variable.value !== "null" ? Number(variable.value) : undefined)}
                   onClick={() => variable.pointer && setHighlightedAddress(!variable.stringPointer && variable.value !== "null" ? Number(variable.value) : undefined)}>
                   <span><b>{key}</b><small>{variable.type}</small></span>
                   <StackValue name={key} variable={variable} change={change} generation={runGeneration} />
+                  {candidate && <button type="button" className="graph-trigger" aria-pressed={customGraph?.base === candidate.base}
+                    onClick={() => setSelectedGraph({generation:runGeneration, base:candidate.base, name:key})}>View {key} as graph</button>}
                   {variable.pointer && <button className="quick-look-trigger" type="button" aria-label={`Quick Look pointer ${key}`} onClick={event => { event.stopPropagation(); setPlaying(false); setQuickLook({ name:key, variable, step:view, trigger:event.currentTarget }); }}>Quick Look</button>}
                 </div>;
               })}
