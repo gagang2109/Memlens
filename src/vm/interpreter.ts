@@ -243,6 +243,13 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
         const argument = args[0];
         const arrayBytes = localArraySizeof(argument, sizeofContext, runtimeError);
         if (arrayBytes !== undefined) return arrayBytes;
+        if (argument?.kind === "name") {
+          const variable = findVariable(argument.name);
+          if (variable && !variable.pointer && !variable.array) {
+            const type = variable.type.split(/\s+/).filter(part => part !== "const" && part !== "static").join(" ");
+            if (type === "int" || type === "char") return elementSize(type);
+          }
+        }
         if (argument?.kind === "literal") return argument.value;
         if (argument?.kind === "name" && argument.name === "char") return 1;
         if (argument?.kind === "name" && argument.name === "int") return 4;
