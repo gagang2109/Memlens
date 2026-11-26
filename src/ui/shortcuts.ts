@@ -8,14 +8,20 @@ export function shouldHandlePlaybackShortcut(event: KeyboardEvent): boolean {
   return !target.closest('input, textarea, select, button, summary, a[href], [role="button"], [role="textbox"], [role="menu"], [role="listbox"], [role="combobox"], dialog, [role="dialog"], [role="alertdialog"], [data-run-shortcut="ignore"], [contenteditable]:not([contenteditable="false"])');
 }
 
-/** Run throughout the workspace, while menus/dialogs keep their keys.
- * CodeMirror has its own explicit run binding and prevents duplicate handling. */
-export function shouldHandleRunShortcut(event: KeyboardEvent): boolean {
-  if (event.defaultPrevented || event.isComposing || event.repeat || event.altKey || event.shiftKey || event.key !== "Enter" || !(event.ctrlKey || event.metaKey)) return false;
+/** Run throughout the workspace, while menus and dialogs keep their keys.
+ * CodeMirror handles both run bindings when the source editor is focused. */
+export function workspaceRunShortcut(event: KeyboardEvent): "run" | "run-and-play" | undefined {
+  if (event.defaultPrevented || event.isComposing || event.repeat || event.altKey || event.key !== "Enter") return;
+  const mod = event.ctrlKey || event.metaKey;
+  if (mod === event.shiftKey) return;
+  const action = mod ? "run" : "run-and-play";
   const target = event.target;
-  if (!(target instanceof Element)) return true;
-  if (target instanceof HTMLElement && target.isContentEditable) return false;
-  return !target.closest('[role="menu"], [role="listbox"], [role="combobox"], dialog, [role="dialog"], [role="alertdialog"], [data-run-shortcut="ignore"], [contenteditable]:not([contenteditable="false"])');
+  if (!(target instanceof Element)) return action;
+  if (target instanceof HTMLElement && target.isContentEditable) return;
+  if (target.closest('[role="menu"], [role="listbox"], [role="combobox"], dialog, [role="dialog"], [role="alertdialog"], [data-run-shortcut="ignore"], [contenteditable]:not([contenteditable="false"])')) return;
+  // Shift+Enter alone may have a native editing or selection meaning.
+  if (action === "run-and-play" && target.closest('input, textarea, select, [role="textbox"], [role="searchbox"]')) return;
+  return action;
 }
 
 /** Use the typed character, so the shortcut works across keyboard layouts. */

@@ -35,6 +35,7 @@ it("opens a single shortcuts and usage panel from ? or the Help button, with foc
   expect(dialog()?.getAttribute("aria-modal")).toBe("true");
   expect(dialog()?.textContent).toContain("Shift + Enter");
   expect(dialog()?.textContent).toContain("Read the diagram");
+  expect(host.textContent).not.toContain("READING MEMORY");
   expect(dialog()?.textContent).toContain("Space");
   expect(host.querySelector(".usage-help,.editor-shortcuts,.trace-keys")).toBeNull();
   expect(help().getAttribute("aria-expanded")).toBe("true");

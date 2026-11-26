@@ -22,7 +22,7 @@ import { CodeEditor } from "./CodeEditor";
 import { readSavedCount, saveCount } from "./storage";
 import { explainStep } from "./stepExplanation";
 import { SectionNavigation } from "./SectionNavigation";
-import { shouldHandlePlaybackShortcut, shouldHandleRunShortcut, shouldOpenWorkspaceHelp } from "./shortcuts";
+import { shouldHandlePlaybackShortcut, shouldOpenWorkspaceHelp, workspaceRunShortcut } from "./shortcuts";
 import { checkPrediction, nextPointerPrediction, type PointerPrediction } from "../vm/predict";
 
 function StructureDiagram({ model, highlighted, onHighlight, memoryViewRequest }: { model: ReturnType<typeof renderModel>; highlighted?: number; onHighlight: (address?: number) => void; memoryViewRequest: MemoryViewRequest | undefined }) {
@@ -282,7 +282,8 @@ export function App() {
         if (visualizer.expanded) { event.preventDefault(); visualizer.closeExpanded(); return; }
         if (focusPane) { event.preventDefault(); setFocusPane(undefined); return; }
       }
-      if (shouldHandleRunShortcut(event)) { event.preventDefault(); runCode(); return; }
+      const runAction = workspaceRunShortcut(event);
+      if (runAction) { event.preventDefault(); runCode(runAction === "run-and-play"); return; }
       if (!trace || trace.steps.length < 2 || !shouldHandlePlaybackShortcut(event)) return;
       if (!["ArrowLeft", "ArrowRight", " ", "Home", "End"].includes(event.key)) return;
       // A playback action replaces the key's native page-scroll behavior.
@@ -385,7 +386,7 @@ export function App() {
         <div className={`columns${!model?.nodes.length && !arrayStackStep ? " empty-heap" : ""}`}>
           <div className="heap-column"><h3>{arrayStackStep ? "DATA STRUCTURE" : "HEAP STRUCTURE"} <small>{arrayStackStep ? "stack" : model?.shape ?? "ready"}</small></h3>{arrayStackStep && <ArrayStackDiagram stack={readArrayStack(arrayStackStep)} />}{(!arrayStackStep || model?.nodes.length) ? model ? <StructureDiagram model={model} highlighted={highlightedAddress} onHighlight={setHighlightedAddress} memoryViewRequest={memoryViewRequest} /> : <div className="diagram-empty">{emptyRun ? "No heap activity was recorded." : "Run a program to visualize its structure."}</div> : null}<div className="heap-summary">{allocations.filter(allocation => allocation.freeStep === undefined).length} live · {allocations.filter(allocation => allocation.freeStep !== undefined).length} freed · {model?.nodes.filter(node => node.orphaned).length ?? 0} orphaned</div></div>
           <div><h3>CALL STACK</h3><div className="stack-visual"><div className="stack-label">Active functions and local variables</div>{view && view.frames.slice().reverse().map((frame, frameIndex) => <div key={`${frame.name}-${frameIndex}`} className="frame"><small className="frame-name">{executionMode === "snippet" && frameIndex === view.frames.length - 1 ? "snippet" : `${frame.name}()`}</small>{Object.entries(frame.variables ?? {}).map(([key, variable]) => <div className={`stack-slot ${variable.pointer ? "pointer-slot" : ""}`} key={key} title={`${variable.type} ${key}`} onMouseEnter={() => variable.pointer && setHighlightedAddress(!variable.stringPointer && variable.value !== "null" ? Number(variable.value) : undefined)} onClick={() => variable.pointer && setHighlightedAddress(!variable.stringPointer && variable.value !== "null" ? Number(variable.value) : undefined)}><span><b>{key}</b><small>{variable.type}</small></span>{!variable.stringPointer && variable.value.startsWith("[") ? <span className="array-cells">{variable.value.slice(1, -1).split(", ").map((cell, index) => <span className="array-cell" key={index}><small>[{index}]</small>{cell}</span>)}</span> : <code>{variable.stringPointer ? `string ${JSON.stringify(variable.value)}` : variable.pointer && variable.value !== "null" ? `0x${Number(variable.value).toString(16)}` : variable.value}</code>}{variable.pointer && <button className="quick-look-trigger" type="button" aria-label={`Quick Look pointer ${key}`} onClick={event => { event.stopPropagation(); setPlaying(false); setQuickLook({ name:key, variable, step:view, trigger:event.currentTarget }); }}>Quick Look</button>}</div>)}</div>)}{!view && <div className="diagram-empty">{emptyRun ? "No variables or calls were recorded." : "Run a program to inspect its function calls and variables."}</div>}</div></div>
-          <div><h3>READING MEMORY</h3><div className="empty">0x… is a simulated address. Arrows show where pointers point. NULL means no target. Freed blocks must not be accessed.</div></div></div>
+        </div>
         {error && !fault && <div className="crime" role="alert"><b>PROGRAM COULD NOT RUN</b><span>{diagnostic(error)}</span></div>}
         {fault && !faultReached && faultStep >= 0 && <div className="error-ahead">Error ahead at step {faultStep + 1}</div>}
         {fault && faultReached && <div className="crime"><b>EXECUTION ERROR</b><span>{diagnostic(error)} · {location(fault.line)}</span>{fault.allocation && <><button onClick={() => setCursor(fault.allocation!.allocStep)}>alloc {location(fault.allocation.line)}</button>{fault.allocation.freeStep !== undefined && <button onClick={() => setCursor(fault.allocation!.freeStep!)}>free step {fault.allocation.freeStep}</button>}</>}<button onClick={() => { if (faultStep >= 0) setCursor(faultStep); }}>access {location(fault.line)}</button></div>}

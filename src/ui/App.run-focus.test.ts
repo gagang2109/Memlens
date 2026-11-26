@@ -162,3 +162,28 @@ it('uses normal Predict pauses during Run & Play',()=>{
     expect(timeline().value).toBe(paused);
   } finally { vi.useRealTimers(); }
 });
+
+it('runs and plays from the memory pane, still leaving the other page inputs and modal shortcuts alone',()=>{
+  const pane=host.querySelector<HTMLElement>('#memory')!;
+  const input=host.querySelector('[aria-label="Standard input"]')!;
+  const setup=host.querySelector('[aria-label="C test setup"]')!;
+  const samples=host.querySelector('[aria-label="Samples"]')!;
+  const speed=host.querySelector('[aria-label="Playback speed"]')!;
+  const opts={shiftKey:true};
+  vi.useFakeTimers();
+  try {
+    act(()=>pane.focus());
+    expect(key(pane,'Enter',opts).defaultPrevented).toBe(true);
+    expect(timeline().value).toBe('0');
+    act(()=>vi.advanceTimersByTime(1000));
+    expect(timeline().value).toBe('1');
+    for(const target of [input,setup,samples,speed]) expect(key(target,'Enter',opts).defaultPrevented).toBe(false);
+    for(const modifier of [{altKey:true},{ctrlKey:true},{metaKey:true},{repeat:true},{isComposing:true}]) {
+      expect(key(pane,'Enter',{...opts,...modifier}).defaultPrevented).toBe(false);
+    }
+    const help=host.querySelector<HTMLButtonElement>('.help-trigger')!;
+    act(()=>help.click());
+    expect(key(host.querySelector('.help-body')!,'Enter',opts).defaultPrevented).toBe(false);
+    expect(timeline().value).toBe('1');
+  } finally { vi.useRealTimers(); }
+});
