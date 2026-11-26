@@ -23,7 +23,7 @@ export type Stmt =
   | { kind: "break"; line: number }
   | { kind: "continue"; line: number }
   | { kind: "return"; value?: Expr; line: number };
-export type FunctionDef = { name: string; returnType: string; returnsPointer: boolean; params: { name?: string; pointer: boolean; pointerDepth?: number; array?: boolean; type: string }[]; body: Stmt; line: number };
+export type FunctionDef = { name: string; returnType: string; returnsPointer: boolean; params: { name?: string; pointer: boolean; pointerDepth?: number; array?: boolean; matrixColumns?: Expr; type: string }[]; body: Stmt; line: number };
 export type Program = { functions: Map<string, FunctionDef>; structs: Map<string, string[]>; structPointerFields: Map<string, ReadonlySet<string>>; body: Stmt[]; constants: Map<string, number | string>; floatingConstants: Set<string> };
 
 const types = new Set(["int", "char", "long", "long", "short", "unsigned", "float", "double", "void", "struct", "const", "static"]);
@@ -219,8 +219,16 @@ export function parse(source: string): Program {
           }
           const array = Boolean(peek("["));
           if (array) { take("["); if (!peek("]")) parseExpression(); take("]"); }
+          let matrixColumns: Expr | undefined;
+          if (array && peek("[")) {
+            take("[");
+            if (parameterDepth || peek("]")) throw new Error(`line ${name.line}: matrix parameters need a fixed column count and a scalar element type`);
+            matrixColumns = parseExpression();
+            take("]");
+            if (peek("[")) throw new Error(`line ${name.line}: only two-dimensional matrix parameters are supported`);
+          }
           const pointerDepth = parameterDepth + (array ? 1 : 0);
-          params.push({ name: parameterName?.value, pointer: pointerDepth > 0, ...(pointerDepth ? { pointerDepth } : {}), array, type: parameterType });
+          params.push({ name: parameterName?.value, pointer: pointerDepth > 0, ...(pointerDepth ? { pointerDepth } : {}), array, ...(matrixColumns ? { matrixColumns } : {}), type: parameterType });
           if (!peek(",")) break;
           take(",");
         }

@@ -102,7 +102,7 @@ The interpreter currently supports:
 - Pointer declarations, casts, pointer arithmetic, dereference, address-of, indexing, and pointer values.
 - Pointer-to-pointer parameters and address-of expressions for variables, fields, and indexed elements.
 - Struct declarations with fields, including pointer fields such as `next`, `left`, and `right`.
-- `int` and `char` arrays, array initializers, array indexing, array parameters, two-dimensional arrays, and arrays of struct values. Simple local declarations can use a size read at runtime, such as `scanf("%d", &n); int a[n];`.
+- `int` and `char` arrays, array initializers, array indexing, array parameters, two-dimensional arrays, and arrays of struct values. Simple local declarations can use a size read at runtime, such as `scanf("%d", &n); int a[n];`. Pass a local `int` or `char` matrix to a helper such as `void bfs(int graph[][N], int start)` when the column count is fixed and matches the matrix.
 - Struct values, the `.` operator, and passing struct addresses to functions.
 - Variables, assignments (including chained assignment), compound assignments (`+=`, `-=`), arithmetic, comparisons, logical operators, the conditional operator (`?:`), unary `!`, unary `-`, dereference (`*`), address-of (`&`), and increment/decrement.
 - Integer, character, string, and `NULL` literals. Quoted literals decode escaped quotes/backslashes, standard simple escapes (such as `\n`, `\t`, and `\0`), and octal/hexadecimal escapes in the byte range 0–255. Multi-character character literals, universal character escapes, and line-spliced literals are not modeled; malformed or unsupported escapes report a parse error.
@@ -118,7 +118,7 @@ The interpreter currently supports:
 
 It does not currently support:
 
-- Full variable-length array semantics, including pointer-to-variable-array declarators and general variable-length array expressions.
+- Full variable-length array semantics, including pointer-to-array declarators, runtime column counts in matrix parameters, and general variable-length array expressions. Matrix parameters support cell indexing (`graph[row][col]`), not row values.
 - Function pointers, unions, variadic functions, general pointer arithmetic beyond supported element indexing, and preprocessor directives other than numeric/string `#define` and ignored `#include`.
 - The full C standard library or compilation with gcc/clang.
 

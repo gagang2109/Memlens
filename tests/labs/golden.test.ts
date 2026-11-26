@@ -17,13 +17,14 @@ const cases = [
   ["09_strings.c", "5 olleh"],
   ["10_matrix_input.c", "5 9"],
   ["11_tree_menu.c", "10 5 15 \n1\n15 10 \n"],
+  ["12_graph_traversals.c", "BFS: 0 1 2 3 4\nDFS: 0 1 2 4 3\n"],
 ] as const;
 
 describe("realistic data structures lab programs", () => {
   for (const [file, stdout] of cases) {
     it(`runs ${file}`, () => {
       const source = readFileSync(resolve(directory, file), "utf8");
-      const stdin = file === "10_matrix_input.c" ? "4 5" : file === "11_tree_menu.c" ? "10 1 10 5 1 1 10 15 2 2 3 5 4 5 2 0" : "";
+      const stdin = file === "10_matrix_input.c" ? "4 5" : file === "11_tree_menu.c" ? "10 1 10 5 1 1 10 15 2 2 3 5 4 5 2 0" : file === "12_graph_traversals.c" ? "0" : "";
       const result = run(source, 100000, 100, stdin);
       expect(result.status, result.error?.reason).toBe("ok");
       expect(result.trace.steps.at(-1)?.stdout).toBe(stdout);

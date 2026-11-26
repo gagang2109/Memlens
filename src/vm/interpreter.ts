@@ -4,7 +4,8 @@ import { Trace, type FrameView } from "./trace";
 import { localArraySizeof, isFixedArrayBound } from "./fixedArraySizeof";
 
 type Value = number | string | null;
-type RuntimeVariable = { value: Value; type: string; pointer: boolean; pointerDepth?: number; array?: Value[]; dimensions?: number[]; fixedArrayBounds?: boolean; elementSize?: number; arrayBase?: number; address?: number };
+type LocalArray = { values: Value[]; type: string; dimensions: number[] };
+type RuntimeVariable = { value: Value; type: string; pointer: boolean; pointerDepth?: number; array?: Value[]; dimensions?: number[]; fixedArrayBounds?: boolean; matrixColumnCount?: number; elementSize?: number; arrayBase?: number; address?: number };
 type Ref = { get: () => Value; set: (value: Value) => void; address?: number; allocation?: Allocation };
 type HeapObject = { address: number; fields: Map<string, Value>; type?: string };
 type FlowSignal = "break" | "continue";
@@ -29,7 +30,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
     return { trace, status: "error", error, leaks: [], orphanedAtExit: [] };
   }
   const memory = new Memory(); const heap = new Map<number, HeapObject>(); const cells = new Map<number, Value>();
-  const arrayRefs = new Map<number, { values: Value[]; type: string }>(); const locations = new Map<number, Ref>(); let nextStackAddress = 0x7000;
+  const arrayRefs = new Map<number, LocalArray>(); const locations = new Map<number, Ref>(); let nextStackAddress = 0x7000;
   const frames: { name: string; vars: Map<string, RuntimeVariable> }[] = [{ name: "main", vars: new Map() }];
   let stdout = ""; let stdinCursor = 0; let steps = 0; let error: MemoryFault | undefined;
   const current = () => frames[frames.length - 1].vars;
@@ -107,18 +108,24 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       const index = asNum(evaluate(expression.index));
       if (expression.object.kind === "index" && expression.object.object.kind === "name") {
         const outerVariable = findVariable(expression.object.object.name);
-        if (outerVariable?.array && outerVariable.dimensions?.length) {
+        const base = outerVariable?.arrayBase ?? (outerVariable?.matrixColumnCount ? outerVariable.value : undefined);
+        const matrix = typeof base === "number" ? arrayRefs.get(base) : undefined;
+        if (outerVariable?.matrixColumnCount && (!matrix || matrix.dimensions.length !== 2 ||
+            matrix.dimensions[1] !== outerVariable.matrixColumnCount || matrix.type !== outerVariable.type))
+          runtimeError("matrix parameter no longer points to a compatible local matrix", expression.line);
+        if (outerVariable && matrix) {
           // Resolve the row once: evaluating the inner index expression first
           // would repeat side effects such as matrix[row++][column].
-          const outer = asNum(evaluate(expression.object.index)); const width = outerVariable.dimensions[1] ?? 1; const flat = outer * width + index;
-          // Validate both dimensions before flattening: an invalid column can
-          // otherwise spill into the next row and appear to be in bounds.
-          // Address formation alone may point one past the row; no read/write.
-          if (!Number.isInteger(outer) || outer < 0 || outer >= outerVariable.dimensions[0]) runtimeError(`array index out of bounds (${outer})`, expression.line);
-          if (!Number.isInteger(index) || index < 0 || index > width || (!addressOnly && (index === width || flat >= outerVariable.array.length))) runtimeError(`array index out of bounds (${index})`, expression.line);
-          return { get: () => outerVariable.array![flat], set: value => { outerVariable.array![flat] = value; }, address: (outerVariable.arrayBase ?? 0) + flat * (outerVariable.elementSize ?? 4) };
+          const outer = asNum(evaluate(expression.object.index)); const width = matrix.dimensions[1] ?? 1; const flat = outer * width + index;
+          // Validate both dimensions before flattening. Address formation
+          // alone may point one past the row; no read/write.
+          if (!Number.isInteger(outer) || outer < 0 || outer >= matrix.dimensions[0]) runtimeError(`array index out of bounds (${outer})`, expression.line);
+          if (!Number.isInteger(index) || index < 0 || index > width || (!addressOnly && (index === width || flat >= matrix.values.length))) runtimeError(`array index out of bounds (${index})`, expression.line);
+          return { get: () => matrix.values[flat], set: value => { matrix.values[flat] = value; }, address: (base as number) + flat * (outerVariable.elementSize ?? 4) };
         }
       }
+      if (pointerMeta(expression.object)?.matrixColumnCount)
+        runtimeError("matrix row used without a column; row values are not supported", expression.line);
       const base = asNum(evaluate(expression.object));
       const variable = pointerMeta(expression.object); const array = expression.object.kind === "name" ? findVariable(expression.object.name)?.array : undefined;
       if (array) { if (!Number.isInteger(index) || index < 0 || index >= array.length) runtimeError(`array index out of bounds (${index})`, expression.line); return { get: () => array[index], set: value => { array[index] = value; }, address: (findVariable(expression.object.kind === "name" ? expression.object.name : "")?.arrayBase ?? 0) + index * (variable?.elementSize ?? 4) }; }
@@ -178,10 +185,10 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
     }
     if (expr.kind === "index") {
       const variable = pointerMeta(expr.object);
-      if (variable && (variable.array ? !variable.pointerDepth : variable.pointerDepth === 1) && (variable.dimensions?.length ?? 1) === 1) return variable.type;
+      if (variable && !variable.matrixColumnCount && (variable.array ? !variable.pointerDepth : variable.pointerDepth === 1) && (variable.dimensions?.length ?? 1) === 1) return variable.type;
       if (expr.object.kind === "index") {
         const matrix = pointerMeta(expr.object.object);
-        if (matrix?.array && !matrix.pointerDepth && matrix.dimensions?.length === 2) return matrix.type;
+        if (matrix && (matrix.matrixColumnCount || (matrix.array && !matrix.pointerDepth && matrix.dimensions?.length === 2))) return matrix.type;
       }
     }
     if (expr.kind === "unary" && expr.op === "*") {
@@ -506,7 +513,20 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       const vars = new Map<string, RuntimeVariable>();
       fn.params.forEach((parameter, index) => {
         if (parameter.name !== undefined) {
-          vars.set(parameter.name, { value: values[index] ?? null, type: parameter.type, pointer: parameter.pointer, pointerDepth: parameter.pointerDepth, elementSize: elementSize(parameter.type) });
+          const value = values[index] ?? null;
+          let matrixColumnCount: number | undefined;
+          if (parameter.matrixColumns) {
+            if (!["int", "char"].includes(parameter.type) || !isFixedArrayBound(parameter.matrixColumns, sizeofContext))
+              runtimeError("matrix parameters require a fixed column count and int or char elements", expression.line);
+            matrixColumnCount = asNum(evaluate(parameter.matrixColumns));
+            const argument = pointerMeta(args[index]);
+            const storage = typeof value === "number" ? arrayRefs.get(value) : undefined;
+            if ((!argument?.array && !argument?.matrixColumnCount) || storage?.dimensions.length !== 2 ||
+                storage.dimensions[1] !== matrixColumnCount || storage.type !== parameter.type)
+              runtimeError("matrix argument must be a two-dimensional local array with matching columns and element type", expression.line);
+          }
+          vars.set(parameter.name, { value, type: parameter.type, pointer: parameter.pointer,
+            pointerDepth: parameter.pointerDepth, elementSize: elementSize(parameter.type), matrixColumnCount });
         }
       });
       frames.push({ name: fn.name, vars });
@@ -585,7 +605,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
         const maxLocalArrayBytes = 65536;
         const length = dimensions.reduce((total, dimension) => total * dimension, 1);
         if (!Number.isSafeInteger(length) || length > maxLocalArrayBytes / variable.elementSize!)
-          runtimeError("local array exceeds simulator limit (65536 bytes)", statement.line); variable.dimensions = dimensions; variable.array = Array.from({ length }, () => statement.type.includes("char") ? "\0" : 0); variable.pointer = false; variable.arrayBase = nextStackAddress; nextStackAddress += Math.max(1, length * variable.elementSize!); arrayRefs.set(variable.arrayBase, { values: variable.array, type: statement.type }); if (statement.type.startsWith("struct") && !statement.pointer) for (let index = 0; index < length; index++) { const address = memory.malloc(16, steps, statement.line); heap.set(address, { address, fields: new Map(), type: statement.type }); variable.array[index] = address; } if (statement.arrayInitializer) statement.arrayInitializer.forEach((value, index) => { if (index < variable.array!.length) variable.array![index] = evaluate(value); }); if (statement.init?.kind === "literal" && typeof statement.init.value === "string") statement.init.value.split("").forEach((character, index) => { if (index < variable.array!.length) variable.array![index] = character; }); }
+          runtimeError("local array exceeds simulator limit (65536 bytes)", statement.line); variable.dimensions = dimensions; variable.array = Array.from({ length }, () => statement.type.includes("char") ? "\0" : 0); variable.pointer = false; variable.arrayBase = nextStackAddress; nextStackAddress += Math.max(1, length * variable.elementSize!); arrayRefs.set(variable.arrayBase, { values: variable.array, type: statement.type, dimensions }); if (statement.type.startsWith("struct") && !statement.pointer) for (let index = 0; index < length; index++) { const address = memory.malloc(16, steps, statement.line); heap.set(address, { address, fields: new Map(), type: statement.type }); variable.array[index] = address; } if (statement.arrayInitializer) statement.arrayInitializer.forEach((value, index) => { if (index < variable.array!.length) variable.array![index] = evaluate(value); }); if (statement.init?.kind === "literal" && typeof statement.init.value === "string") statement.init.value.split("").forEach((character, index) => { if (index < variable.array!.length) variable.array![index] = character; }); }
       else if (statement.init) variable.value = evaluate(statement.init);
       if (!variable.pointer && statement.type.startsWith("struct")) { const address = memory.malloc(16, steps, statement.line); heap.set(address, { address, fields: new Map(), type: statement.type }); variable.value = address; }
       if (!variable.array && !variable.address) variable.address = nextStackAddress++;
