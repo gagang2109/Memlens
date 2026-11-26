@@ -3,6 +3,7 @@ import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vitest";
 import { samples } from "../samples";
+import { starterScaffolds } from "../starterScaffolds";
 import { run } from "../vm/interpreter";
 import { readLabTraversal } from "../viz/graph";
 import { App } from "./App";
@@ -90,5 +91,42 @@ it("keeps an ordinary pasted matrix as a matrix until selected, then shows a dir
     act(() => button("Close graph").click());
     expect(graph()).toBeNull();
     expect(host.querySelector('table[aria-label="a[row][column]"]')).not.toBeNull();
+  });
+});
+
+it("opens the editable Graph starter and rewinds the two matrix writes of an undirected edge", () => {
+  const { code, output } = starterScaffolds.graph;
+  const result = run(code);
+  expect(result.status, result.error?.reason).toBe("ok");
+  expect(result.trace.view?.stdout).toBe(output);
+  const steps = result.trace.steps;
+  const cells = (i: number) => steps[i].frames[0]?.variables?.graph?.array?.cells;
+  const empty = steps.findIndex((_, i) => cells(i)?.every(value => value === 0));
+  const first = steps.findIndex((_, i) => cells(i)?.[1] === 1 && cells(i)?.[4] === 0);
+  const mirrored = steps.findIndex((_, i) => cells(i)?.[1] === 1 && cells(i)?.[4] === 1);
+  expect(empty).toBeGreaterThanOrEqual(0);
+  expect(first).toBeGreaterThan(empty);
+  expect(mirrored).toBeGreaterThan(first);
+
+  render(code, (host, seek) => {
+    seek(empty);
+    expect(host.querySelector('table[aria-label="graph[row][column]"]')).not.toBeNull();
+    expect(host.querySelector(".graph-diagram")).toBeNull();
+    act(() => host.querySelector<HTMLButtonElement>(".graph-trigger")!.click());
+    const edges = () => [...host.querySelectorAll(".graph-diagram [data-edge]")].map(edge => edge.getAttribute("data-edge"));
+    const directed = () => host.querySelector(".graph-caption")?.textContent;
+    act(() => host.querySelector<HTMLInputElement>('.graph-diagram input[type="checkbox"]')!.click());
+    expect(host.querySelectorAll(".graph-diagram [data-vertex]")).toHaveLength(4);
+    expect(edges()).toEqual([]);
+    seek(first);
+    expect(directed()).toContain("Directed · matrix is asymmetric");
+    expect(edges()).toEqual(["0,1"]);
+    seek(mirrored);
+    expect(directed()).toContain("Undirected");
+    expect(edges()).toEqual(["0,1"]);
+    seek(steps.length - 1);
+    expect(edges()).toEqual(["0,1", "0,2", "2,3"]);
+    seek(empty);
+    expect(edges()).toEqual([]);
   });
 });

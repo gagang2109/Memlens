@@ -16,7 +16,7 @@ it('offers editor-adjacent categories independently of Samples without replacing
  expect(host.querySelector('.code-panel .starter-scaffolds')).not.toBeNull();
  expect([...host.querySelectorAll('#starter-category option')].map(o=>o.textContent)).toEqual(['Binary tree','Linked list','Stack','Queue','Graph (matrix)','Basic function']);
  select('graph');expect(source()).toBe('int f(){return 7;}');expect(setup()).toBe('printf("%d",f());');
- expect(host.textContent).toContain('not a node-link graph drawing');
+ expect(host.textContent).toContain('open the matrix as a graph from Call Stack');
 });
 it('keeps both drafts unchanged when replacement is dismissed or category changes',()=>{
  click('Use starter');click('Cancel');expect(source()).toBe('int f(){return 7;}');expect(setup()).toBe('printf("%d",f());');

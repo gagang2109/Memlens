@@ -173,29 +173,29 @@ int main() {
   },
   graph: {
     name: 'Graph (matrix)',
-    description: 'Four-vertex undirected adjacency matrix using a flat array. Inspect its cells in the call stack; this is not a node-link graph drawing.',
+    description: 'Four-vertex undirected adjacency matrix. After running, open the matrix as a graph from Call Stack to see edges appear as you step.',
     output: '0 1 1 0 \n1 0 0 0 \n1 0 0 1 \n0 0 1 0 \n',
     code: `#include <stdio.h>
 #define VERTICES 4
 
-void addEdge(int *graph, int from, int to) {
+void addEdge(int graph[][VERTICES], int from, int to) {
     // Vertex IDs must be in 0..VERTICES-1.
     if (from < 0 || from >= VERTICES || to < 0 || to >= VERTICES) return;
-    graph[from * VERTICES + to] = 1;
-    graph[to * VERTICES + from] = 1;
+    graph[from][to] = 1;
+    graph[to][from] = 1;
 }
 
-// Add BFS, DFS or another function here, using graph[row * VERTICES + col].
+// Add BFS, DFS or another function here, using graph[row][col].
 
 int main() {
-    int graph[VERTICES * VERTICES] = {0};
+    int graph[VERTICES][VERTICES] = {0};
     addEdge(graph, 0, 1);
     addEdge(graph, 0, 2);
     addEdge(graph, 2, 3);
     // Call your function here; edit the addEdge calls to change the input.
     for (int row = 0; row < VERTICES; row++) {
         for (int col = 0; col < VERTICES; col++) {
-            printf("%d ", graph[row * VERTICES + col]);
+            printf("%d ", graph[row][col]);
         }
         printf("\\n");
     }
