@@ -225,6 +225,49 @@ int main(void) {
     return 0;
 }`,
   },
+  "doubly-linked-list": {
+    name: "Doubly linked list — walk next and prev",
+    code: `#include <stdio.h>
+#include <stdlib.h>
+
+typedef struct Node {
+    int data;
+    struct Node *prev, *next;
+} Node;
+
+int main(void) {
+    Node *head = malloc(sizeof(Node));
+    Node *middle = malloc(sizeof(Node));
+    Node *tail = malloc(sizeof(Node));
+    if (!head || !middle || !tail) {
+        free(head);
+        free(middle);
+        free(tail);
+        return 1;
+    }
+
+    head->data = 10;
+    head->prev = NULL;
+    head->next = middle;
+    middle->data = 20;
+    middle->prev = head;
+    middle->next = tail;
+    tail->data = 30;
+    tail->prev = middle;
+    tail->next = NULL;
+
+    printf("Forward:");
+    for (Node *p = head; p != NULL; p = p->next) printf(" %d", p->data);
+    printf("\\nBackward:");
+    for (Node *p = tail; p != NULL; p = p->prev) printf(" %d", p->data);
+    printf("\\n");
+
+    free(tail);
+    free(middle);
+    free(head);
+    return 0;
+}`,
+  },
   stack: {
     name: "Array stack — push/pop/display with MAX",
     code: `#include <stdio.h>

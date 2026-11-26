@@ -97,6 +97,7 @@ const sampleLabels: Record<keyof typeof samples, string> = {
   'requested-uaf': 'Push/reverse use-after-free — same intentional error example',
   'tree': 'BST insert and inorder — traverse a binary tree',
   'tree-menu': 'Tree menu — insert, traverse, and delete a leaf',
+  'doubly-linked-list': 'Doubly linked list — walk next and prev',
   'stack': 'Array stack — push/pop/display with MAX',
   'queue': 'Linked queue — enqueue/dequeue with front and rear',
   'factorial': 'Factorial recursion — watch frames stack',

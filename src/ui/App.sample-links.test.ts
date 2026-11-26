@@ -62,6 +62,26 @@ it("loads and runs the Factorial demo, and shares only its built-in identifier",
   expect(locate(".console-output pre")?.textContent).toBe("120");
 });
 
+it("loads, shares and runs the built-in doubly linked list in both directions", () => {
+  route("/#sample=doubly-linked-list");
+  render();
+  expect(locate(".linked-sample")?.textContent).toContain("Doubly linked list");
+  click("Load sample");
+  expect(locate('[aria-label="Samples"] option:checked')?.textContent).toContain("Doubly linked list");
+  expect(locate<HTMLInputElement>(".sample-share input")?.value).toBe(window.location.origin + "/#sample=doubly-linked-list");
+  click("Run");
+  const ticks = [...host.querySelectorAll<HTMLButtonElement>(".event-tick")];
+  const firstFree = ticks.findIndex(tick => tick.classList.contains("tick-free"));
+  expect(firstFree).toBeGreaterThan(0);
+  act(() => ticks[firstFree - 1].click());
+  const diagram = locate('[aria-label="doubly-linked-list visualization"]');
+  expect(diagram?.querySelectorAll('.diagram-node')).toHaveLength(3);
+  expect(diagram?.querySelectorAll('[data-pointer-route="prev"]')).toHaveLength(2);
+  act(() => ticks.at(-1)!.click());
+  expect(locate(".console-output pre")?.textContent).toBe("Forward: 10 20 30\nBackward: 30 20 10\n");
+  expect(locate(".leak-report")).toBeNull();
+});
+
 it("ignores unknown identifiers and supports dismissing a subsequent link", () => {
   expect(readSampleLink("#sample=constructor")).toBeUndefined();
   expect(readSampleLink("#sample=factorial&extra=x")).toBeUndefined();

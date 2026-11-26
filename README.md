@@ -30,6 +30,8 @@ Memlens is a browser-based learning tool for C data structures and memory. Edit 
 
 Try a [shared Factorial example](https://memlensc.vercel.app/#sample=factorial): choose **Load sample**, then **Run** to trace the recursion that prints 120. Opening the link alone leaves your editor and test setup untouched. For any unedited built-in sample, **Share sample** gives you a link to the example, not to private editor contents or program input.
 
+Try the [doubly linked list sample](https://memlensc.vercel.app/#sample=doubly-linked-list) to follow `next` from head to tail and `prev` back again. Step through the two print loops to see the current pointer move over the same three nodes in opposite directions.
+
 ## What you can explore
 
 | Learn by doing | What Memlens shows |
