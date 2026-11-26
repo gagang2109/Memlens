@@ -331,3 +331,21 @@ footer{padding:16px 24px;font-size:10px}
 .step-value-before{color:#ffd393;font:inherit}
 .array-cell .step-value-before{display:block}
 .diagram-node.step-changed-node:not(.highlighted-node) rect{stroke:var(--amber);stroke-width:3}
+
+.stack-slot:has(.indexed-array){grid-template-columns:minmax(0,1fr)}
+.indexed-array{min-width:0;display:grid;gap:6px}
+.array-dimensions{color:#a7bfd6;font:11px ui-monospace,monospace}
+.matrix-scroll{max-height:16rem;overflow:auto;max-width:100%;border:1px solid #41627e;border-radius:5px;background:#162638}
+.array-matrix{border-spacing:0;min-width:100%;font:11px ui-monospace,monospace;text-align:center}
+.array-matrix th,.array-matrix td{padding:5px 8px;border:0;border-bottom:1px solid #334e66;border-right:1px solid #334e66;white-space:nowrap}
+.array-matrix th{background:#243a50;color:#c1d6e9;position:sticky;z-index:1}
+.array-matrix thead th{top:0}
+.array-matrix tbody th,.array-matrix th.matrix-corner{left:0}
+.array-matrix th.matrix-corner{z-index:2}
+.array-matrix tr:last-child td,.array-matrix tbody tr:last-child th{border-bottom:0}
+.array-matrix th:last-child,.array-matrix td:last-child{border-right:0}
+.matrix-scroll:focus-visible,.indexed-array .array-cells:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+.array-paging{display:flex;align-items:center;flex-wrap:wrap;gap:6px;color:#c1d6e9}
+.array-page-row{display:flex;align-items:center;gap:5px}
+.array-paging button{padding:3px 6px;min-width:24px;min-height:25px;border:1px solid #41627e;border-radius:4px;background:#263548;color:inherit;font:inherit;font-size:11px}
+.array-paging button:disabled{opacity:.45}

@@ -1,4 +1,5 @@
-import { describeChange, frameKey, showCell, stepChanges, type VariableChange } from "./stepChanges";
+import { IndexedArray } from "./IndexedArray";
+import { describeChange, frameKey, stepChanges, type VariableChange } from "./stepChanges";
 import { useVisualizerFullscreen } from "./visualizerFullscreen";
 import { PointerQuickLook } from "./PointerQuickLook";
 import { SplitDivider, balancedSplit, type SplitSizes } from "./SplitDivider";
@@ -26,19 +27,8 @@ import { SectionNavigation } from "./SectionNavigation";
 import { shouldHandlePlaybackShortcut, shouldOpenWorkspaceHelp, workspaceRunShortcut } from "./shortcuts";
 import { checkPrediction, nextPointerPrediction, type PointerPrediction } from "../vm/predict";
 
-function StackValue({ variable, change }: { variable: FrameVariable; change?: VariableChange }) {
-  const cells = variable.array?.cells ?? (!variable.stringPointer && variable.value.startsWith("[") ? variable.value.slice(1,-1).split(", ") : undefined);
-  if (cells) return <span className="array-cells">{cells.map((cell, index) => {
-    const delta = change && "cells" in change ? change.cells.get(index) : undefined;
-    const width = variable.array?.dimensions.length === 2 ? variable.array.dimensions[1] : undefined;
-    const label = width ? `[${Math.floor(index/width)}][${index%width}]` : `[${index}]`;
-    return <span className={`array-cell${delta ? " step-changed-cell" : ""}`} key={index} data-cell={label}
-      title={delta ? `${label}: ${describeChange(delta)}` : undefined}>
-      <small>{delta && width ? label : `[${index}]`}</small>
-      {delta && <small className="step-value-before">{delta.before} →</small>}
-      {variable.array ? showCell(cell) : cell}
-    </span>;
-  })}</span>;
+function StackValue({ name, variable, change, generation }: { name: string; variable: FrameVariable; change?: VariableChange; generation: number }) {
+  if (variable.array) return <IndexedArray key={`${generation}:${variable.array.base}`} name={name} array={variable.array} change={change} />;
   const delta = change && "before" in change ? change : undefined;
   return <code title={delta ? describeChange(delta) : undefined}>
     {delta && <small className="step-value-before">{delta.before} → </small>}
@@ -419,7 +409,7 @@ export function App() {
                   onMouseEnter={() => variable.pointer && setHighlightedAddress(!variable.stringPointer && variable.value !== "null" ? Number(variable.value) : undefined)}
                   onClick={() => variable.pointer && setHighlightedAddress(!variable.stringPointer && variable.value !== "null" ? Number(variable.value) : undefined)}>
                   <span><b>{key}</b><small>{variable.type}</small></span>
-                  <StackValue variable={variable} change={change} />
+                  <StackValue name={key} variable={variable} change={change} generation={runGeneration} />
                   {variable.pointer && <button className="quick-look-trigger" type="button" aria-label={`Quick Look pointer ${key}`} onClick={event => { event.stopPropagation(); setPlaying(false); setQuickLook({ name:key, variable, step:view, trigger:event.currentTarget }); }}>Quick Look</button>}
                 </div>;
               })}

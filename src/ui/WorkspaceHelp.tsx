@@ -63,6 +63,7 @@ export function WorkspaceHelp({ onClose }: { onClose: () => void }) {
           <h3>Using the workspace</h3>
           <p><strong>Start here:</strong> Choose a sample or paste your own C. Run, then step or play to see what changes. Memlens supports a subset of C; you can also run a snippet without <code>main()</code>.</p>
           <p><strong>Read the diagram:</strong> Arrows show where pointers point. <code>NULL</code> means no target, and <code>0x…</code> addresses are simulated. Don’t access freed blocks. Gold highlights compare this step with the previous recorded step. Use Fit width or the fullscreen control when you need more room.</p>
+          <p><strong>Read arrays:</strong> Find indexed cells in Call Stack. Matrices use row and column headers. Large arrays have page controls, including a shortcut to changes off the current page.</p>
           <p><strong>Give the program input:</strong> Fill in standard input before running, or use Interactive console to type when prompted. Run &amp; Play leaves a waiting prompt ready for input.</p>
           <p><a ref={readme} href="https://github.com/gagang2109/Memlens#readme" target="_blank" rel="noopener noreferrer">Read the full guide on GitHub ↗</a></p>
         </section>

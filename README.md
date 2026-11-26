@@ -71,6 +71,8 @@ The bundled BST sample during inorder traversal, with the diagram zoomed out to 
 | Memory view | `−` / `+`, **Fit width**, **Reset view** | Adjust the diagram from 25% to 300% zoom |
 | Memory view | Drag empty space, scroll, or swipe | Move around the diagram |
 
+In **Call Stack**, one-dimensional arrays show zero-based indexes, and matrices show rows and columns in the same order as `a[row][column]`. Large arrays have page controls. If a change is off the current page, **Show next changed page** takes you there.
+
 Gold highlights show changed stack values, array cells, and recorded heap fields relative to the previous recorded step. Hover a changed heap card for its before/after values. Rewind selects the original highlights for that earlier step.
 
 Playback shortcuts stay out of the editor and interactive controls. **Tab** moves focus between controls rather than trapping it inside the editor.
