@@ -175,6 +175,12 @@ it("requests browser fullscreen for only the visualizer and reacts to browser ex
     key(button,"k",{ctrlKey:true});
     expect(panel.querySelector('.spotlight')).not.toBeNull();
     key(find('.spotlight input'),'Escape');
+    act(() => button.focus());
+    key(button,'?',{shiftKey:true});
+    expect(panel.querySelector('.workspace-help')).not.toBeNull();
+    key(find('.help-body'),'Escape');
+    expect(panel.querySelector('.workspace-help')).toBeNull();
+    expect(document.activeElement).toBe(button);
     act(() => setFullscreen(null));
     expect(button.textContent).toBe('Fullscreen visualizer');
     expect(document.activeElement).toBe(button);

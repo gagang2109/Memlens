@@ -39,9 +39,8 @@ it("does not steal editor/control keys while keeping canvas playback shortcuts",
   const editorLine = container.querySelector('[data-testid="editor"] span')!;
   expect(timeline.value).toBe("0");
   expect(container.querySelector(".run")!.getAttribute("aria-keyshortcuts")).toBe("Control+Enter Meta+Enter");
-  expect(container.querySelector(".trace-keys")!.textContent).toContain("Space");
 
-  for (const target of [editorLine, play, container.querySelector('[aria-label="Playback speed"]')!, container.querySelector(".usage-help summary")!]) {
+  for (const target of [editorLine, play, container.querySelector('[aria-label="Playback speed"]')!, container.querySelector(".section-menu summary")!]) {
     for (const key of ["ArrowRight", "End", " "]) {
       const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
       act(() => target.dispatchEvent(event));

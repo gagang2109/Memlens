@@ -64,7 +64,7 @@ The bundled BST sample during inorder traversal, with the diagram zoomed out to 
 | Editor | Alt + Shift + A | Alternate comment toggle |
 | Editor | Ctrl / ⌘ + `F` | Find and replace |
 | Editor | Ctrl / ⌘ + `Z` / Ctrl / ⌘ + Shift + `Z` | Undo / redo |
-| Editor | **Keyboard shortcuts** button | Open the full editing guide |
+| Workspace outside text fields | `?` (Shift + / on US keyboards) or **Help** | Open keyboard shortcuts and usage help; dismiss with Esc |
 | Playback | `←` / `→` | Step backward / forward |
 | Playback | `Space` | Play / pause |
 | Playback | `Home` / `End` | Jump to the first / last step |

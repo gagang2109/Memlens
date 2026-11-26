@@ -17,3 +17,13 @@ export function shouldHandleRunShortcut(event: KeyboardEvent): boolean {
   if (target instanceof HTMLElement && target.isContentEditable) return false;
   return !target.closest('[role="menu"], [role="listbox"], [role="combobox"], dialog, [role="dialog"], [role="alertdialog"], [data-run-shortcut="ignore"], [contenteditable]:not([contenteditable="false"])');
 }
+
+/** Use the typed character, so the shortcut works across keyboard layouts. */
+export function shouldOpenWorkspaceHelp(event: KeyboardEvent): boolean {
+  if (event.key !== "?" || event.defaultPrevented || event.isComposing || event.repeat ||
+      event.ctrlKey || event.metaKey || event.altKey) return false;
+  const target = event.target;
+  if (!(target instanceof Element)) return true;
+  if (target instanceof HTMLElement && target.isContentEditable) return false;
+  return !target.closest('input, textarea, select, [role="textbox"], [role="searchbox"], [role="combobox"], [role="listbox"], [role="menu"], dialog, [role="dialog"], [role="alertdialog"], [contenteditable]:not([contenteditable="false"])');
+}

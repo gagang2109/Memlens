@@ -1,6 +1,7 @@
 import { useVisualizerFullscreen } from "./visualizerFullscreen";
 import { PointerQuickLook } from "./PointerQuickLook";
 import { SplitDivider, balancedSplit, type SplitSizes } from "./SplitDivider";
+import { WorkspaceHelp } from "./WorkspaceHelp";
 import { Spotlight, type SpotlightItem } from "./Spotlight";
 import { readSampleLink, SampleShare } from "./SampleShare";
 import { StarterScaffolds } from "./StarterScaffolds";
@@ -21,7 +22,7 @@ import { CodeEditor } from "./CodeEditor";
 import { readSavedCount, saveCount } from "./storage";
 import { explainStep } from "./stepExplanation";
 import { SectionNavigation } from "./SectionNavigation";
-import { shouldHandlePlaybackShortcut, shouldHandleRunShortcut } from "./shortcuts";
+import { shouldHandlePlaybackShortcut, shouldHandleRunShortcut, shouldOpenWorkspaceHelp } from "./shortcuts";
 import { checkPrediction, nextPointerPrediction, type PointerPrediction } from "../vm/predict";
 
 function StructureDiagram({ model, highlighted, onHighlight, memoryViewRequest }: { model: ReturnType<typeof renderModel>; highlighted?: number; onHighlight: (address?: number) => void; memoryViewRequest: MemoryViewRequest | undefined }) {
@@ -142,6 +143,8 @@ export function App() {
   const closeQuickLook = () => { const trigger = quickLook?.trigger; setQuickLook(undefined); trigger?.focus({ preventScroll: true }); };
   const [spotlight, setSpotlight] = useState(false);
   const spotlightTrigger = useRef<HTMLElement>();
+  const [help, setHelp] = useState(false);
+  const helpTrigger = useRef<HTMLElement>();
   const [memoryViewRequest, setMemoryViewRequest] = useState<MemoryViewRequest>();
   const showSpotlight = () => { spotlightTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : undefined; setSpotlight(true); };
   const closeSpotlight = () => { setSpotlight(false); spotlightTrigger.current?.focus({ preventScroll: true }); };
@@ -205,6 +208,17 @@ export function App() {
   const faultStep = fault && trace ? trace.steps.findIndex(step => step.event === "error") : -1;
   const faultReached = Boolean(fault && faultStep >= 0 && cursor >= faultStep);
   const moveTo = (next: number) => { if (!trace) return; setPredictionResult(undefined); const bounded = Math.max(0, Math.min(next, trace.steps.length - 1)); if (predictMode && !stale && bounded > cursor) { const question = nextPointerPrediction(trace.steps[cursor], trace.steps[bounded]); if (question) { setPredictionTarget(bounded); setPrediction(question); setPlaying(false); return; } } setPrediction(undefined); setPredictionResult(undefined); setCursor(bounded); };
+  const showHelp = (trigger?: HTMLElement) => {
+    helpTrigger.current = trigger ?? (document.activeElement instanceof HTMLElement ? document.activeElement : undefined);
+    setPlaying(false);
+    setHelp(true);
+  };
+  const closeHelp = () => {
+    setHelp(false);
+    const trigger = helpTrigger.current;
+    if (trigger?.isConnected && trigger !== document.body) trigger.focus({ preventScroll: true });
+    else (visualizer.fullscreen ? visualizer.panel.current : workspace.current)?.focus({ preventScroll: true });
+  };
   const applyRun = (result: ReturnType<typeof run>, latest: boolean) => {
     focusStepsAfterRun.current = result.status !== "waiting" && result.trace.steps.length >= 2;
     setTrace(result.trace); setExecutionMode(result.executionMode); setCursor(latest ? Math.max(0, result.trace.steps.length - 1) : 0);
@@ -257,11 +271,12 @@ export function App() {
   useEffect(() => {
     const onSpotlight = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "k" && !event.isComposing) {
-        event.preventDefault(); event.stopPropagation(); if (!spotlight && !quickLook && !event.repeat) showSpotlight();
+        event.preventDefault(); event.stopPropagation(); if (!spotlight && !quickLook && !help && !event.repeat) showSpotlight();
       }
     };
     const onKey = (event: KeyboardEvent) => {
-      if (spotlight || quickLook) return;
+      if (spotlight || quickLook || help) return;
+      if (shouldOpenWorkspaceHelp(event)) { event.preventDefault(); showHelp(); return; }
       if (event.key === "Escape" && !event.defaultPrevented) {
         if (visualizer.fullscreen) return; // The browser owns Esc in native fullscreen.
         if (visualizer.expanded) { event.preventDefault(); visualizer.closeExpanded(); return; }
@@ -281,7 +296,7 @@ export function App() {
     window.addEventListener("keydown", onSpotlight, true);
     window.addEventListener("keydown", onKey);
     return () => { window.removeEventListener("keydown", onSpotlight, true); window.removeEventListener("keydown", onKey); };
-  }, [trace, cursor, predictMode, stale, code, stdin, setup, inputMode, spotlight, focusPane, quickLook, visualizer.expanded, visualizer.fullscreen]);
+  }, [trace, cursor, predictMode, stale, code, stdin, setup, inputMode, spotlight, focusPane, quickLook, help, visualizer.expanded, visualizer.fullscreen]);
   useEffect(() => { try { localStorage.setItem("memlens-code", code); } catch { /* storage is optional */ } }, [code]);
   useEffect(() => { try { localStorage.setItem("memlens-test-setup", setup); } catch { /* storage is optional */ } }, [setup]);
   const replaceDraft = (nextCode: string, nextSetup: string) => {
@@ -314,11 +329,12 @@ export function App() {
   const restoreDraft = () => { if (previousDraft) { replaceDraft(previousDraft.code, previousDraft.setup); setPreviousDraft(undefined); } };
   const lines = useMemo(() => code.split(/\r?\n/), [code]);
   const spotlightDialog = spotlight && <Spotlight items={spotlightItems} onClose={closeSpotlight} onSelect={item => { if (item.action() !== false) closeSpotlight(); }} />;
+  const helpDialog = help && <WorkspaceHelp onClose={closeHelp} />;
   return <main ref={workspace} tabIndex={-1} aria-label="Code execution workspace">
     <header><div className="brand"><img className="brand-mark" src="/memlens-mark.svg" width="36" height="36" alt="" aria-hidden="true" /> MEMLENS</div><div className="tag">Step through your C code and watch memory rewind.</div>
       <select ref={samplesPicker} aria-label="Samples" value={selectedSample} onChange={e => { if (e.target.value !== "custom") selectSample(e.target.value as keyof typeof samples); }}><option value="custom" disabled>Custom code (current editor contents)</option>{Object.entries(sampleLabels).map(([key,label]) => <option key={key} value={key}>{label}</option>)}</select>
       <button type="button" className="spotlight-trigger" aria-keyshortcuts="Control+k Meta+k" onClick={event => { showSpotlight(); spotlightTrigger.current = event.currentTarget; }}>Spotlight <kbd>Ctrl / ⌘ K</kbd></button><button className="run" onClick={() => runCode()} title="Run code (Ctrl / ⌘ + Enter)" aria-keyshortcuts="Control+Enter Meta+Enter">Run</button></header>
-    <SectionNavigation />
+    <SectionNavigation onOpenHelp={showHelp} helpOpen={help} />
     {linkedSample && <section className="linked-sample" aria-label="Shared sample">
       <strong>{sampleLabels[linkedSample]}</strong>
       <span>Opening the link hasn’t changed your code or test setup.</span>
@@ -333,7 +349,6 @@ export function App() {
       </select>
     </div>
     {code === samples.requested.code && <p className="step-explanation" role="note">This example intentionally reads a node after freeing it. Run it and step through the trace to see why this causes a use-after-free error. The error is in the example C program, not Memlens.</p>}
-    <details className="usage-help"><summary>How to use Memlens · supported C subset</summary><p className="step-explanation snippet-help">Practice a full program or a snippet: main() is optional here. Declare your data, then write statements or call your functions. Memlens runs a supported C subset, not arbitrary incomplete code.</p></details>
     {!stale && executionMode === "snippet" && trace && <p className="step-explanation" role="status">Snippet run · top-level statements execute in source order; no main() wrapper is added.</p>}
     {stale && <p className="step-explanation stale-results" role="status">Code or input changed. Memory, console, errors and trace below are from the previous run. Run again to update them.</p>}
     <section className={`workspace ${inputMode === "interactive" ? "interactive-workspace" : ""}${effectiveFocus ? " has-focus" : ""}`} style={splitStyle}><div className="code-panel" id="code" tabIndex={-1} aria-label="Code section" hidden={Boolean(effectiveFocus && effectiveFocus !== "code")}><button className="pane-focus" type="button" onClick={() => toggleFocus("code")}>{focusPane === "code" ? "Restore workspace" : "Focus code"}</button><div className="panel-title">SOURCE <small>{lines.length} lines · edit a sample or paste your own C code</small></div><details className="starter-picker"><summary>Start from a scaffold</summary><StarterScaffolds onUse={useStarter} /></details><label className="input-mode">Program input <select aria-label="Input mode" value={inputMode} onChange={event => setInputMode(event.target.value as "ahead" | "interactive")}><option value="ahead">Input ahead (stdin)</option><option value="interactive">Interactive console</option></select></label>{previousDraft && <button type="button" className="restore-draft" onClick={restoreDraft}>Restore previous draft</button>}<CodeEditor onRun={() => runCode()} onRunAndPlay={() => runCode(true)} value={code} currentLine={stale || (displayedSource.active && (view?.line ?? 0) >= displayedSource.setupStart) ? undefined : view?.line} onChange={setCode} />
@@ -366,7 +381,7 @@ export function App() {
         if (visualizer.expanded) visualizer.closeExpanded(false);
         if (visualizer.fullscreen) void visualizer.exitFullscreen().then(reveal);
         else reveal();
-      }}>Waiting for input · Open console ↓</a>}<div className="timeline-track"><input aria-label="Timeline" type="range" min="0" max={Math.max(0, (trace?.steps.length ?? 1) - 1)} value={cursor} onChange={e => moveTo(Number(e.target.value))} disabled={!trace || emptyRun} />{trace?.steps.map((step, index) => <button aria-label={`${step.event ?? "step"} tick ${index + 1}`} className={`event-tick tick-${step.event ?? "step"}`} style={{ left: `${trace.steps.length > 1 ? index / (trace.steps.length - 1) * 100 : 0}%` }} key={index} onClick={() => moveTo(index)} />)}</div><div className="controls"><button disabled={(trace?.steps.length ?? 0) < 2} onClick={() => setPlaying(value => !value)}>{playing ? "Pause" : "Play"} ▶</button><button data-step-navigation="true" aria-keyshortcuts="ArrowLeft" disabled={(trace?.steps.length ?? 0) < 2} onClick={() => moveTo(cursor - 1)}>← step back</button><button data-step-navigation="true" aria-keyshortcuts="ArrowRight" title="Use Left/Right arrow keys to step" disabled={(trace?.steps.length ?? 0) < 2} onClick={() => moveTo(cursor + 1)}>step forward →</button><select aria-label="Playback speed" value={speed} onChange={e => setSpeed(Number(e.target.value))}><option value="0.5">0.5x</option><option value="1">1x</option><option value="2">2x</option><option value="4">4x</option></select><label className="predict-toggle"><input type="checkbox" disabled={stale} checked={predictMode} onChange={e => { setPredictMode(e.target.checked); setPrediction(undefined); setPredictionResult(undefined); }} /> Predict</label><span>{view ? `${location(view.line)} · ${view.event ?? "step"}` : emptyRun ? "Run finished · no recorded steps" : "No trace loaded"} · score {score} · streak {streak}</span></div>{(trace?.steps.length ?? 0) > 1 && <p className="trace-keys"><kbd>←</kbd> / <kbd>→</kbd> Step · <kbd>Space</kbd> Play/pause · <kbd>Home</kbd> / <kbd>End</kbd> First/last</p>}{prediction && <div className="prediction"><b>Where will {prediction.label} point after this line?</b><button disabled={predictionResult !== undefined} onClick={() => answerPrediction(null)}>NULL</button>{predictionNodes.map(node => <button key={node.address} disabled={predictionResult !== undefined} onClick={() => answerPrediction(node.address)}>{`0x${node.address.toString(16)}`}{node.freeStep !== undefined ? " (freed)" : !allocations.some(allocation => allocation.address === node.address) ? " (new block)" : ""}</button>)}{predictionResult !== undefined && <strong className={predictionResult ? "correct" : "incorrect"}>{predictionResult ? "Correct!" : "Not quite"}</strong>}</div>}</div>
+      }}>Waiting for input · Open console ↓</a>}<div className="timeline-track"><input aria-label="Timeline" type="range" min="0" max={Math.max(0, (trace?.steps.length ?? 1) - 1)} value={cursor} onChange={e => moveTo(Number(e.target.value))} disabled={!trace || emptyRun} />{trace?.steps.map((step, index) => <button aria-label={`${step.event ?? "step"} tick ${index + 1}`} className={`event-tick tick-${step.event ?? "step"}`} style={{ left: `${trace.steps.length > 1 ? index / (trace.steps.length - 1) * 100 : 0}%` }} key={index} onClick={() => moveTo(index)} />)}</div><div className="controls"><button disabled={(trace?.steps.length ?? 0) < 2} onClick={() => setPlaying(value => !value)}>{playing ? "Pause" : "Play"} ▶</button><button data-step-navigation="true" aria-keyshortcuts="ArrowLeft" disabled={(trace?.steps.length ?? 0) < 2} onClick={() => moveTo(cursor - 1)}>← step back</button><button data-step-navigation="true" aria-keyshortcuts="ArrowRight" title="Use Left/Right arrow keys to step" disabled={(trace?.steps.length ?? 0) < 2} onClick={() => moveTo(cursor + 1)}>step forward →</button><select aria-label="Playback speed" value={speed} onChange={e => setSpeed(Number(e.target.value))}><option value="0.5">0.5x</option><option value="1">1x</option><option value="2">2x</option><option value="4">4x</option></select><label className="predict-toggle"><input type="checkbox" disabled={stale} checked={predictMode} onChange={e => { setPredictMode(e.target.checked); setPrediction(undefined); setPredictionResult(undefined); }} /> Predict</label><span>{view ? `${location(view.line)} · ${view.event ?? "step"}` : emptyRun ? "Run finished · no recorded steps" : "No trace loaded"} · score {score} · streak {streak}</span></div>{prediction && <div className="prediction"><b>Where will {prediction.label} point after this line?</b><button disabled={predictionResult !== undefined} onClick={() => answerPrediction(null)}>NULL</button>{predictionNodes.map(node => <button key={node.address} disabled={predictionResult !== undefined} onClick={() => answerPrediction(node.address)}>{`0x${node.address.toString(16)}`}{node.freeStep !== undefined ? " (freed)" : !allocations.some(allocation => allocation.address === node.address) ? " (new block)" : ""}</button>)}{predictionResult !== undefined && <strong className={predictionResult ? "correct" : "incorrect"}>{predictionResult ? "Correct!" : "Not quite"}</strong>}</div>}</div>
         <div className={`columns${!model?.nodes.length && !arrayStackStep ? " empty-heap" : ""}`}>
           <div className="heap-column"><h3>{arrayStackStep ? "DATA STRUCTURE" : "HEAP STRUCTURE"} <small>{arrayStackStep ? "stack" : model?.shape ?? "ready"}</small></h3>{arrayStackStep && <ArrayStackDiagram stack={readArrayStack(arrayStackStep)} />}{(!arrayStackStep || model?.nodes.length) ? model ? <StructureDiagram model={model} highlighted={highlightedAddress} onHighlight={setHighlightedAddress} memoryViewRequest={memoryViewRequest} /> : <div className="diagram-empty">{emptyRun ? "No heap activity was recorded." : "Run a program to visualize its structure."}</div> : null}<div className="heap-summary">{allocations.filter(allocation => allocation.freeStep === undefined).length} live · {allocations.filter(allocation => allocation.freeStep !== undefined).length} freed · {model?.nodes.filter(node => node.orphaned).length ?? 0} orphaned</div></div>
           <div><h3>CALL STACK</h3><div className="stack-visual"><div className="stack-label">Active functions and local variables</div>{view && view.frames.slice().reverse().map((frame, frameIndex) => <div key={`${frame.name}-${frameIndex}`} className="frame"><small className="frame-name">{executionMode === "snippet" && frameIndex === view.frames.length - 1 ? "snippet" : `${frame.name}()`}</small>{Object.entries(frame.variables ?? {}).map(([key, variable]) => <div className={`stack-slot ${variable.pointer ? "pointer-slot" : ""}`} key={key} title={`${variable.type} ${key}`} onMouseEnter={() => variable.pointer && setHighlightedAddress(!variable.stringPointer && variable.value !== "null" ? Number(variable.value) : undefined)} onClick={() => variable.pointer && setHighlightedAddress(!variable.stringPointer && variable.value !== "null" ? Number(variable.value) : undefined)}><span><b>{key}</b><small>{variable.type}</small></span>{!variable.stringPointer && variable.value.startsWith("[") ? <span className="array-cells">{variable.value.slice(1, -1).split(", ").map((cell, index) => <span className="array-cell" key={index}><small>[{index}]</small>{cell}</span>)}</span> : <code>{variable.stringPointer ? `string ${JSON.stringify(variable.value)}` : variable.pointer && variable.value !== "null" ? `0x${Number(variable.value).toString(16)}` : variable.value}</code>}{variable.pointer && <button className="quick-look-trigger" type="button" aria-label={`Quick Look pointer ${key}`} onClick={event => { event.stopPropagation(); setPlaying(false); setQuickLook({ name:key, variable, step:view, trigger:event.currentTarget }); }}>Quick Look</button>}</div>)}</div>)}{!view && <div className="diagram-empty">{emptyRun ? "No variables or calls were recorded." : "Run a program to inspect its function calls and variables."}</div>}</div></div>
@@ -376,10 +391,10 @@ export function App() {
         {fault && faultReached && <div className="crime"><b>EXECUTION ERROR</b><span>{diagnostic(error)} · {location(fault.line)}</span>{fault.allocation && <><button onClick={() => setCursor(fault.allocation!.allocStep)}>alloc {location(fault.allocation.line)}</button>{fault.allocation.freeStep !== undefined && <button onClick={() => setCursor(fault.allocation!.freeStep!)}>free step {fault.allocation.freeStep}</button>}</>}<button onClick={() => { if (faultStep >= 0) setCursor(faultStep); }}>access {location(fault.line)}</button></div>}
         {!fault && leaks.length > 0 && <div className="leak-report"><b>MEMORY NOT FREED AT EXIT</b><span>{leaks.length} block{leaks.length === 1 ? " was" : "s were"} never freed.</span>{leaks.map(leak => <small key={leak.address}>allocation {location(leak.line)}</small>)}</div>}
         {quickLook && quickLook.step === view && <PointerQuickLook {...quickLook} onClose={closeQuickLook} />}
-        {visualizer.fullscreen && spotlightDialog}
+        {visualizer.fullscreen && (helpDialog || spotlightDialog)}
       </div><SplitDivider boundary={1} sizes={splitSizes} onSize={onSplitSizes}/>
       <div className="terminal-panel" hidden={Boolean(effectiveFocus && effectiveFocus !== "terminal")}><ConsoleWindow dockRequest={dockRequest} revealRequest={consoleReveal} focused={focusPane === "terminal"} onFocusPane={() => toggleFocus("terminal")} waiting={waiting && !stale}>{inputMode === "interactive" && <InteractiveConsole key={runGeneration} revealRequest={consoleReveal} outputExpanded={outputExpanded} onToggleOutput={toggleOutput} output={view?.stdout ?? ""} waiting={waiting} active={Boolean(lastRun)} stale={stale} atLatest={cursor === (trace?.steps.length ?? 0) - 1} transcript={transcript} error={consoleError} onSubmit={submitInteractive} onEOF={() => submitInteractive()} onLatest={() => { setPlaying(false); setCursor(Math.max(0, (trace?.steps.length ?? 1) - 1)); }} onStop={() => { session.current = undefined; setWaiting(false); setPlaying(false); setConsoleError("Stopped. The recorded trace remains available; Run starts a new session."); }} />}{inputMode === "ahead" && <div className="console"><div className="panel-title">CONSOLE</div><label className="stdin-label">Program input (scanf) <input aria-label="Standard input" value={stdin} onChange={event => setStdin(event.target.value)} placeholder="e.g. 3 10 20 30 (space-separated)" /></label><ConsoleOutput expanded={outputExpanded} onToggle={toggleOutput}>{view ? view.stdout || "No output printed at this step." : emptyRun ? "Run finished without printed output." : "Run a program to see its printed output (printf)."}</ConsoleOutput></div>}</ConsoleWindow></div></section>
-    {!visualizer.fullscreen && spotlightDialog}
+    {!visualizer.fullscreen && (helpDialog || spotlightDialog)}
     <footer><a href="https://github.com/gagang2109/Memlens" target="_blank" rel="noopener noreferrer">Memlens on GitHub ↗</a> · supports a subset of C, not a full C compiler · addresses and memory are simulated</footer>
   </main>;
 }

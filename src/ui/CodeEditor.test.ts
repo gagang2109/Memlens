@@ -47,24 +47,16 @@ it("follows a trace line inside the editor without moving the user's selection",
   expect(editor.state.selection.main.head).toBe(6);
   expect(container.querySelector(".cm-memlens-current")?.textContent).toBe("}");
 });
-it("comments with Ctrl+/, opens help from the bottom button, and preserves accessible focus", () => {
+it("comments with Ctrl+/ and keeps Tab native in the source editor", () => {
   const { container, content, editor, key } = mount();
   expect(container.querySelector(".cm-lineNumbers")).not.toBeNull();
   expect(content.getAttribute("aria-label")).toBe("C source editor");
   expect(key("/", { ctrlKey: true }).defaultPrevented).toBe(true);
-  expect(container.querySelector("#editor-shortcuts")).toBeNull();
   expect(editor.state.doc.toString()).toContain("// int main()");
-  act(() => container.querySelector<HTMLButtonElement>(".editor-status button")!.click());
-  expect(container.querySelector("#editor-shortcuts")).not.toBeNull();
-  act(() => container.querySelector<HTMLButtonElement>(".editor-shortcuts button")!.click());
-  expect(container.querySelector("#editor-shortcuts")).toBeNull();
-  expect(document.activeElement).toBe(content);
   expect(key("Tab").defaultPrevented).toBe(false);
 });
 it("supports alternate comment, undo and search keymaps", () => {
   const { container, editor, key } = mount();
-  act(() => container.querySelector<HTMLButtonElement>(".editor-status button")!.click());
-  expect(container.querySelector("#editor-shortcuts")?.textContent).toContain("Alt + Shift + A");
   key("a", { altKey: true, keyCode: 65 });
   expect(editor.state.doc.toString()).not.toContain("//");
   key("A", { altKey: true, shiftKey: true, keyCode: 65 });
@@ -76,10 +68,8 @@ it("supports alternate comment, undo and search keymaps", () => {
   key("f", { ctrlKey: true });
   expect(container.querySelector(".cm-search")).not.toBeNull();
 });
-it("toggles help repeatedly without changing code and supports documented line editing", () => {
-  const { container, editor, key } = mount();
-  for (let count = 0; count < 4; count++) act(() => container.querySelector<HTMLButtonElement>(".editor-status button")!.click());
-  expect(container.querySelector("#editor-shortcuts")).toBeNull();
+it("supports the documented line editing shortcuts", () => {
+  const { editor, key } = mount();
   key("]", { ctrlKey: true });
   expect(editor.state.doc.toString()).toMatch(/^  int main/);
   key("[", { ctrlKey: true });

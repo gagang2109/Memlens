@@ -9,7 +9,7 @@ import { bracketMatching, indentOnInput } from "@codemirror/language";
 import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
 
 // CodeMirror may receive the shifted character A or an explicit Shift+a.
-const alternateComment = { keys: ["Alt-A", "Alt-Shift-a"], label: "Alt + Shift + A" };
+const alternateCommentKeys = ["Alt-A", "Alt-Shift-a"];
 
 // Only load features used by this C-subset editor, not completion or lint engines.
 const editorSetup = [
@@ -33,7 +33,6 @@ const currentLine = StateField.define<DecorationSet>({
 });
 
 export function CodeEditor({ value, currentLine: line, onChange, onRun, onRunAndPlay }: { value: string; currentLine?: number; onChange: (value: string) => void; onRun?: () => void; onRunAndPlay?: () => void }) {
-  const [helpOpen, setHelpOpen] = useState(false);
   const [position, setPosition] = useState({ line: 1, column: 1 });
   const host = useRef<HTMLDivElement>(null); const view = useRef<EditorView>();
   const onRunRef = useRef(onRun); onRunRef.current = onRun;
@@ -47,7 +46,7 @@ export function CodeEditor({ value, currentLine: line, onChange, onRun, onRunAnd
         { key: "Ctrl-Enter", mac: "Meta-Enter", run: () => { if (!onRunRef.current) return false; onRunRef.current(); return true; } },
         { key: "Shift-Enter", run: () => { if (!onRunAndPlayRef.current) return false; onRunAndPlayRef.current(); return true; } },
         { key: "Mod-/", run: toggleComment },
-        ...alternateComment.keys.map(key => ({ key, run: toggleComment })),
+        ...alternateCommentKeys.map(key => ({ key, run: toggleComment })),
         { key: "Mod-Shift-z", run: redo },
       ])), EditorView.lineWrapping, EditorView.updateListener.of(update => { if (update.docChanged) onChangeRef.current(update.state.doc.toString());
       if (update.selectionSet || update.docChanged) {
@@ -87,26 +86,6 @@ export function CodeEditor({ value, currentLine: line, onChange, onRun, onRunAnd
   return <div className="editor-shell">
     <div className="editor-toolbar"><span className="editor-file">main.c <small>C subset</small></span></div>
     <div className="code-editor" ref={host} />
-    <div className="editor-status"><span>Ln {position.line}, Col {position.column}</span><span id="editor-keyboard-hint">Ctrl / ⌘ + / comments · Shift + Enter runs and plays · Tab leaves editor</span><button type="button" aria-expanded={helpOpen} aria-controls="editor-shortcuts" onClick={() => setHelpOpen(open => !open)}>Keyboard shortcuts</button></div>
-    {helpOpen && <section className="editor-shortcuts" id="editor-shortcuts" aria-label="Editor keyboard shortcuts">
-      <strong>Code comfortably</strong>
-      <p>Use Ctrl on Windows/Linux, or ⌘ on Mac, for “Mod” below. Shortcuts work while the editor is focused.</p>
-      <dl>{[
-        ["Mod + Enter", "Run code"],
-        ["Shift + Enter", "Run code and start playback"],
-        ["Mod + /", "Toggle comment on selected lines"],
-        [alternateComment.label, "Toggle comment on selected lines"],
-        ["Mod + Z / Mod + Shift + Z", "Undo / redo"],
-        ["Mod + F", "Open Find and Replace"],
-        ["Mod + A", "Select all code"],
-        ["Mod + [ / Mod + ]", "Indent less / more"],
-        ["Alt + ↑ / ↓", "Move selected lines up / down"],
-        ["Enter", "New line with automatic indentation"],
-        ["Tab / Shift + Tab", "Move focus to the next / previous control"],
-      ].map(([keys, action]) => <div key={keys}><dt><kbd>{keys}</kbd></dt><dd>{action}</dd></div>)}</dl>
-      <p>While stepping outside the editor, use Left/Right to move between steps. Space plays or pauses, and Home/End jump to the ends when not focused on an interactive control.</p>
-      <p>Syntax highlighting and bracket matching help you edit; this is a supported C subset, not a full C compiler.</p>
-      <button type="button" onClick={() => { setHelpOpen(false); view.current?.focus(); }}>Close guide and return to code</button>
-    </section>}
+    <div className="editor-status"><span>Ln {position.line}, Col {position.column}</span><span id="editor-keyboard-hint">Tab leaves editor</span></div>
   </div>;
 }
