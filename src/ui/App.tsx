@@ -211,15 +211,20 @@ export function App() {
     setFault(result.error); setLeaks(result.leaks); setError(result.error?.reason ?? ""); setWaiting(result.status === "waiting");
     if (result.status === "waiting") setFocusPane(previous => previous === "terminal" ? previous : undefined);
   };
-  const runCode = () => {
+  const runCode = (autoPlay = false) => {
     setRunGeneration(value => value + 1);
     focusStepsAfterRun.current = false;
     session.current = undefined; setWaiting(false); setTranscript(""); setConsoleError("");
     setHighlightedAddress(undefined); setLastRun({ code, stdin, setup, inputMode }); setPlaying(false); setPrediction(undefined); setPredictionResult(undefined);
     try {
       const prepared = practiceSource(code, setup); validatePracticeSource(prepared.source, prepared.active);
-      if (inputMode === "interactive") { session.current = new InteractiveRun(prepared.source); applyRun(session.current.result, true); }
-      else applyRun(run(prepared.source, 100000, 100, stdin), false);
+      const interactive = inputMode === "interactive";
+      if (interactive) session.current = new InteractiveRun(prepared.source);
+      const result = session.current?.result ?? run(prepared.source, 100000, 100, stdin);
+      // Keep a waiting console on its latest step so it can accept input.
+      const startPlayback = autoPlay && result.status !== "waiting" && result.trace.steps.length > 1;
+      applyRun(result, interactive && !startPlayback);
+      if (startPlayback) setPlaying(true);
     } catch (caught) { setTrace(undefined); setExecutionMode(undefined); setFault(undefined); setLeaks([]); setError(caught instanceof Error ? caught.message : "Unable to parse program"); }
   };
   const submitInteractive = (line?: string) => {
@@ -312,7 +317,7 @@ export function App() {
   return <main ref={workspace} tabIndex={-1} aria-label="Code execution workspace">
     <header><div className="brand"><img className="brand-mark" src="/memlens-mark.svg" width="36" height="36" alt="" aria-hidden="true" /> MEMLENS</div><div className="tag">Step through your C code and watch memory rewind.</div>
       <select ref={samplesPicker} aria-label="Samples" value={selectedSample} onChange={e => { if (e.target.value !== "custom") selectSample(e.target.value as keyof typeof samples); }}><option value="custom" disabled>Custom code (current editor contents)</option>{Object.entries(sampleLabels).map(([key,label]) => <option key={key} value={key}>{label}</option>)}</select>
-      <button type="button" className="spotlight-trigger" aria-keyshortcuts="Control+k Meta+k" onClick={event => { showSpotlight(); spotlightTrigger.current = event.currentTarget; }}>Spotlight <kbd>Ctrl / ⌘ K</kbd></button><button className="run" onClick={runCode} title="Run code (Ctrl / ⌘ + Enter)" aria-keyshortcuts="Control+Enter Meta+Enter">Run</button></header>
+      <button type="button" className="spotlight-trigger" aria-keyshortcuts="Control+k Meta+k" onClick={event => { showSpotlight(); spotlightTrigger.current = event.currentTarget; }}>Spotlight <kbd>Ctrl / ⌘ K</kbd></button><button className="run" onClick={() => runCode()} title="Run code (Ctrl / ⌘ + Enter)" aria-keyshortcuts="Control+Enter Meta+Enter">Run</button></header>
     <SectionNavigation />
     {linkedSample && <section className="linked-sample" aria-label="Shared sample">
       <strong>{sampleLabels[linkedSample]}</strong>
@@ -331,7 +336,7 @@ export function App() {
     <details className="usage-help"><summary>How to use Memlens · supported C subset</summary><p className="step-explanation snippet-help">Practice a full program or a snippet: main() is optional here. Declare your data, then write statements or call your functions. Memlens runs a supported C subset, not arbitrary incomplete code.</p></details>
     {!stale && executionMode === "snippet" && trace && <p className="step-explanation" role="status">Snippet run · top-level statements execute in source order; no main() wrapper is added.</p>}
     {stale && <p className="step-explanation stale-results" role="status">Code or input changed. Memory, console, errors and trace below are from the previous run. Run again to update them.</p>}
-    <section className={`workspace ${inputMode === "interactive" ? "interactive-workspace" : ""}${effectiveFocus ? " has-focus" : ""}`} style={splitStyle}><div className="code-panel" id="code" tabIndex={-1} aria-label="Code section" hidden={Boolean(effectiveFocus && effectiveFocus !== "code")}><button className="pane-focus" type="button" onClick={() => toggleFocus("code")}>{focusPane === "code" ? "Restore workspace" : "Focus code"}</button><div className="panel-title">SOURCE <small>{lines.length} lines · edit a sample or paste your own C code</small></div><details className="starter-picker"><summary>Start from a scaffold</summary><StarterScaffolds onUse={useStarter} /></details><label className="input-mode">Program input <select aria-label="Input mode" value={inputMode} onChange={event => setInputMode(event.target.value as "ahead" | "interactive")}><option value="ahead">Input ahead (stdin)</option><option value="interactive">Interactive console</option></select></label>{previousDraft && <button type="button" className="restore-draft" onClick={restoreDraft}>Restore previous draft</button>}<CodeEditor onRun={runCode} value={code} currentLine={stale || (displayedSource.active && (view?.line ?? 0) >= displayedSource.setupStart) ? undefined : view?.line} onChange={setCode} />
+    <section className={`workspace ${inputMode === "interactive" ? "interactive-workspace" : ""}${effectiveFocus ? " has-focus" : ""}`} style={splitStyle}><div className="code-panel" id="code" tabIndex={-1} aria-label="Code section" hidden={Boolean(effectiveFocus && effectiveFocus !== "code")}><button className="pane-focus" type="button" onClick={() => toggleFocus("code")}>{focusPane === "code" ? "Restore workspace" : "Focus code"}</button><div className="panel-title">SOURCE <small>{lines.length} lines · edit a sample or paste your own C code</small></div><details className="starter-picker"><summary>Start from a scaffold</summary><StarterScaffolds onUse={useStarter} /></details><label className="input-mode">Program input <select aria-label="Input mode" value={inputMode} onChange={event => setInputMode(event.target.value as "ahead" | "interactive")}><option value="ahead">Input ahead (stdin)</option><option value="interactive">Interactive console</option></select></label>{previousDraft && <button type="button" className="restore-draft" onClick={restoreDraft}>Restore previous draft</button>}<CodeEditor onRun={() => runCode()} onRunAndPlay={() => runCode(true)} value={code} currentLine={stale || (displayedSource.active && (view?.line ?? 0) >= displayedSource.setupStart) ? undefined : view?.line} onChange={setCode} />
 
       <details className="practice-setup" open={setup.trim().length > 0 || undefined}>
         <summary>Test setup &amp; call (optional)</summary>

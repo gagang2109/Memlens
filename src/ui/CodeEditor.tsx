@@ -32,18 +32,20 @@ const currentLine = StateField.define<DecorationSet>({
   provide: field => EditorView.decorations.from(field),
 });
 
-export function CodeEditor({ value, currentLine: line, onChange, onRun }: { value: string; currentLine?: number; onChange: (value: string) => void; onRun?: () => void }) {
+export function CodeEditor({ value, currentLine: line, onChange, onRun, onRunAndPlay }: { value: string; currentLine?: number; onChange: (value: string) => void; onRun?: () => void; onRunAndPlay?: () => void }) {
   const [helpOpen, setHelpOpen] = useState(false);
   const [position, setPosition] = useState({ line: 1, column: 1 });
   const host = useRef<HTMLDivElement>(null); const view = useRef<EditorView>();
   const onRunRef = useRef(onRun); onRunRef.current = onRun;
+  const onRunAndPlayRef = useRef(onRunAndPlay); onRunAndPlayRef.current = onRunAndPlay;
   const onChangeRef = useRef(onChange); onChangeRef.current = onChange;
   useEffect(() => {
     if (!host.current) return;
     const state = EditorState.create({ doc: value, extensions: [editorSetup, cpp(), oneDark, currentLine,
-      EditorView.contentAttributes.of({ "aria-label": "C source editor", "aria-describedby": "editor-keyboard-hint" }),
+      EditorView.contentAttributes.of({ "aria-label": "C source editor", "aria-describedby": "editor-keyboard-hint", "aria-keyshortcuts": "Shift+Enter" }),
       Prec.highest(keymap.of([
         { key: "Ctrl-Enter", mac: "Meta-Enter", run: () => { if (!onRunRef.current) return false; onRunRef.current(); return true; } },
+        { key: "Shift-Enter", run: () => { if (!onRunAndPlayRef.current) return false; onRunAndPlayRef.current(); return true; } },
         { key: "Mod-/", run: toggleComment },
         ...alternateComment.keys.map(key => ({ key, run: toggleComment })),
         { key: "Mod-Shift-z", run: redo },
@@ -85,12 +87,13 @@ export function CodeEditor({ value, currentLine: line, onChange, onRun }: { valu
   return <div className="editor-shell">
     <div className="editor-toolbar"><span className="editor-file">main.c <small>C subset</small></span></div>
     <div className="code-editor" ref={host} />
-    <div className="editor-status"><span>Ln {position.line}, Col {position.column}</span><span id="editor-keyboard-hint">Ctrl / ⌘ + / comments · Tab leaves editor</span><button type="button" aria-expanded={helpOpen} aria-controls="editor-shortcuts" onClick={() => setHelpOpen(open => !open)}>Keyboard shortcuts</button></div>
+    <div className="editor-status"><span>Ln {position.line}, Col {position.column}</span><span id="editor-keyboard-hint">Ctrl / ⌘ + / comments · Shift + Enter runs and plays · Tab leaves editor</span><button type="button" aria-expanded={helpOpen} aria-controls="editor-shortcuts" onClick={() => setHelpOpen(open => !open)}>Keyboard shortcuts</button></div>
     {helpOpen && <section className="editor-shortcuts" id="editor-shortcuts" aria-label="Editor keyboard shortcuts">
       <strong>Code comfortably</strong>
       <p>Use Ctrl on Windows/Linux, or ⌘ on Mac, for “Mod” below. Shortcuts work while the editor is focused.</p>
       <dl>{[
         ["Mod + Enter", "Run code"],
+        ["Shift + Enter", "Run code and start playback"],
         ["Mod + /", "Toggle comment on selected lines"],
         [alternateComment.label, "Toggle comment on selected lines"],
         ["Mod + Z / Mod + Shift + Z", "Undo / redo"],

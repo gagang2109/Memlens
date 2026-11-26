@@ -91,3 +91,74 @@ it('leaves modal dialogs and opt-out console controls alone',()=>{
   const dialog=host.appendChild(document.createElement('dialog'));
   expect(key(dialog,'Enter',{ctrlKey:true}).defaultPrevented).toBe(false);
 });
+
+it('runs and plays from the editor with Shift+Enter, but Enter and Ctrl+Enter keep their jobs',()=>{
+  const view=EditorView.findFromDOM(editor())!;
+  act(()=>view.focus());
+  expect(key(editor(),'Enter').defaultPrevented).toBe(true);
+  expect(view.state.doc.lines).toBe(2);
+  expect(forward().disabled).toBe(true);
+  act(()=>view.dispatch({changes:{from:0,to:view.state.doc.length,insert:code}}));
+
+  vi.useFakeTimers();
+  try {
+    expect(key(editor(),'Enter',{shiftKey:true}).defaultPrevented).toBe(true);
+    expect(view.state.doc.toString()).toBe(code);
+    expect(timeline().value).toBe('0');
+    expect(document.activeElement).toBe(host.querySelector("main"));
+    act(()=>vi.advanceTimersByTime(1000));
+    expect(timeline().value).toBe('1');
+    act(()=>view.focus());
+    key(editor(),'Enter',{ctrlKey:true});
+    expect(timeline().value).toBe('0');
+    act(()=>vi.advanceTimersByTime(1000));
+    expect(timeline().value).toBe('0');
+  } finally { vi.useRealTimers(); }
+});
+
+it('starts completed interactive traces at step zero but leaves waiting traces at the usable prompt',()=>{
+  const mode=host.querySelector<HTMLSelectElement>('[aria-label="Input mode"]')!;
+  const view=EditorView.findFromDOM(editor())!;
+  act(()=>{mode.value='interactive';mode.dispatchEvent(new Event('change',{bubbles:true}));view.focus();});
+  vi.useFakeTimers();
+  try {
+    key(editor(),'Enter',{shiftKey:true});
+    expect(timeline().value).toBe('0');
+    act(()=>vi.advanceTimersByTime(1000));
+    expect(timeline().value).toBe('1');
+
+    act(()=>{view.dispatch({changes:{from:0,to:view.state.doc.length,insert:'int main(){int x=0; printf("Value: "); scanf("%d",&x); printf("%d",x);}'}});view.focus();});
+    key(editor(),'Enter',{shiftKey:true});
+    const input=host.querySelector<HTMLInputElement>('#interactive-input')!;
+    expect(timeline().value).toBe(timeline().max);
+    expect(input.disabled).toBe(false);
+    expect(document.activeElement).toBe(input);
+    expect(key(input,'Enter',{shiftKey:true}).defaultPrevented).toBe(false);
+    act(()=>vi.advanceTimersByTime(1000));
+    expect(timeline().value).toBe(timeline().max);
+    expect(input.disabled).toBe(false);
+    act(()=> {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')!.set!.call(input,'7');
+      input.dispatchEvent(new Event('input',{bubbles:true}));
+    });
+    act(()=>input.closest('form')!.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true})));
+    expect(host.querySelector('[aria-label="Program output"]')?.textContent).toBe('Value: 7');
+  } finally { vi.useRealTimers(); }
+});
+
+it('uses normal Predict pauses during Run & Play',()=>{
+  const view=EditorView.findFromDOM(editor())!;
+  act(()=>view.dispatch({changes:{from:0,to:view.state.doc.length,insert:'int main(){int x=1; int *p=NULL; p=&x; printf("%d",*p);}'}}));
+  const toggle=host.querySelector<HTMLInputElement>('.predict-toggle input')!;
+  expect(toggle.disabled).toBe(false);
+  act(()=>{toggle.click();view.focus();});
+  vi.useFakeTimers();
+  try {
+    key(editor(),'Enter',{shiftKey:true});
+    for(let i=0;i<12 && !host.querySelector('.prediction');i++) act(()=>vi.advanceTimersByTime(1000));
+    expect(host.querySelector('.prediction')?.textContent).toContain('p');
+    const paused=timeline().value;
+    act(()=>vi.advanceTimersByTime(3000));
+    expect(timeline().value).toBe(paused);
+  } finally { vi.useRealTimers(); }
+});

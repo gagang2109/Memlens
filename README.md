@@ -59,6 +59,7 @@ The bundled BST sample during inorder traversal, with the diagram zoomed out to 
 | Where | Shortcut or control | Action |
 | --- | --- | --- |
 | Workspace or editor | Ctrl / ⌘ + Enter | Run the current code |
+| Editor | Shift + Enter | Run and play the trace; a waiting interactive program opens its input prompt instead |
 | Editor | Ctrl / ⌘ + `/` | Toggle comments on selected lines |
 | Editor | Alt + Shift + A | Alternate comment toggle |
 | Editor | Ctrl / ⌘ + `F` | Find and replace |
