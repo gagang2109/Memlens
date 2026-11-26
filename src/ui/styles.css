@@ -368,3 +368,5 @@ footer{padding:16px 24px;font-size:10px}
 .graph-state>div{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:5px;border-top:1px solid #334e66;padding-top:5px}
 .graph-state dt{color:#a7bfd6}
 .graph-state dd{margin:0;color:#e1efff;font-family:ui-monospace,monospace}
+
+.crime a{color:var(--cyan);text-underline-offset:2px}

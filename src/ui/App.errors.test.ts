@@ -88,6 +88,10 @@ it("keeps the access link at the failing iteration rather than the first matchin
   clickRun();
   act(() => container.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true })));
   expect(container.querySelector(".crime")?.textContent).toContain("EXECUTION ERROR");
+  const actions = [...container.querySelectorAll<HTMLButtonElement>(".crime button")].map(button => button.textContent);
+  expect(actions.some(label => label?.startsWith("alloc line"))).toBe(true);
+  expect(actions.some(label => label?.startsWith("free step"))).toBe(true);
+  expect(container.querySelector(".step-explanation")?.textContent).toContain("step back");
   const faultCursor = container.querySelector<HTMLInputElement>('input[aria-label="Timeline"]')!.value;
   const access = Array.from(container.querySelectorAll<HTMLButtonElement>(".crime button")).find(button => button.textContent?.startsWith("access line"))!;
   act(() => access.click());
@@ -101,4 +105,48 @@ it("keeps the access link at the failing iteration rather than the first matchin
   act(() => container.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true })));
   expect(container.querySelector(".crime")?.textContent).toContain("EXECUTION ERROR");
   expect(container.querySelector<HTMLInputElement>('input[aria-label="Timeline"]')!.value).toBe(faultCursor);
+});
+
+it("shows parser location and a semicolon hint without suggesting impossible rewind", () => {
+  localStorage.setItem("memlens-code", "int main(void) {\n  int value = 1\n  return value;\n}");
+  act(() => root.render(createElement(App)));
+  clickRun();
+  const panel = container.querySelector(".crime");
+  expect(panel?.textContent).toContain("COULD NOT READ C CODE");
+  expect(panel?.textContent).toContain("line 3: expected ';'");
+  expect(panel?.querySelector("button")).toBeNull();
+  const explanation = container.querySelector(".step-explanation")?.textContent ?? "";
+  expect(explanation).toContain("Line 3: Memlens could not read the code, so nothing ran.");
+  expect(explanation).toContain("missing semicolon");
+  expect(explanation).not.toContain("step back");
+  expect(container.querySelectorAll(".event-tick")).toHaveLength(1);
+});
+
+it.each(["puts", "putss"])("does not confuse an unresolved call to %s with a syntax or heap error", functionName => {
+  localStorage.setItem("memlens-code", `#include <stdio.h>
+int main(void) {
+  ${functionName}("hello");
+  return 0;
+}`);
+  act(() => root.render(createElement(App)));
+  clickRun();
+  act(() => container.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true })));
+  const panel = container.querySelector(".crime");
+  expect(panel?.textContent).toContain("FUNCTION NOT RESOLVED");
+  expect(panel?.textContent).toContain(`could not resolve '${functionName}()'`);
+  expect(panel?.textContent).toContain("Check the spelling");
+  expect(panel?.textContent).toContain("library function");
+  expect(panel?.textContent).toContain("line 3");
+  expect(panel?.querySelector("a")?.getAttribute("href")).toMatch(/#supported-c-subset$/);
+  expect(panel?.querySelector("button")).toBeNull();
+});
+
+it("maps a parse failure to the test setup rather than the source line with the same number", () => {
+  localStorage.setItem("memlens-code", "int square(int x) {\n  return x * x;\n}");
+  localStorage.setItem("memlens-test-setup", "int n = 2\nprintf(\"%d\", square(n));");
+  act(() => root.render(createElement(App)));
+  clickRun();
+  expect(container.querySelector(".crime")?.textContent).toContain("test setup line 2: expected ';'");
+  expect(container.querySelector(".step-explanation")?.textContent).toContain("test setup line 2: Memlens could not read");
+  expect(container.querySelector(".crime")?.textContent).not.toContain("source line 2");
 });

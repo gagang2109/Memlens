@@ -232,6 +232,10 @@ export function App() {
   ].map(node => [node.address, node])).values()].sort((a, b) => a.address - b.address) : [];
   const faultStep = fault && trace ? trace.steps.findIndex(step => step.event === "error") : -1;
   const faultReached = Boolean(fault && faultStep >= 0 && cursor >= faultStep);
+  const parseFailure = fault?.diagnosticKind === "parse";
+  const unresolvedFunction = fault?.diagnosticKind === "unresolved-function";
+  const stepExplanation = explainStep(view, { kind: fault?.diagnosticKind, canRewind: cursor > 0 });
+  const faultLocation = fault && !((parseFailure || unresolvedFunction) && /\bline \d+:/.test(error)) ? location(fault.line) : undefined;
   const moveTo = (next: number) => { if (!trace) return; setPredictionResult(undefined); const bounded = Math.max(0, Math.min(next, trace.steps.length - 1)); if (predictMode && !stale && bounded > cursor) { const question = nextPointerPrediction(trace.steps[cursor], trace.steps[bounded]); if (question) { setPredictionTarget(bounded); setPrediction(question); setPlaying(false); return; } } setPrediction(undefined); setPredictionResult(undefined); setCursor(bounded); };
   const showHelp = (trigger?: HTMLElement) => {
     helpTrigger.current = trigger ?? (document.activeElement instanceof HTMLElement ? document.activeElement : undefined);
@@ -397,7 +401,7 @@ export function App() {
         {!visualizer.fullscreen && !visualizer.expanded && <button className="pane-focus" type="button" onClick={() => toggleFocus("memory")}>{focusPane === "memory" ? "Restore workspace" : "Focus memory"}</button>}
       </div>
       {visualizer.expanded && <p className="visualizer-expanded-note" role="status">The visualizer is expanded in this page. Press Esc to return.</p>}
-      <div className="timeline" id="trace" tabIndex={-1} aria-label="Trace section"><div className="panel-title">TRACE <small>{traceLabel}</small></div><p className="step-explanation">{emptyRun ? emptyRunMessage : displayedSource.active && view ? diagnostic(explainStep(view)).replace(/^Line \d+/, location(view.line)) : explainStep(view)}</p>{waiting && !stale && <a className="waiting-console-link" href="#console" onClick={event => {
+      <div className="timeline" id="trace" tabIndex={-1} aria-label="Trace section"><div className="panel-title">TRACE <small>{traceLabel}</small></div><p className="step-explanation">{emptyRun ? emptyRunMessage : displayedSource.active && view ? diagnostic(stepExplanation).replace(/^Line \d+/, location(view.line)) : stepExplanation}</p>{waiting && !stale && <a className="waiting-console-link" href="#console" onClick={event => {
         event.preventDefault();
         const reveal = () => {
           if (document.fullscreenElement === visualizer.panel.current) return;
@@ -442,7 +446,16 @@ export function App() {
         </div>
         {error && !fault && <div className="crime" role="alert"><b>PROGRAM COULD NOT RUN</b><span>{diagnostic(error)}</span></div>}
         {fault && !faultReached && faultStep >= 0 && <div className="error-ahead">Error ahead at step {faultStep + 1}</div>}
-        {fault && faultReached && <div className="crime"><b>EXECUTION ERROR</b><span>{diagnostic(error)} · {location(fault.line)}</span>{fault.allocation && <><button onClick={() => setCursor(fault.allocation!.allocStep)}>alloc {location(fault.allocation.line)}</button>{fault.allocation.freeStep !== undefined && <button onClick={() => setCursor(fault.allocation!.freeStep!)}>free step {fault.allocation.freeStep}</button>}</>}<button onClick={() => { if (faultStep >= 0) setCursor(faultStep); }}>access {location(fault.line)}</button></div>}
+        {fault && faultReached && <div className="crime" role="alert">
+          <b>{parseFailure ? "COULD NOT READ C CODE" : unresolvedFunction ? "FUNCTION NOT RESOLVED" : "EXECUTION ERROR"}</b>
+          <span>{diagnostic(error)}{faultLocation && ` · ${faultLocation}`}</span>
+          {unresolvedFunction && <a href="https://github.com/gagang2109/Memlens#supported-c-subset" target="_blank" rel="noopener noreferrer">Supported C subset ↗</a>}
+          {fault.allocation && <>
+            <button onClick={() => setCursor(fault.allocation!.allocStep)}>alloc {location(fault.allocation.line)}</button>
+            {fault.allocation.freeStep !== undefined && <button onClick={() => setCursor(fault.allocation!.freeStep!)}>free step {fault.allocation.freeStep!}</button>}
+          </>}
+          {!parseFailure && !unresolvedFunction && <button onClick={() => setCursor(faultStep)}>access {location(fault.line)}</button>}
+        </div>}
         {!fault && leaks.length > 0 && <div className="leak-report"><b>MEMORY NOT FREED AT EXIT</b><span>{leaks.length} block{leaks.length === 1 ? " was" : "s were"} never freed.</span>{leaks.map(leak => <small key={leak.address}>allocation {location(leak.line)}</small>)}</div>}
         {quickLook && quickLook.step === view && <PointerQuickLook {...quickLook} onClose={closeQuickLook} />}
         {visualizer.fullscreen && (helpDialog || spotlightDialog)}

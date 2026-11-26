@@ -25,7 +25,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
   try { program = parse(source); } catch (caught) {
     const message = caught instanceof Error ? caught.message : "unsupported construct";
     const match = message.match(/line (\d+)/); const line = match ? Number(match[1]) : 1;
-    const error = new MemoryFault(`parse error: ${message}`, line, 0);
+    const error = new MemoryFault(`parse error: ${message}`, line, 0, undefined, true, "parse");
     trace.add({ line, stdout: "", memory: { bytes: [], shadows: [], allocations: [] }, frames: [], event: "error", message: error.reason });
     return { trace, status: "error", error, leaks: [], orphanedAtExit: [] };
   }
@@ -530,7 +530,8 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
         stdout += output; record(expression.line);
         return new TextEncoder().encode(output).length + characterByteAdjustment;
       }
-      const fn = program.functions.get(expression.name); if (!fn) throw new Error(`line ${expression.line}: unsupported function '${expression.name}'`);
+      const fn = program.functions.get(expression.name);
+      if (!fn) throw new MemoryFault(`line ${expression.line}: Memlens could not resolve '${expression.name}()'. Check the spelling and include the function definition if it is yours. If it is a library function, check Memlens’s supported C subset.`, expression.line, steps, undefined, true, "unresolved-function");
       if (args.length !== fn.params.length)
         runtimeError(`function '${fn.name}' expects ${fn.params.length} arguments, received ${args.length}`, expression.line);
       if (frames.length >= recursionLimit) runtimeError("stack overflow", expression.line);
