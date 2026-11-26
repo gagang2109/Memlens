@@ -1,7 +1,7 @@
 import { parse, type Expr, type FunctionDef, type Program, type Stmt } from "../lang/parser";
 import { Memory, MemoryFault, type Allocation } from "./memory";
 import { Trace, type FrameView } from "./trace";
-import { fixedArraySizeof, isFixedArrayBound } from "./fixedArraySizeof";
+import { localArraySizeof, isFixedArrayBound } from "./fixedArraySizeof";
 
 type Value = number | string | null;
 type RuntimeVariable = { value: Value; type: string; pointer: boolean; pointerDepth?: number; array?: Value[]; dimensions?: number[]; fixedArrayBounds?: boolean; elementSize?: number; arrayBase?: number; address?: number };
@@ -241,7 +241,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
         runtimeError("missing scanf format argument", expression.line);
       if (expression.name === "sizeof") {
         const argument = args[0];
-        const arrayBytes = fixedArraySizeof(argument, sizeofContext, runtimeError);
+        const arrayBytes = localArraySizeof(argument, sizeofContext, runtimeError);
         if (arrayBytes !== undefined) return arrayBytes;
         if (argument?.kind === "literal") return argument.value;
         if (argument?.kind === "name" && argument.name === "char") return 1;

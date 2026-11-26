@@ -102,7 +102,7 @@ The interpreter currently supports:
 - Pointer declarations, casts, pointer arithmetic, dereference, address-of, indexing, and pointer values.
 - Pointer-to-pointer parameters and address-of expressions for variables, fields, and indexed elements.
 - Struct declarations with fields, including pointer fields such as `next`, `left`, and `right`.
-- Fixed-size `int` and `char` arrays, array initializers, array indexing, array parameters, two-dimensional arrays, and arrays of struct values.
+- `int` and `char` arrays, array initializers, array indexing, array parameters, two-dimensional arrays, and arrays of struct values. Simple local declarations can use a size read at runtime, such as `scanf("%d", &n); int a[n];`.
 - Struct values, the `.` operator, and passing struct addresses to functions.
 - Variables, assignments (including chained assignment), compound assignments (`+=`, `-=`), arithmetic, comparisons, logical operators, the conditional operator (`?:`), unary `!`, unary `-`, dereference (`*`), address-of (`&`), and increment/decrement.
 - Integer, character, string, and `NULL` literals. Quoted literals decode escaped quotes/backslashes, standard simple escapes (such as `\n`, `\t`, and `\0`), and octal/hexadecimal escapes in the byte range 0–255. Multi-character character literals, universal character escapes, and line-spliced literals are not modeled; malformed or unsupported escapes report a parse error.
@@ -117,7 +117,7 @@ The interpreter currently supports:
 
 It does not currently support:
 
-- Variable-length arrays and array features beyond the supported fixed-size scalar, struct, and two-dimensional arrays.
+- Full variable-length array semantics, including pointer-to-variable-array declarators and general variable-length array expressions.
 - Function pointers, unions, variadic functions, general pointer arithmetic beyond supported element indexing, and preprocessor directives other than numeric/string `#define` and ignored `#include`.
 - The full C standard library or compilation with gcc/clang.
 
@@ -128,10 +128,10 @@ It does not currently support:
 - Each local array is limited to **65,536 simulated bytes** (for example, 65,536 `char` elements or 16,384 `int` elements). Every dimension must be a positive integer, and multidimensional totals count toward the same cap. Reduce the array dimensions if this limit is reported; validation occurs before allocating array storage to keep accidental oversized inputs from freezing the browser. A one-dimensional omitted bound (`int a[] = {1,2}` or `char text[] = "abc"`) is inferred from its initializer. Other omitted-bound forms need explicit dimensions. This per-array guard is not a total memory budget and does not promise general variable-length-array support.
 
 - This is a **subset interpreter**, not a standards-complete C implementation. Unsupported syntax or library calls may need a simpler equivalent.
-- Variable-length arrays, function pointers, unions, and the full C preprocessor/library are not supported.
+- Function pointers, unions, and the full C preprocessor/library are not supported.
 - `*=`, `/=`, and `%=` support writable signed `int` targets and supported signed integer expressions, including character literals. Floating-point compound arithmetic, unsigned/long arithmetic, and struct member targets are outside this subset. Division and remainder by zero, and signed overflow in these operations, stop with a diagnostic.
 - Addresses and object sizes are simulated; the app is not a substitute for a native debugger or sanitizer.
-- `sizeof` knows the declared sizes of fixed `int` and `char` arrays, including rows and elements (`sizeof a`, `sizeof *a`, and `sizeof a[i]`). Use literal bounds or supported integer constant expressions. Indices in supported forms are checked for type, but never evaluated: `sizeof a[i++]` does not change `i`, and no array element is accessed. Basic type/pointee forms still use simulated sizes. This is not a general C type-size implementation: variable-length arrays, pointer arrays, decayed array parameters, struct arrays, and other expression forms are outside this support. Use explicit counts outside the supported forms.
+- `sizeof` knows the declared sizes of fixed `int` and `char` arrays, including rows and elements (`sizeof a`, `sizeof *a`, and `sizeof a[i]`). Use literal bounds or supported integer constant expressions. Indices in supported forms are checked for type, but never evaluated: `sizeof a[i++]` does not change `i`, and no array element is accessed. Basic type/pointee forms still use simulated sizes. For a named local runtime-sized `int` or `char` array, `sizeof a` uses the dimensions saved at declaration. Indexed or dereferenced variable-length array operands, pointer arrays, decayed array parameters, struct arrays, and other expression forms are outside this support. Use explicit counts outside the supported forms.
 - Local-array `memset` supports byte ranges in `char` arrays and zero-filling whole `int` elements. Partial-byte or nonzero fills of local integer arrays, and other local object representations, report an unsupported-operation error rather than guessing a machine layout.
 - Diagram layouts infer structure from pointer fields and heap edges. Not every possible graph has a specialized layout.
 - Predict skips local-pointer questions when recursive calls share the same function name: the current trace labels cannot uniquely identify those frames. Stepping and playback still continue normally.

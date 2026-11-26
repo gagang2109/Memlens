@@ -123,7 +123,7 @@ function indexType(expr: Expr, context: Context): ValueType | undefined {
   }
 }
 
-export function fixedArraySizeof(expr: Expr | undefined, context: Context, fail: (reason: string, line: number) => never): number | undefined {
+export function localArraySizeof(expr: Expr | undefined, context: Context, fail: (reason: string, line: number) => never): number | undefined {
   const levels: Array<{ line: number; index?: Expr }> = [];
   let root = expr;
   while (root?.kind === "index" || (root?.kind === "unary" && root.op === "*")) {
@@ -138,7 +138,9 @@ export function fixedArraySizeof(expr: Expr | undefined, context: Context, fail:
   if (root?.kind !== "name") return;
   const array = context.lookup(root.name);
   if (!array?.array || !array.dimensions || array.pointerDepth || !["int", "char"].includes(normalized(array.type))) return;
-  if (!array.fixedArrayBounds) fail("sizeof variable-length arrays is not supported", root.line);
+  // A named array already has its evaluated bounds. Indexed operands
+  // that yield a variable-length row have separate C evaluation rules.
+  if (!array.fixedArrayBounds && levels.length) fail("sizeof indexed or dereferenced variable-length arrays is not supported", root.line);
   if (levels.length > array.dimensions.length) fail("too many subscripts or dereferences in sizeof array operand", levels[0].line);
   for (const { index } of levels.reverse())
     if (index && !isIntegral(indexType(index, context))) fail("sizeof array index requires a supported integer expression", index.line);

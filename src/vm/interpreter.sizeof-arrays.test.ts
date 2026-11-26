@@ -38,8 +38,29 @@ it("rejects extra bracket levels instead of quietly falling back", () => {
   expect(result.error?.reason).toContain("too many subscripts");
 });
 
-it("does not treat a run-time bound as a fixed declaration bound", () => {
-  const result = run('int main(void){ int n=3; int a[n]; printf("%d",sizeof(a)); }');
+it("uses the original runtime size without evaluating the bound again", () => {
+  const result = run(`#include <stdio.h>
+  int calls=0;
+  int bound(int count){ calls++; return count; }
+  int main(void) {
+    int n; scanf("%d", &n); int a[bound(n)];
+    int bytes = sizeof a; n=99;
+    printf("%d %d %d %d", bytes, (int)sizeof(a), n, calls);
+  }`, 100000, 100, "3");
+  expect(result.status, result.error?.reason).toBe("ok");
+  expect(result.trace.steps.at(-1)?.stdout).toBe("12 12 99 1");
+});
+it("handles a named runtime matrix and character buffer", () => {
+  const result = run(`int main(void) {
+    int rows=2, cols=3;
+    int a[rows][cols]; char text[cols+1];
+    printf("%d %d", (int)sizeof a, (int)sizeof text);
+  }`);
+  expect(result.status, result.error?.reason).toBe("ok");
+  expect(result.trace.steps.at(-1)?.stdout).toBe("24 4");
+});
+it("does not guess the evaluation rules for a variable-length row operand", () => {
+  const result = run('int main(void){ int n=3; int a[2][n]; printf("%d", (int)sizeof(a[0])); }');
   expect(result.error?.reason).toContain("variable-length");
 });
 

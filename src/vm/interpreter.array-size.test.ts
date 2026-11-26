@@ -67,3 +67,31 @@ it('rejects multiple strings as one-dimensional character elements', () => {
   expect(result.status).toBe('error');
   expect(result.error?.reason).toContain('unsupported char array initializer');
 });
+
+it('runs a pasted lab with a size read at runtime, indexed input and an array parameter', () => {
+  const source = `#include <stdio.h>
+int sum(int a[], int n) {
+    int total=0;
+    for (int i=0; i<n; i++) total+=a[i];
+    return total;
+}
+int main(void) {
+    int n;
+    scanf("%d", &n);
+    int a[n];
+    for (int i=0; i<n; i++) scanf("%d", &a[i]);
+    printf("%d", sum(a, n));
+}`;
+  const result = run(source, 100000, 100, '4 8 1 7 2');
+  expect(result.status, result.error?.reason).toBe('ok');
+  expect(result.trace.steps.at(-1)?.stdout).toBe('18');
+});
+
+it.each([["0", "array dimensions must be positive integers"], ["16385", "local array exceeds simulator limit (65536 bytes)"]])(
+  "rejects unsafe runtime dimensions before allocation: %s",
+  (stdin, reason) => {
+    const result = run('int main(void){ int n; scanf("%d", &n); int a[n]; printf("continued"); }', 100000, 100, stdin);
+    expect(result.error?.reason).toBe(reason);
+    expect(result.trace.steps.at(-1)?.frames[0].locals).not.toHaveProperty("a");
+  }
+);
