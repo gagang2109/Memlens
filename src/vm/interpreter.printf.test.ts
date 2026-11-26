@@ -7,7 +7,7 @@ const check = (body: string, expected: string) => {
 };
 describe('printf formatting', () => {
   it('normalizes negative integer zero', () => check(`int x=-0;printf("[%d][%+d][%.0d]",x,x,x);`, '[0][+0][]'));
-  it.each(['%u %d', '%*d', '%', '%q'])('rejects unsupported conversion %s', (format) => {
+  it.each(['%u %d', '%zd', '%*d', '%', '%q'])('rejects unsupported conversion %s', (format) => {
     const result=run(`int main(){printf("${format}",2,7);}`);
     expect(result.status).toBe('error');
     expect(result.error?.reason).toContain('unsupported or incomplete printf conversion');
@@ -29,5 +29,29 @@ describe('printf formatting', () => {
   it('rejects excessive widths rather than allocating them', () => {
     const result=run(`int main(){printf("%999999999d",1);}`);
     expect(result.status).toBe('error'); expect(result.error?.reason).toContain('simulator limit');
+  });
+});
+
+
+describe("printf %zu for byte sizes", () => {
+  it("prints a fixed matrix and its rows without consuming later arguments", () =>
+    check('int a[2][3]; int n=printf("%zu/%zu/%d%%",sizeof a,sizeof a[0],7);printf("=%d",n);','24/12/7%=8'));
+  it("prints the runtime array size and handles width, alignment and precision", () => {
+    const result=run(`#include <stdio.h>
+int main(void) {
+  int n; scanf("%d",&n);
+  int a[n];
+  printf("[%zu][%06zu][%06.4zu][%-6zu][%.0zu]",sizeof a,sizeof a,sizeof a,sizeof a,sizeof a-sizeof a);
+}`,100000,100,"3");
+    expect(result.status,result.error?.reason).toBe("ok");
+    expect(result.trace.steps.at(-1)?.stdout).toBe("[12][000012][  0012][12    ][]");
+  });
+  it.each(["-1", "1.5", "9007199254740992", '"12"'])("diagnoses unsupported %%zu values: %s", value => {
+    const result=run(`int main(){printf("%zu",${value});}`);
+    expect(result.error?.reason).toContain("nonnegative integer");
+  });
+  it("keeps the existing formatting limit", () => {
+    const result=run('int main(){printf("%10001zu",sizeof(int));}');
+    expect(result.error?.reason).toContain("simulator limit");
   });
 });

@@ -444,7 +444,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
         if (args.length === 0) runtimeError("missing printf format argument", expression.line);
         const format = readString(evaluate(args[0]), expression.line).split("\0", 1)[0];
         const values = args.slice(1).map(argument => evaluate(argument)); let index = 0; let characterByteAdjustment = 0;
-        const output = format.replace(/%([-+ 0]*)([0-9]*)(?:\.([0-9]*))?(lf|[dcspf%])|%/g,
+        const output = format.replace(/%([-+ 0]*)([0-9]*)(?:\.([0-9]*))?(lf|zu|[dcspf%])|%/g,
           (_match, flags: string, widthText: string, precisionText: string | undefined, specifier: string) => {
             if (_match === "%") runtimeError("unsupported or incomplete printf conversion", expression.line);
             if (specifier === "%") return "%";
@@ -461,10 +461,18 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
               text = String.fromCharCode(asNum(value) & 255);
               characterByteAdjustment += 1 - new TextEncoder().encode(text).length;
             }
-            else if (specifier === "d" || specifier === "f" || specifier === "lf") {
+            else if (specifier === "d" || specifier === "zu" || specifier === "f" || specifier === "lf") {
+              const integer = specifier === "d" || specifier === "zu";
               const number = specifier === "d" ? Math.trunc(asNum(value)) : asNum(value);
-              sign = number < 0 || (specifier !== "d" && Object.is(number, -0)) ? "-" : flags.includes("+") ? "+" : flags.includes(" ") ? " " : "";
-              if (specifier === "d") {
+              if (specifier === "zu") {
+                if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0)
+                  runtimeError("printf %zu requires a nonnegative integer within the simulator's exact range", expression.line);
+                if (flags.includes("+") || flags.includes(" "))
+                  runtimeError("printf %zu does not support sign flags", expression.line);
+              } else {
+                sign = number < 0 || (!integer && Object.is(number, -0)) ? "-" : flags.includes("+") ? "+" : flags.includes(" ") ? " " : "";
+              }
+              if (integer) {
                 text = Math.abs(number).toString();
                 if (precision === 0 && number === 0) text = "";
                 if (precision !== undefined) text = text.padStart(precision, "0");
@@ -476,7 +484,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
             } else text = String(value ?? "");
             const padding = Math.max(0, width - sign.length - text.length);
             if (flags.includes("-")) return sign + text + " ".repeat(padding);
-            if (flags.includes("0") && (specifier === "d" ? precision === undefined : specifier === "f" || specifier === "lf"))
+            if (flags.includes("0") && (specifier === "d" || specifier === "zu" ? precision === undefined : specifier === "f" || specifier === "lf"))
               return sign + "0".repeat(padding) + text;
             return " ".repeat(padding) + sign + text;
           });
