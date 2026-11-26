@@ -12,6 +12,7 @@ export type LayoutNode = {
   fields?: string[];
   next: string;
   listLinks?: { next: string; prev: string };
+  aliasedTreeChildren?: true;
   treeChildren?: Partial<Record<"left" | "right", number | null>>;
   type?: string;
   raw: boolean;
@@ -25,6 +26,11 @@ export type RenderModel = { queueEndpoints?: [QueueEndpoint, QueueEndpoint]; nod
 export const VARIABLE_TAG_WIDTH = 72;
 export const variableTagX = (nodeX: number, index: number) => nodeX + 27 + index * (VARIABLE_TAG_WIDTH + 4);
 const variableTagRight = (count: number) => count ? variableTagX(0, count - 1) + VARIABLE_TAG_WIDTH : 0;
+
+export function treeSide(label: string): "left" | "right" | undefined {
+  if (label === "left" || label === "lchild") return "left";
+  if (label === "right" || label === "rchild") return "right";
+}
 
 const addressOf = (address: number) => `0x${address.toString(16)}`;
 
@@ -54,7 +60,9 @@ export function renderModel(step: TraceStep): RenderModel {
   const pointers = step.pointers ?? [];
   const heap = new Map((step.heap ?? []).map(object => [object.address, object]));
   const heapEdges = pointers.filter(pointer => pointer.from.startsWith("0x"));
-  const childEdges = new Map(heapEdges.filter(pointer => pointer.label === "left" || pointer.label === "right").map(pointer => [pointer.from, pointer.to]));
+  const childKey = (pointer: PointerArrow) => `${pointer.from.slice(0, pointer.from.lastIndexOf("."))}.${treeSide(pointer.label)}`;
+  const treeEdges = heapEdges.filter(pointer => treeSide(pointer.label));
+  const childEdges = new Map(treeEdges.map(pointer => [childKey(pointer), pointer.to]));
   const childTargets = new Set(childEdges.values());
   const roots = pointers.filter(pointer => !pointer.from.startsWith("0x") && !pointer.dangling);
   const reachable = new Set<number>();
@@ -73,7 +81,7 @@ export function renderModel(step: TraceStep): RenderModel {
     const type = object?.type ?? allocation.type;
     const raw = !!type && /^(?:int|char|short|long|float|double|void)(?:\s|$)/.test(type);
     const nextPointer = pointers.find(pointer => pointer.from === `${addressOf(allocation.address)}.next`);
-    const scalarFields = object ? Object.entries(object.fields).filter(([field]) => !["next", "left", "right"].includes(field) && (field !== "prev" || !object.doublyLinked)) : [];
+    const scalarFields = object ? Object.entries(object.fields).filter(([field]) => !["next", "left", "right"].includes(field) && !(object.aliasedTreeChildren && (field === "lchild" || field === "rchild")) && (field !== "prev" || !object.doublyLinked)) : [];
     const listField = (field: "next" | "prev") => {
       const value = object?.fields[field];
       const edge = heapEdges.find(pointer => pointer.from === `${addressOf(allocation.address)}.${field}`);
@@ -81,17 +89,19 @@ export function renderModel(step: TraceStep): RenderModel {
     };
     const left = childEdges.get(`${addressOf(allocation.address)}.left`);
     const right = childEdges.get(`${addressOf(allocation.address)}.right`);
+    const leftValue = object?.fields[object?.aliasedTreeChildren ? "lchild" : "left"];
+    const rightValue = object?.fields[object?.aliasedTreeChildren ? "rchild" : "right"];
     const readChild = (edge: number | undefined, value: string | undefined) => edge === 0 || value === "null" ? null : edge;
     const treeChildren = !raw && (left !== undefined || right !== undefined || childTargets.has(allocation.address) ||
-      (object?.fields.left === "null" && object.fields.right === "null"))
-      ? {left:readChild(left, object?.fields.left), right:readChild(right, object?.fields.right)} : undefined;
+      (readChild(left, leftValue) === null && readChild(right, rightValue) === null))
+      ? {left:readChild(left, leftValue), right:readChild(right, rightValue)} : undefined;
     return {
       address: allocation.address, x: 20, y: 120, orphaned: !freed && !reachable.has(allocation.address), freed,
       freedAtStep: allocation.freeStep, label: addressOf(allocation.address),
       value: scalarFields.length === 1 ? scalarFields[0][1] : scalarFields.length ? scalarFields.map(([field, value]) => `${field}: ${value}`).join(" | ") : "—",
       fields: scalarFields.map(([field, value]) => `${field}: ${value}`),
       next: nextPointer ? addressOf(nextPointer.to) : "NULL", type, raw, size: allocation.size,
-      treeChildren,
+      treeChildren, ...(object?.aliasedTreeChildren ? {aliasedTreeChildren:true as const} : {}),
       ...(object?.doublyLinked ? {listLinks:{next:listField("next"),prev:listField("prev")}} : {}),
       elementType: type && /^(int|char|short|long|float|double)$/.test(type) ? type : undefined,
     };
@@ -144,7 +154,7 @@ export function renderModel(step: TraceStep): RenderModel {
   });
   nodes.filter(node => !orderedAddresses.has(node.address)).forEach(node => ordered.push(node));
 
-  const hasTreeEdges = heapEdges.some(pointer => pointer.label === "left" || pointer.label === "right");
+  const hasTreeEdges = treeEdges.length > 0;
   const singletonRoots = nodes.filter(node => !node.freed && node.treeChildren?.left === null && node.treeChildren.right === null);
   const hasListEdges = heapEdges.some(pointer => pointer.label === "next");
   const shape: RenderShape = hasTreeEdges ? "tree" : queueEndpoints || (hasListEdges && rootNames.some(name => name.includes("front") || name.includes("rear"))) ? "queue"
@@ -196,11 +206,11 @@ export function renderModel(step: TraceStep): RenderModel {
     const byAddress = new Map(nodes.map(node => [node.address, node]));
     const branches = new Map<string, LayoutNode>();
     const children = new Set<number>();
-    for (const pointer of heapEdges) {
-      if (pointer.label !== "left" && pointer.label !== "right") continue;
+    for (const pointer of treeEdges) {
       const target = byAddress.get(pointer.to);
-      if (target && !branches.has(pointer.from)) {
-        branches.set(pointer.from, target);
+      const key = childKey(pointer);
+      if (target && !branches.has(key)) {
+        branches.set(key, target);
         children.add(target.address);
       }
     }

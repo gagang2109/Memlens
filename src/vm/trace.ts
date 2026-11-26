@@ -4,7 +4,7 @@ export type EventKind = "step" | "alloc" | "free" | "error" | "warning" | "call"
 export type FrameVariable = { type: string; value: string; pointer: boolean; stringPointer?: boolean };
 export type FrameView = { name: string; locals: Record<string, string>; variables?: Record<string, FrameVariable> };
 export type PointerArrow = { from: string; to: number; label: string; dangling: boolean };
-export type HeapView = { address: number; fields: Record<string, string>; type?: string; doublyLinked?: true };
+export type HeapView = { address: number; fields: Record<string, string>; type?: string; doublyLinked?: true; aliasedTreeChildren?: true };
 export type TraceStep = { index: number; line: number; stdout: string; memory: MemorySnapshot; frames: FrameView[]; heap?: HeapView[]; pointers?: PointerArrow[]; event?: EventKind; message?: string };
 export class Trace {
   steps: TraceStep[] = []; current = 0;

@@ -16,7 +16,7 @@ import { ConsoleWindow } from "./ConsoleWindow";
 import { run } from "../vm/interpreter";
 import { samples } from "../samples";
 import type { Trace, TraceStep, FrameVariable } from "../vm/trace";
-import { listReturnLink, previousListLink, renderModel, VARIABLE_TAG_WIDTH, variableTagX } from "../viz/model";
+import { listReturnLink, previousListLink, renderModel, treeSide, VARIABLE_TAG_WIDTH, variableTagX } from "../viz/model";
 import { DiagramViewport, type MemoryViewRequest } from "./DiagramViewport";
 import { CodeEditor } from "./CodeEditor";
 import { readSavedCount, saveCount } from "./storage";
@@ -53,8 +53,9 @@ function StructureDiagram({ model, highlighted, onHighlight, memoryViewRequest }
         const target = nodeByAddress.get(arrow.to); if (!target) return null;
         if (!arrow.from.startsWith("0x")) { const tags = tagsByTarget.get(arrow.to) ?? []; const tagIndex = tags.indexOf(arrow); const x = variableTagX(target.x, tagIndex); return <line key={`arrow-${index}`} x1={x + VARIABLE_TAG_WIDTH / 2} y1={target.y - 22} x2={target.x + 63} y2={target.y} className={arrow.dangling ? "dangling-arrow" : "pointer-arrow"} markerEnd="url(#arrow)" />; }
         const source = nodeByAddress.get(Number.parseInt(arrow.from.slice(2).split(".")[0], 16)); if (!source) return null;
-        if (model.shape === "tree" && (arrow.label === "left" || arrow.label === "right")) {
-          const label = arrow.from.split(".").pop(); const left = label === "left"; const x1 = source.x + (left ? 20 : 106); const y1 = source.y + 18;
+        const side = treeSide(arrow.label);
+        if (model.shape === "tree" && side) {
+          const left = side === "left"; const x1 = source.x + (left ? 20 : 106); const y1 = source.y + 18;
           return <line key={`arrow-${index}`} x1={x1} y1={y1} x2={target.x + 63} y2={target.y} className={arrow.dangling ? "dangling-arrow" : "pointer-arrow"} markerEnd="url(#arrow)" />;
         }
         if (arrow.label === "prev" && (model.shape === "doubly-linked-list" || model.shape === "queue")) {
@@ -81,7 +82,7 @@ function StructureDiagram({ model, highlighted, onHighlight, memoryViewRequest }
           const child = node.treeChildren![side], x = side === "left" ? 20 : 106;
           return <g key={side}>
             {child === null ? <circle cx={x} cy="18" r="4" className="null-stub" fill="none" stroke="currentColor" /> : child !== undefined ? <text x={x} y="22" textAnchor="middle" className="next-dot">●</text> : null}
-            <text x="7" y={42 + index * 12} textAnchor="start" className="node-kind">{side} → {child === null ? "NULL" : child === undefined ? "—" : `0x${child.toString(16)}`}</text>
+            <text x="7" y={42 + index * 12} textAnchor="start" className="node-kind">{node.aliasedTreeChildren ? (side === "left" ? "lchild" : "rchild") : side} → {child === null ? "NULL" : child === undefined ? "—" : `0x${child.toString(16)}`}</text>
           </g>;
         })}</> : node.listLinks ? <><rect width="126" height="78" rx="7" /><text x="63" y="21" textAnchor="middle">{node.value}</text><text x="8" y="38" className="node-kind">next → {node.listLinks.next}</text><text x="8" y="54" className="node-kind list-prev-label">prev → {node.listLinks.prev}</text></> : <><rect width="126" height="78" rx="7" /><line x1="63" y1="0" x2="63" y2="54" className="node-divider" />{(node.fields?.length ?? 0) > 1 ? node.fields!.map((field, index) => <text key={field} x="8" y={17 + index * 14} textAnchor="start" className="node-kind">{field}</text>) : <text x="31" y="24" textAnchor="middle">{node.value}</text>}<text x="95" y="24" textAnchor="middle" className="next-dot">●</text><text x="8" y="51" textAnchor="start" className="node-kind">next → {node.next}</text></>}<text x="8" y="70" textAnchor="start" className="node-address"><title>{`Simulated address ${node.label}${node.freed ? `; freed at step ${node.freedAtStep}` : ""}`}</title>{node.freed ? `${node.label} freed #${node.freedAtStep}` : `@ ${node.label}`}</text>
       </g>)}

@@ -51,12 +51,13 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       // An anonymous struct has no unique runtime type name in this VM.
       const fields = object.type && object.type !== "struct" ? program.structPointerFields.get(object.type) : undefined;
       const doublyLinked = fields?.has("next") && fields.has("prev");
+      const aliasedTreeChildren = !!object.type && program.aliasedTreeStructs.has(object.type);
       for (const [label, value] of object.fields) {
-        if (typeof value !== "number" || (!(["next", "left", "right"].includes(label)) && !(doublyLinked && label === "prev"))) continue;
+        if (typeof value !== "number" || (!(["next", "left", "right"].includes(label)) && !(doublyLinked && label === "prev") && !(aliasedTreeChildren && (label === "lchild" || label === "rchild")))) continue;
         if (label === "prev" && value === 0) continue;
         pointers.push({ from: `0x${object.address.toString(16)}.${label}`, to: value, label, dangling: Boolean(memory.allocations.find(a => a.address === value)?.freeStep !== undefined) });
       }
-      return { address: object.address, type: object.type, fields: Object.fromEntries([...object.fields].map(([key, value]) => [key, String(value)])), ...(doublyLinked ? {doublyLinked:true as const} : {}) };
+      return { address: object.address, type: object.type, fields: Object.fromEntries([...object.fields].map(([key, value]) => [key, String(value)])), ...(doublyLinked ? {doublyLinked:true as const} : {}), ...(aliasedTreeChildren ? {aliasedTreeChildren:true as const} : {}) };
     });
     trace.add({ line, stdout, memory: memory.snapshot(), frames: visible, heap: heapViews, pointers, event, message });
     steps++;
@@ -98,6 +99,11 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       if (!allocation) runtimeError(asNum(object) === 0 ? "null pointer dereference" : "invalid pointer dereference", expression.line);
       if (allocation!.freeStep !== undefined) runtimeError("use-after-free", expression.line, allocation);
       const block = heap.get(asNum(object)); if (!block) runtimeError("invalid pointer dereference", expression.line);
+      // Typed child aliases also work when a lab assigns malloc to a
+      // predeclared pointer, so the allocation did not get a declaration hint.
+      const owner = pointerMeta(expression.object);
+      if (block && !block.type && owner?.pointerDepth === 1 && program.aliasedTreeStructs.has(owner.type))
+        block.type = owner.type;
       const fieldIndex = ["data", "value", "key", "left", "right", "next", "prev"].indexOf(expression.name);
       const address = block!.address + (fieldIndex < 0 ? block!.fields.size : fieldIndex) * 4;
       const result = { get: () => block!.fields.get(expression.name) ?? null, set: (value: Value) => block!.fields.set(expression.name, value), address, allocation };
