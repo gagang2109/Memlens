@@ -90,13 +90,13 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       // An anonymous struct has no unique runtime type name in this VM.
       const fields = object.type && object.type !== "struct" ? program.structPointerFields.get(object.type) : undefined;
       const doublyLinked = fields?.has("next") && fields.has("prev");
-      const aliasedTreeChildren = !!object.type && program.aliasedTreeStructs.has(object.type);
+      const treeChildAliases = object.type ? program.aliasedTreeStructs.get(object.type) : undefined;
       for (const [label, value] of object.fields) {
-        if (typeof value !== "number" || (!(["next", "left", "right"].includes(label)) && !(doublyLinked && label === "prev") && !(aliasedTreeChildren && (label === "lchild" || label === "rchild")))) continue;
+        if (typeof value !== "number" || (!["next", "left", "right"].includes(label) && !(doublyLinked && label === "prev") && !treeChildAliases?.some(field => field === label))) continue;
         if (label === "prev" && value === 0) continue;
         pointers.push({ from: `0x${object.address.toString(16)}.${label}`, to: value, label, dangling: Boolean(memory.allocations.find(a => a.address === value)?.freeStep !== undefined) });
       }
-      return { address: object.address, type: object.type, fields: Object.fromEntries([...object.fields].map(([key, value]) => [key, String(value)])), ...(doublyLinked ? {doublyLinked:true as const} : {}), ...(aliasedTreeChildren ? {aliasedTreeChildren:true as const} : {}) };
+      return { address: object.address, type: object.type, fields: Object.fromEntries([...object.fields].map(([key, value]) => [key, String(value)])), ...(doublyLinked ? {doublyLinked:true as const} : {}), ...(treeChildAliases ? { treeChildAliases } : {}) };
     });
     trace.add({ line, stdout, memory: memory.snapshot(), frames: visible, heap: heapViews, pointers, event, message });
     steps++;

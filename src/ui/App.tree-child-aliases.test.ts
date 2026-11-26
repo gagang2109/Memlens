@@ -44,15 +44,16 @@ int main(void) {
   return 0;
 }`;
 
-it("draws an unchanged BST lab using its actual child field names and addresses", () => {
-  const result = run(code);
+it.each([["lchild", "rchild"], ["llink", "rlink"]])("draws a BST using %s/%s and the actual addresses", (left, right) => {
+  const source = code.replaceAll("lchild", left).replaceAll("rchild", right);
+  const result = run(source);
   expect(result.status, result.error?.reason).toBe("ok");
   expect(result.trace.steps.at(-1)?.stdout).toBe("2 4 6 ");
   expect(result.leaks).toHaveLength(0);
   const first = result.trace.steps.findIndex(step => step.frames.length === 1 && step.heap?.length === 1 &&
     renderModel(step).shape === "tree");
   const latest = result.trace.steps.findIndex(step => step.frames.length === 1 &&
-    step.pointers?.some(edge => edge.label === "lchild") && step.pointers.some(edge => edge.label === "rchild"));
+    step.pointers?.some(edge => edge.label === left) && step.pointers.some(edge => edge.label === right));
   expect(first).toBeGreaterThan(0);
   expect(latest).toBeGreaterThan(first);
   const nodes = renderModel(result.trace.steps[latest]).nodes;
@@ -62,7 +63,7 @@ it("draws an unchanged BST lab using its actual child field names and addresses"
 
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   localStorage.clear();
-  localStorage.setItem("memlens-code",code);
+  localStorage.setItem("memlens-code",source);
   const host = document.body.appendChild(document.createElement("div"));
   const root = createRoot(host);
   const seek = (index: number) => act(() => host.querySelectorAll<HTMLButtonElement>(".event-tick")[index].click());
@@ -72,12 +73,12 @@ it("draws an unchanged BST lab using its actual child field names and addresses"
     act(() => host.querySelector<HTMLButtonElement>(".run")!.click());
     seek(latest);
     expect(cards()).toHaveLength(3);
-    expect(cards()[0].textContent).toContain(`lchild → ${addresses[1]}`);
-    expect(cards()[0].textContent).toContain(`rchild → ${addresses[2]}`);
+    expect(cards()[0].textContent).toContain(`${left} → ${addresses[1]}`);
+    expect(cards()[0].textContent).toContain(`${right} → ${addresses[2]}`);
     seek(first);
     expect(cards()).toHaveLength(1);
-    expect(cards()[0].textContent).toContain("lchild → NULL");
-    expect(cards()[0].textContent).toContain("rchild → NULL");
+    expect(cards()[0].textContent).toContain(`${left} → NULL`);
+    expect(cards()[0].textContent).toContain(`${right} → NULL`);
     expect(cards()[0].textContent).toContain(addresses[0]);
   } finally { act(() => root.unmount()); host.remove(); localStorage.clear(); }
 });
@@ -87,11 +88,17 @@ it.each([
   ["struct Node { int *lchild,*rchild; };", "root->lchild=NULL; root->rchild=NULL;"],
   ["struct Node { int lthread,rthread; struct Node *lchild,*rchild; };",
     "root->lthread=1; root->rthread=1; root->lchild=NULL; root->rchild=root;"],
+  ["struct Node { int llink, rlink; };", "root->llink=4096; root->rlink=4128;"],
+  ["struct Node { int *llink,*rlink; };", "root->llink=NULL; root->rlink=NULL;"],
+  ["struct Node { int ltag,rtag; struct Node *llink,*rlink; };",
+    "root->ltag=1; root->rtag=1; root->llink=NULL; root->rlink=root;"],
+  ["struct Node { struct Node *llink,*rlink,*lchild,*rchild; };",
+    "root->llink=NULL; root->rlink=root; root->lchild=NULL; root->rchild=NULL;"],
 ])("does not guess structural edges for %s", (declaration, body) => {
   const result = run(`${declaration}
     int main(void) { struct Node *root=malloc(sizeof(struct Node)); ${body} }`);
   expect(result.status, result.error?.reason).toBe("ok");
   const model = renderModel(result.trace.steps.at(-1)!);
   expect(model.shape).not.toBe("tree");
-  expect(model.arrows.some(arrow => arrow.label === "lchild" || arrow.label === "rchild")).toBe(false);
+  expect(model.arrows.some(arrow => ["lchild", "rchild", "llink", "rlink"].includes(arrow.label))).toBe(false);
 });

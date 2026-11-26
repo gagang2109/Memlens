@@ -29,7 +29,9 @@ export type FixedStructFields = ReadonlyMap<string, number | null>;
 export function fixedStructBytes(fields: FixedStructFields) {
   return 4 * [...fields.values()].reduce<number>((sum, count) => sum + (count ?? 1), 0);
 }
-export type Program = { functions: Map<string, FunctionDef>; structs: Map<string, string[]>; structPointerFields: Map<string, ReadonlySet<string>>; fixedStructFields: Map<string, FixedStructFields>; aliasedTreeStructs: Set<string>; body: Stmt[]; constants: Map<string, number | string>; floatingConstants: Set<string> };
+const treeChildPairs = [["lchild", "rchild"], ["llink", "rlink"]] as const;
+export type TreeChildAliases = typeof treeChildPairs[number];
+export type Program = { functions: Map<string, FunctionDef>; structs: Map<string, string[]>; structPointerFields: Map<string, ReadonlySet<string>>; fixedStructFields: Map<string, FixedStructFields>; aliasedTreeStructs: Map<string, TreeChildAliases>; body: Stmt[]; constants: Map<string, number | string>; floatingConstants: Set<string> };
 
 const types = new Set(["int", "char", "long", "long", "short", "unsigned", "float", "double", "void", "struct", "const", "static"]);
 
@@ -85,7 +87,7 @@ export function parse(source: string): Program {
     start = end + 1;
   }
   const ts = lex(lines.join("\n")); let p = 0;
-  const structs = new Map<string, string[]>(); const aliasedTreeStructs = new Set<string>(); const structPointerFields = new Map<string, ReadonlySet<string>>(); const knownTypes = new Set(["int", "char", "long", "void"]); const aliasTypes = new Map<string, string>();
+  const structs = new Map<string, string[]>(); const aliasedTreeStructs = new Map<string, TreeChildAliases>(); const structPointerFields = new Map<string, ReadonlySet<string>>(); const knownTypes = new Set(["int", "char", "long", "void"]); const aliasTypes = new Map<string, string>();
   const fixedStructFields = new Map<string, FixedStructFields>();
   const functions = new Map<string, FunctionDef>(); const body: Stmt[] = [];
   const peek = (value?: string) => value === undefined ? ts[p] : (ts[p]?.kind === "symbol" || ts[p]?.kind === "id") && ts[p]?.value === value;
@@ -148,8 +150,9 @@ export function parse(source: string): Program {
       // A threaded tree can use the same pointer names for successors.
       // Leave known flag-marked layouts to a future thread-aware renderer.
       const threadMarker = fields.some(label => /^(?:[lr](?:tag|flag|bit|thread)|(?:left|right)(?:tag|flag|bit|thread)|threaded|isthreaded|thread)$/.test(label.toLowerCase().replace(/_/g, "")));
-      if (name && selfPointers.has("lchild") && selfPointers.has("rchild") && !threadMarker &&
-          !selfPointers.has("left") && !selfPointers.has("right")) aliasedTreeStructs.add(structType);
+      const childPairs = treeChildPairs.filter(pair => pair.every(label => selfPointers.has(label)));
+      if (name && childPairs.length === 1 && !threadMarker &&
+          !fields.includes("left") && !fields.includes("right")) aliasedTreeStructs.set(structType, childPairs[0]);
       else aliasedTreeStructs.delete(structType);
     }
     return `struct${name ? ` ${name}` : ""}`;

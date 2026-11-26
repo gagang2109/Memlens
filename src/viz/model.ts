@@ -1,4 +1,5 @@
 import type { TraceStep, PointerArrow } from "../vm/trace";
+import type { TreeChildAliases } from "../lang/parser";
 
 export type LayoutNode = {
   address: number;
@@ -12,7 +13,7 @@ export type LayoutNode = {
   fields?: string[];
   next: string;
   listLinks?: { next: string; prev: string };
-  aliasedTreeChildren?: true;
+  treeChildAliases?: TreeChildAliases;
   treeChildren?: Partial<Record<"left" | "right", number | null>>;
   type?: string;
   raw: boolean;
@@ -28,8 +29,8 @@ export const variableTagX = (nodeX: number, index: number) => nodeX + 27 + index
 const variableTagRight = (count: number) => count ? variableTagX(0, count - 1) + VARIABLE_TAG_WIDTH : 0;
 
 export function treeSide(label: string): "left" | "right" | undefined {
-  if (label === "left" || label === "lchild") return "left";
-  if (label === "right" || label === "rchild") return "right";
+  if (label === "left" || label === "lchild" || label === "llink") return "left";
+  if (label === "right" || label === "rchild" || label === "rlink") return "right";
 }
 
 const addressOf = (address: number) => `0x${address.toString(16)}`;
@@ -81,7 +82,7 @@ export function renderModel(step: TraceStep): RenderModel {
     const type = object?.type ?? allocation.type;
     const raw = !!type && /^(?:int|char|short|long|float|double|void)(?:\s|$)/.test(type);
     const nextPointer = pointers.find(pointer => pointer.from === `${addressOf(allocation.address)}.next`);
-    const scalarFields = object ? Object.entries(object.fields).filter(([field]) => !["next", "left", "right"].includes(field) && !(object.aliasedTreeChildren && (field === "lchild" || field === "rchild")) && (field !== "prev" || !object.doublyLinked)) : [];
+    const scalarFields = object ? Object.entries(object.fields).filter(([field]) => !["next", "left", "right"].includes(field) && !object.treeChildAliases?.some(label => label === field) && (field !== "prev" || !object.doublyLinked)) : [];
     const listField = (field: "next" | "prev") => {
       const value = object?.fields[field];
       const edge = heapEdges.find(pointer => pointer.from === `${addressOf(allocation.address)}.${field}`);
@@ -89,8 +90,8 @@ export function renderModel(step: TraceStep): RenderModel {
     };
     const left = childEdges.get(`${addressOf(allocation.address)}.left`);
     const right = childEdges.get(`${addressOf(allocation.address)}.right`);
-    const leftValue = object?.fields[object?.aliasedTreeChildren ? "lchild" : "left"];
-    const rightValue = object?.fields[object?.aliasedTreeChildren ? "rchild" : "right"];
+    const leftValue = object?.fields[object?.treeChildAliases?.[0] ?? "left"];
+    const rightValue = object?.fields[object?.treeChildAliases?.[1] ?? "right"];
     const readChild = (edge: number | undefined, value: string | undefined) => edge === 0 || value === "null" ? null : edge;
     const treeChildren = !raw && (left !== undefined || right !== undefined || childTargets.has(allocation.address) ||
       (readChild(left, leftValue) === null && readChild(right, rightValue) === null))
@@ -101,7 +102,7 @@ export function renderModel(step: TraceStep): RenderModel {
       value: scalarFields.length === 1 ? scalarFields[0][1] : scalarFields.length ? scalarFields.map(([field, value]) => `${field}: ${value}`).join(" | ") : "—",
       fields: scalarFields.map(([field, value]) => `${field}: ${value}`),
       next: nextPointer ? addressOf(nextPointer.to) : "NULL", type, raw, size: allocation.size,
-      treeChildren, ...(object?.aliasedTreeChildren ? {aliasedTreeChildren:true as const} : {}),
+      treeChildren, ...(object?.treeChildAliases ? {treeChildAliases:object.treeChildAliases} : {}),
       ...(object?.doublyLinked ? {listLinks:{next:listField("next"),prev:listField("prev")}} : {}),
       elementType: type && /^(int|char|short|long|float|double)$/.test(type) ? type : undefined,
     };
