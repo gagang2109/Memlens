@@ -4,6 +4,7 @@ import { GraphDiagram } from "./GraphDiagram";
 import { graphSize } from "../viz/graph";
 import { IndexedArray } from "./IndexedArray";
 import { readStructStack, StructStackDiagram } from "./StructStackDiagram";
+import { readCircularQueue, StructCircularQueueDiagram } from "./StructCircularQueueDiagram";
 import { canShowLinearQueue, readLinearQueue, StructQueueDiagram } from "./StructQueueDiagram";
 import { describeChange, frameKey, stepChanges, type VariableChange } from "./stepChanges";
 import { useVisualizerFullscreen } from "./visualizerFullscreen";
@@ -197,7 +198,7 @@ export function App() {
   const [runGeneration, setRunGeneration] = useState(0);
   const [selectedGraph, setSelectedGraph] = useState<{ generation: number; base: number; name: string }>();
   const [selectedStack, setSelectedStack] = useState<{ generation: number; base: number; name: string; invocation?: number }>();
-  const [selectedQueue, setSelectedQueue] = useState<{ generation: number; base: number; name: string; invocation?: number }>();
+  const [selectedQueue, setSelectedQueue] = useState<{ generation: number; base: number; name: string; invocation?: number; mode: "linear" | "circular" }>();
   const session = useRef<InteractiveRun>();
   const [inputMode, setInputMode] = useState<"ahead" | "interactive">("ahead");
   const [waiting, setWaiting] = useState(false);
@@ -240,7 +241,9 @@ export function App() {
   const customQueue = selectedQueue?.generation === runGeneration ? selectedQueue : undefined;
   const queueFrame = customQueue && view?.frames.find(frame => frame.invocation === customQueue.invocation &&
     frame.variables?.[customQueue.name]?.array?.base === customQueue.base);
-  const queue = customQueue && queueFrame?.variables ? readLinearQueue(queueFrame.variables, customQueue.name) : undefined;
+  const queueVariables = queueFrame?.variables;
+  const linearQueue = customQueue?.mode === "linear" && queueVariables ? readLinearQueue(queueVariables, customQueue.name) : undefined;
+  const circularQueue = customQueue?.mode === "circular" && queueVariables ? readCircularQueue(queueVariables, customQueue.name) : undefined;
   // Include newly allocated and freed blocks: a pointer can target either.
   // Derive choices from both snapshots, never from the correct answer itself.
   const predictionNodes = prediction && trace ? [...new Map([
@@ -444,7 +447,8 @@ export function App() {
             <h3>{arrayStackStep || showGraph || customQueue || customStack ? "DATA STRUCTURE" : "HEAP STRUCTURE"} <small>{showGraph ? "graph" : customQueue ? "queue" : arrayStackStep || customStack ? "stack" : model?.shape ?? "ready"}</small></h3>
             {arrayStackStep && <ArrayStackDiagram stack={readArrayStack(arrayStackStep)} />}
             {customStack && <StructStackDiagram name={customStack.name} stack={structStack} onClose={() => setSelectedStack(undefined)} />}
-            {customQueue && <StructQueueDiagram name={customQueue.name} queue={queue} onClose={() => setSelectedQueue(undefined)} />}
+            {customQueue?.mode === "linear" && <StructQueueDiagram name={customQueue.name} queue={linearQueue} onClose={() => setSelectedQueue(undefined)} />}
+            {customQueue?.mode === "circular" && <StructCircularQueueDiagram name={customQueue.name} queue={circularQueue} onClose={() => setSelectedQueue(undefined)} />}
             {showGraph && view && <GraphDiagram
               key={`${runGeneration}:${customGraph?.base ?? "lab"}`}
               name={customGraph?.name ?? "g"} array={matrix} step={view}
@@ -469,11 +473,17 @@ export function App() {
                   {candidate && <button type="button" className="graph-trigger" aria-pressed={customGraph?.base === candidate.base}
                     onClick={() => { setSelectedQueue(undefined); setSelectedStack(undefined); setSelectedGraph({generation:runGeneration, base:candidate.base, name:key}); }}>View {key} as graph</button>}
                   {variable.array && frame.variables && canShowLinearQueue(frame.variables, key) &&
-                    <button type="button" className="graph-trigger" aria-pressed={customQueue?.base === variable.array.base} onClick={() => {
+                    <button type="button" className="graph-trigger" aria-pressed={customQueue?.mode === "linear" && customQueue.base === variable.array.base} onClick={() => {
                       setSelectedGraph(undefined);
                       setSelectedStack(undefined);
-                      setSelectedQueue({ generation:runGeneration, base:variable.array!.base, name:key, invocation:frame.invocation });
+                      setSelectedQueue({ generation:runGeneration, base:variable.array!.base, name:key, invocation:frame.invocation, mode:"linear" });
                     }}>View {key} as linear queue</button>}
+                  {variable.array && frame.variables && readCircularQueue(frame.variables, key) &&
+                    <button type="button" className="graph-trigger" aria-pressed={customQueue?.mode === "circular" && customQueue.base === variable.array.base} onClick={() => {
+                      setSelectedGraph(undefined);
+                      setSelectedStack(undefined);
+                      setSelectedQueue({ generation:runGeneration, base:variable.array!.base, name:key, invocation:frame.invocation, mode:"circular" });
+                    }}>View {key} as circular queue</button>}
                   {variable.array && frame.variables && readStructStack(frame.variables, key) &&
                     <button type="button" className="graph-trigger" aria-pressed={customStack?.base === variable.array.base} onClick={() => {
                       setSelectedGraph(undefined);

@@ -383,3 +383,16 @@ footer{padding:16px 24px;font-size:10px}
 .struct-stack-cells li { display: grid; grid-template-columns: 2.5rem minmax(0, 1fr) 4rem; align-items: center; min-height: 2rem; padding: .15rem .4rem; }
 .struct-stack-cells code { display: grid; place-items: center; border: 1px solid currentColor; min-height: 2rem; }
 .struct-stack-cells b { margin-inline-start: .4rem; white-space: nowrap; }
+
+.circular-occupied { outline: 1px solid currentColor; outline-offset: -3px; }
+.circular-fifo { display: flex; gap: .35rem; flex-wrap: wrap; list-style: none; padding: 0; margin: 0; }
+.circular-fifo li { border: 1px solid currentColor; border-radius: .35rem; padding: .25rem .4rem; }
+.circular-fifo small { margin-inline-start: .2rem; }
+.circular-buffer-frame { container-type: inline-size; min-width: 0; }
+@container (min-width: 19rem) {
+  .circular-orbit { display: block; position: relative; width: 19rem; height: 18rem; margin-inline: auto; }
+  .circular-orbit::before { content: ""; position: absolute; inset: 14%; border: 1px dashed currentColor; border-radius: 50%; opacity: .45; }
+  .circular-orbit::after { content: "↻" / ""; position: absolute; inset: 50% auto auto 50%; transform: translate(-50%, -50%); font-size: 1.75rem; }
+  .circular-orbit .struct-queue-cell { position: absolute; z-index: 1; left: var(--ring-x); top: var(--ring-y); transform: translate(-50%, -50%); min-width: 4.8rem; padding-inline: .25rem; background: var(--panel, Canvas); }
+  .circular-orbit .struct-queue-cell b { overflow: hidden; text-overflow: ellipsis; max-width: 6rem; padding-inline: .1rem; }
+}
