@@ -1,10 +1,10 @@
 import { expect, it } from "vitest";
 import { run } from "../../src/vm/interpreter";
-for (const index of ['[0][2]', '[1][-1]', '[-1][2]', '[2][-1]']) {
+for (const [index, axis] of [['[0][2]', 'column'], ['[1][-1]', 'column'], ['[-1][2]', 'row'], ['[2][-1]', 'row']]) {
  it(`rejects invalid matrix subscript ${index} even if flattened offset fits`, () => {
   const result=run(`int main(){int a[2][2]={{1,2},{3,4}};printf("%d",a${index});}`);
   expect(result.status).toBe('error');
-  expect(result.error?.reason).toContain('array index out of bounds');
+  expect(result.error?.reason).toContain(`matrix ${axis} index out of bounds`);
  });
 }
 it('preserves valid matrix traversal', () => {
@@ -15,7 +15,7 @@ it('preserves valid matrix traversal', () => {
 it('rejects cross-row writes before mutating another element', () => {
  const result=run(`int main(){int a[2][2]={{1,2},{3,4}};a[0][2]=99;}`);
  expect(result.status).toBe('error');
- expect(result.error?.reason).toContain('array index out of bounds');
+ expect(result.error?.reason).toContain('matrix column index out of bounds');
  expect(result.trace.steps.at(-1)?.frames[0].locals.a).toBe('[1, 2, 3, 4]');
 });
 it('evaluates each valid subscript only once', () => {
@@ -31,5 +31,5 @@ it('allows one-past-row address formation without reading the element', () => {
 it('rejects address formation beyond one-past a row', () => {
  const result=run(`int main(){int a[2][2]={{1,2},{3,4}};int *p=&a[0][3];}`);
  expect(result.status).toBe('error');
- expect(result.error?.reason).toContain('array index out of bounds');
+ expect(result.error?.reason).toBe('matrix column index out of bounds (3); valid column indexes for address-of: 0 through 2');
 });

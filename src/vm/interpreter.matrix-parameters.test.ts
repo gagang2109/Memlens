@@ -17,11 +17,12 @@ int main(void) {
   expect(result.trace.steps.at(-1)?.stdout).toBe("2 1 10 6");
 });
 
-it.each([["2", "0"], ["-1", "0"], ["0", "3"], ["1", "-1"]])(
-  "checks row and column boundaries separately in a matrix parameter: %s %s", (row, col) => {
+it.each([["2", "0", "row", "2", 1], ["-1", "0", "row", "-1", 1], ["0", "3", "column", "3", 2], ["1", "-1", "column", "-1", 2]])(
+  "checks row and column boundaries separately in a matrix parameter: %s %s", (row, col, axis, index, last) => {
     const result = run(`void read(int a[][3]) { printf("%d",a[${row}][${col}]); }
       int main(void) { int a[2][3]; read(a); }`);
-    expect(result.error?.reason).toContain("array index out of bounds");
+    expect(result.status).toBe("error");
+    expect(result.error?.reason).toBe(`matrix ${axis} index out of bounds (${index}); valid ${axis} indexes: 0 through ${last}`);
   }
 );
 

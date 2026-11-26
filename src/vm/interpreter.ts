@@ -144,8 +144,10 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
           const outer = asNum(evaluate(expression.object.index)); const width = matrix.dimensions[1] ?? 1; const flat = outer * width + index;
           // Validate both dimensions before flattening. Address formation
           // alone may point one past the row; no read/write.
-          if (!Number.isInteger(outer) || outer < 0 || outer >= matrix.dimensions[0]) runtimeError(`array index out of bounds (${outer})`, expression.line);
-          if (!Number.isInteger(index) || index < 0 || index > width || (!addressOnly && (index === width || flat >= matrix.values.length))) runtimeError(`array index out of bounds (${index})`, expression.line);
+          if (!Number.isInteger(outer) || outer < 0 || outer >= matrix.dimensions[0])
+            runtimeError(`matrix row index out of bounds (${outer}); valid row indexes: 0 through ${matrix.dimensions[0] - 1}`, expression.line);
+          if (!Number.isInteger(index) || index < 0 || index > width || (!addressOnly && (index === width || flat >= matrix.values.length)))
+            runtimeError(`matrix column index out of bounds (${index}); valid column indexes${addressOnly ? " for address-of" : ""}: 0 through ${addressOnly ? width : width - 1}`, expression.line);
           return { get: () => matrix.values[flat], set: value => { matrix.values[flat] = value; }, address: (base as number) + flat * (outerVariable.elementSize ?? 4) };
         }
       }
