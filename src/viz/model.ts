@@ -201,10 +201,15 @@ export function renderModel(step: TraceStep): RenderModel {
       }
     }
     const childOf = (node: LayoutNode, side: "left" | "right") => branches.get(`${node.label}.${side}`);
+    const structuralRoots = nodes.filter(node => !children.has(node.address) && (childOf(node, "left") || childOf(node, "right")));
     const isolatedRoots = singletonRoots.filter(node => !children.has(node.address));
-    const root = nodes.find(node => !children.has(node.address) && (childOf(node, "left") || childOf(node, "right"))) ??
+    const eligibleRoots = new Set([...structuralRoots, ...isolatedRoots]);
+    // Keep allocation order across trace steps, including a root that just
+    // gained or lost its last child, to avoid swapping the trees mid-comparison.
+    const liveRoots = nodes.filter(node => eligibleRoots.has(node) && !node.freed && reachable.has(node.address));
+    const root = liveRoots[0] ?? structuralRoots[0] ??
       isolatedRoots.find(node => roots.some(pointer => pointer.to === node.address && pointer.label === "root")) ??
-      isolatedRoots.find(node => reachable.has(node.address)) ?? isolatedRoots[0];
+      isolatedRoots[0];
 
     type Subtree = {
       node: LayoutNode;
@@ -229,18 +234,26 @@ export function renderModel(step: TraceStep): RenderModel {
       const width = Math.max(rootX + 2 * halfGap, left?.width ?? 0, right ? rightOffset + right.width : 0);
       return { node, rootX, width, left, right, rightOffset };
     };
+    let componentRight = 20;
     const place = (subtree: Subtree, offset: number, depth: number) => {
       subtree.node.x = offset + subtree.rootX;
       // Leave room for child alias tags above each card.
       subtree.node.y = 60 + depth * 140;
+      const tagCount = variableTagCounts.get(subtree.node.address) ?? 0;
+      const occupied = Math.max(126, tagCount ? 27 + (tagCount - 1) * 76 + 72 : 0);
+      componentRight = Math.max(componentRight, subtree.node.x + occupied);
       if (subtree.left) place(subtree.left, offset, depth + 1);
       if (subtree.right) place(subtree.right, offset + subtree.rightOffset, depth + 1);
     };
-    const layout = measure(root);
-    if (layout) place(layout, 20, 0);
-    // Rootless cycles and disconnected blocks are not part of the selected
-    // tree. Keep them inspectable in a separate row instead of stacking them
-    // at the default coordinates; preserve all real pointer arrows.
+    let offset = 20;
+    for (const candidate of liveRoots.length ? liveRoots : root ? [root] : []) {
+      const layout = measure(candidate);
+      if (!layout) continue;
+      place(layout, offset, 0);
+      offset = componentRight + 36;
+    }
+    // Rootless cycles and unrelated allocations stay inspectable in their own
+    // row. Multiple aliases or shared child pointers still share a single card.
     const unplaced = nodes.filter(node => !placed.has(node.address));
     const placedNodes = nodes.filter(node => placed.has(node.address));
     const extraY = placedNodes.length ? Math.max(...placedNodes.map(node => node.y)) + 140 : 60;

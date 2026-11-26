@@ -64,3 +64,41 @@ it.each(['left','right'])('places a lone %s child on the correct side', label =>
  expect(child.y).toBeGreaterThan(root.y);
  expect(Math.sign(child.x-root.x)).toBe(label==='left'?-1:1);
 });
+
+it('lays out separate live trees side by side, including room for their aliases', () => {
+ const addresses = [4096, 4128, 4160, 4192, 4224];
+ const roots = Array.from({length:5},(_,i)=>({from:`main.a${i}`,to:addresses[0],label:`a${i}`,dangling:false}));
+ const pointers = [...roots,
+  {from:'main.b',to:addresses[2],label:'b',dangling:false},
+  {from:'0x1000.left',to:addresses[1],label:'left',dangling:false},
+  {from:'0x1040.right',to:addresses[3],label:'right',dangling:false},
+ ];
+ const model = renderModel({index:0,line:1,stdout:'',frames:[],pointers,
+  memory:{bytes:[],shadows:[],allocations:addresses.map(address=>({address,size:16,line:1,allocStep:0}))}});
+ const [a,left,b,right,extra] = model.nodes;
+ expect(a.y).toBe(b.y);
+ expect(left.y).toBe(a.y+140);
+ expect(right.y).toBe(b.y+140);
+ expect(left.x).toBeLessThan(a.x);
+ expect(b.x).toBeLessThan(right.x);
+ expect(b.x).toBeGreaterThan(a.x+27+4*76+72);
+ expect(extra.y).toBeGreaterThan(right.y);
+ expect(model.canvasWidth).toBeGreaterThanOrEqual(right.x+126);
+ expect(model.arrows).toEqual(pointers);
+});
+
+it('keeps a shared child card unique when two different roots point to it', () => {
+ const [a,b,c] = [4096, 4128, 4160];
+ const pointers = [
+  {from:'main.a',to:a,label:'a',dangling:false},
+  {from:'main.b',to:b,label:'b',dangling:false},
+  {from:'0x1000.left',to:c,label:'left',dangling:false},
+  {from:'0x1020.right',to:c,label:'right',dangling:false},
+ ];
+ const model = renderModel({index:0,line:1,stdout:'',frames:[],pointers,
+  memory:{bytes:[],shadows:[],allocations:[a,b,c].map(address=>({address,size:16,line:1,allocStep:0}))}});
+ expect(model.nodes.filter(node=>node.address===c)).toHaveLength(1);
+ expect(model.nodes[0].y).toBe(model.nodes[1].y);
+ expect(model.nodes[2].y).toBeGreaterThan(model.nodes[0].y);
+ expect(model.arrows.filter(arrow=>arrow.to===c)).toHaveLength(2);
+});
