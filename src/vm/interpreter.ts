@@ -43,6 +43,8 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
   const fixedObjects = new Map<number, FixedLocalStruct>();
   const fixedArrays = new Map<number, FixedMember>();
   const fixedAddressStart = 0x100000;
+  const fixedStorageBytes = 262144;
+  const inFixedStorage = (address: number) => address >= fixedAddressStart && address < fixedAddressStart + fixedStorageBytes;
   let nextFixedAddress = fixedAddressStart;
   let nextInvocation = 1;
   let previousArrays = new Map<number, ArraySnapshot>();
@@ -282,8 +284,37 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
     }
     throw new Error(`line ${expression.line}: expression is not assignable (${expression.kind})`);
   };
-  const readString = (value: Value, line: number) => {
+  const readString = (value: Value, line: number, precision?: number) => {
     if (typeof value === "string") return value.split("\0", 1)[0];
+    if (typeof value === "number" && inFixedStorage(value)) {
+      let member = fixedArrays.get(value);
+      if (!member) {
+        // The member map follows ascending address order. Only character
+        // arrays can contain an interior address passed as a string.
+        for (const candidate of fixedArrays.values()) {
+          if (candidate.address >= value) break;
+          if (candidate.type === "char" && value - candidate.address < candidate.values!.length) {
+            member = candidate;
+            break;
+          }
+        }
+      }
+      if (!member || member.type !== "char" || !Number.isSafeInteger(value))
+        return runtimeError("string address is not inside a struct character array", line);
+      checkMemberLifetime(member, line);
+      const chars = member.values!;
+      const offset = value - member.address;
+      const end = Math.min(chars.length, offset + (precision ?? Infinity));
+      let text = "";
+      for (let index = offset; index < end; index++) {
+        const cell = chars[index];
+        if (cell === null) runtimeError(`uninitialized read of '${member.name}[${index}]' in string`, line);
+        if (cell === "\0" || cell === 0) return text;
+        text += typeof cell === "number" ? String.fromCharCode(cell & 255) : cell;
+      }
+      if (precision !== undefined && end - offset === precision) return text;
+      return runtimeError(`unterminated string in struct member '${member.name}'`, line);
+    }
     const variable = [...frames].reverse().flatMap(frame => [...frame.vars.values()]).find(candidate => candidate.arrayBase === value);
     if (variable?.array) return variable.array.map(item => typeof item === "number" ? String.fromCharCode(item & 255) : String(item ?? "\0")).join("").split("\0", 1)[0];
     // Interior pointers into live local char buffers refer to their suffix, not
@@ -439,7 +470,13 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       }
       if (expression.name === "free") { const address = asNum(evaluate(args[0])); memory.free(address, steps, expression.line); record(expression.line, address === 0 ? "step" : "free"); return null; }
       if (expression.name === "strlen") return readString(evaluate(args[0]), expression.line).length;
-      if (expression.name === "strcpy" || expression.name === "strcat") { const destination = asNum(evaluate(args[0])); const source = readString(evaluate(args[1]), expression.line); const existing = expression.name === "strcat" ? readString(destination, expression.line) : ""; const result = existing + source;
+      if (expression.name === "strcpy" || expression.name === "strcat") {
+        const destination = asNum(evaluate(args[0]));
+        if (inFixedStorage(destination))
+          runtimeError(expression.name + " cannot write to fixed struct members yet", expression.line);
+        const source = readString(evaluate(args[1]), expression.line);
+        const existing = expression.name === "strcat" ? readString(destination, expression.line) : "";
+        const result = existing + source;
         // Interior char pointers must update the live local buffer, including
         // its terminator, rather than an unrelated heap-cell entry.
         if (!memory.allocationAt(destination)) {
@@ -642,7 +679,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
               runtimeError("printf width or precision exceeds simulator limit (10000)", expression.line);
             let text: string; let sign = "";
             if (specifier === "s") {
-              text = readString(value, expression.line).split("\0", 1)[0]; if (precision !== undefined) text = text.slice(0, precision);
+              text = readString(value, expression.line, precision).split("\0", 1)[0]; if (precision !== undefined) text = text.slice(0, precision);
             } else if (specifier === "c") {
               text = String.fromCharCode(asNum(value) & 255);
               characterByteAdjustment += 1 - new TextEncoder().encode(text).length;
@@ -782,7 +819,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
           runtimeError("arrays of these structs and whole-struct initializers are not yet supported", statement.line);
         const layout = fixedStructLayout(fixed);
         const bytes = 4 + Math.ceil(layout.bytes / 4) * 4;
-        if (nextFixedAddress + bytes - fixedAddressStart > 262144)
+        if (nextFixedAddress + bytes - fixedAddressStart > fixedStorageBytes)
           runtimeError("fixed struct storage exceeds simulator limit (262144 bytes)", statement.line);
         const invocation = frames.at(-1)!.invocation;
         const address = nextFixedAddress;
