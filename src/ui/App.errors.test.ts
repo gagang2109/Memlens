@@ -150,3 +150,31 @@ it("maps a parse failure to the test setup rather than the source line with the 
   expect(container.querySelector(".step-explanation")?.textContent).toContain("test setup line 2: Memlens could not read");
   expect(container.querySelector(".crime")?.textContent).not.toContain("source line 2");
 });
+
+it("uses one visible free-step number in the fault, timeline, node and Quick Look", () => {
+  const source = `int main(void) {
+    int *p = malloc(sizeof(int));
+    *p = 7;
+    free(p);
+    printf("%d", *p);
+  }`;
+  localStorage.setItem("memlens-code", source);
+  act(() => root.render(createElement(App)));
+  clickRun();
+  act(() => container.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true })));
+  const tick = container.querySelector<HTMLButtonElement>(".tick-free")!;
+  const index = Array.from(container.querySelectorAll(".event-tick")).indexOf(tick);
+  expect(index).toBeGreaterThan(0);
+  const number = index + 1;
+  expect(tick.getAttribute("aria-label")).toBe(`free tick ${number}`);
+  const jump = [...container.querySelectorAll<HTMLButtonElement>(".crime button")].find(button => button.textContent?.startsWith("free step"))!;
+  expect(jump.textContent).toBe(`free step ${number}`);
+  act(() => jump.click());
+  expect(container.querySelector<HTMLInputElement>('input[aria-label="Timeline"]')!.value).toBe(String(index));
+  expect(container.querySelector(".timeline .panel-title small")?.textContent).toMatch(new RegExp(`^step ${number} of `));
+  expect(container.querySelector(".freed-node .node-address title")?.textContent).toContain(`freed at step ${number}`);
+  expect(container.querySelector(".freed-node .node-address")?.textContent).toContain(`freed #${number}`);
+  const inspect = container.querySelector<HTMLButtonElement>('button[aria-label="Quick Look pointer p"]')!;
+  act(() => inspect.click());
+  expect(container.querySelector('[aria-label="Quick Look: p"]')?.textContent).toContain(`Freed at step ${number}; not readable.`);
+});

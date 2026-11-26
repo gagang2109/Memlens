@@ -1,3 +1,4 @@
+import { stepNumber } from "./traceLabels";
 import { useEffect, useRef } from "react";
 import type { FrameVariable, TraceStep } from "../vm/trace";
 
@@ -11,7 +12,7 @@ export function getPointerDetails(variable: FrameVariable, step: TraceStep) {
   if (!block) return { value: hex(address), target: "No recorded heap block", note: "The trace does not record a heap target for this address." };
   const offset = address - block.address;
   const target = `${hex(block.address)} · ${block.size} bytes${offset ? ` · offset +${offset}` : ""}`;
-  if (block.freeStep !== undefined) return { value: hex(address), target, note: `Freed at step ${block.freeStep}; not readable.` };
+  if (block.freeStep !== undefined) return { value: hex(address), target, note: `Freed at step ${stepNumber(block.freeStep)}; not readable.` };
   const fields = !offset ? Object.entries(step.heap?.find(object => object.address === address)?.fields ?? {}) : [];
   const shadow = step.memory.shadows[address];
   const byte = shadow === "initialized" ? hex(step.memory.bytes[address]) : undefined;
