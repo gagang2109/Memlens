@@ -78,3 +78,32 @@ struct Q { int items[CAP]; }; int main(void) { return 0; }`);
   expect(make("0").error?.reason).toContain("positive integer");
   expect(make("65536").error?.reason).toContain("exceeds simulator limit");
 });
+
+it("links adjacent byte-sized char cells and preserves padded int field offsets", () => {
+  const result = run(`struct Brackets { char entries[3]; int top; char spare[1]; };
+  void put(char *entries) { entries[0]='('; entries[1]='['; }
+  int main(void) {
+    struct Brackets s; s.top=1;
+    put(s.entries);
+    char *p=&s.entries[1]; *p=')';
+    printf("%zu %zu %zu %d %c", sizeof s, sizeof s.entries, sizeof(s.entries[s.top++]), s.top, s.entries[1]);
+    return 0;
+  }`);
+  expect(result.status, result.error?.reason).toBe("ok");
+  expect(result.trace.steps.at(-1)?.stdout).toBe("12 3 1 1 )");
+  const v = result.trace.steps.at(-1)?.frames[0].variables;
+  expect(v?.["s.entries"].type).toBe("char[3]");
+  expect(v?.["s.entries"].array?.cells).toEqual(["(", ")", null]);
+  expect(v?.["s.top"].storage! - v?.["s.entries"].storage!).toBe(4);
+  expect(v?.["s.spare"].storage! - v?.["s.entries"].storage!).toBe(8);
+});
+
+it.each([
+  ["s.entries[3]='x';", /out of bounds/],
+  ["char c=s.entries[0];", /uninitialized read/],
+])("keeps character members bounded and tracks unwritten cells: %s", (use, reason) => {
+  const result = run(`struct S { char entries[3]; int top; };
+  int main(void) { struct S s; ${use} return 0; }`);
+  expect(result.status).toBe("error");
+  expect(result.error?.reason).toMatch(reason);
+});

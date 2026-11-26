@@ -25,10 +25,21 @@ export type Stmt =
   | { kind: "return"; value?: Expr; line: number };
 export type FunctionDef = { name: string; returnType: string; returnsPointer: boolean; params: { name?: string; pointer: boolean; pointerDepth?: number; array?: boolean; matrixColumns?: Expr; type: string }[]; body: Stmt; line: number };
 // A null length denotes an ordinary signed-int field.
-export type FixedStructFields = ReadonlyMap<string, number | null>;
-export function fixedStructBytes(fields: FixedStructFields) {
-  return 4 * [...fields.values()].reduce<number>((sum, count) => sum + (count ?? 1), 0);
+export type FixedStructField = { type: "int" | "char"; length: number | null };
+export type FixedStructFields = ReadonlyMap<string, FixedStructField>;
+export function fixedStructLayout(fields: FixedStructFields) {
+  let bytes = 0;
+  let alignment = 1;
+  const members = [...fields].map(([name, field]) => {
+    const stride = field.type === "char" ? 1 : 4;
+    alignment = Math.max(alignment, stride);
+    const offset = Math.ceil(bytes / stride) * stride;
+    bytes = offset + (field.length ?? 1) * stride;
+    return { ...field, name, offset, stride };
+  });
+  return { members, bytes: Math.ceil(bytes / alignment) * alignment };
 }
+export const fixedStructBytes = (fields: FixedStructFields) => fixedStructLayout(fields).bytes;
 const treeChildPairs = [["lchild", "rchild"], ["llink", "rlink"]] as const;
 export type TreeChildAliases = typeof treeChildPairs[number];
 export type Program = { functions: Map<string, FunctionDef>; structs: Map<string, string[]>; structPointerFields: Map<string, ReadonlySet<string>>; fixedStructFields: Map<string, FixedStructFields>; aliasedTreeStructs: Map<string, TreeChildAliases>; body: Stmt[]; constants: Map<string, number | string>; floatingConstants: Set<string> };
@@ -109,7 +120,7 @@ export function parse(source: string): Program {
       if (!anonymous) take("{"); const fields: string[] = [];
       const pointerFields = new Set<string>();
       const selfPointers = new Set<string>();
-      const fixedFields = new Map<string, number | null>();
+      const fixedFields = new Map<string, FixedStructField>();
       let hasFixedArray = false;
       const structType = `struct${name ? ` ${name}` : ""}`;
       const field = (base: string, self: boolean) => {
@@ -119,7 +130,7 @@ export function parse(source: string): Program {
         fields.push(label);
         if (peek("[")) {
           const bracket = take("[");
-          if (!name || base !== "int" || depth) throw new Error(`line ${bracket.line}: only fixed int arrays in named structs are supported`);
+          if (!name || (base !== "int" && base !== "char") || depth) throw new Error(`line ${bracket.line}: only fixed int or char arrays in named structs are supported`);
           const bound = take();
           const length = bound.kind === "number" && !/[.]/.test(bound.value)
             ? parseNumberLiteral(bound.value, bound.line)
@@ -128,9 +139,9 @@ export function parse(source: string): Program {
             throw new Error(`line ${bound.line}: struct array member needs a positive integer literal or constant`);
           take("]");
           if (peek("[")) throw new Error(`line ${bracket.line}: multidimensional struct array members are not supported`);
-          fixedFields.set(label, length);
+          fixedFields.set(label, { type: base, length });
           hasFixedArray = true;
-        } else if (base === "int" && !depth) fixedFields.set(label, null);
+        } else if (base === "int" && !depth) fixedFields.set(label, { type: "int", length: null });
         if (depth) pointerFields.add(label);
         if (self && depth === 1) selfPointers.add(label);
       };
@@ -143,7 +154,7 @@ export function parse(source: string): Program {
       }
       take("}"); structs.set(name, fields); structPointerFields.set(structType, pointerFields);
       if (hasFixedArray) {
-        if (fixedFields.size !== fields.length) throw new Error(`line ${nameToken.line}: a struct with a fixed array currently needs distinct signed int fields`);
+        if (fixedFields.size !== fields.length) throw new Error(`line ${nameToken.line}: a struct with a fixed array currently needs distinct signed int fields or fixed char arrays`);
         if (fixedStructBytes(fixedFields) > 65536) throw new Error(`line ${nameToken.line}: struct exceeds simulator limit (65536 bytes)`);
         fixedStructFields.set(structType, fixedFields);
       }

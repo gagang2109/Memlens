@@ -1,4 +1,4 @@
-import { fixedStructBytes, parse, type Expr, type FunctionDef, type Program, type Stmt } from "../lang/parser";
+import { fixedStructBytes, fixedStructLayout, parse, type Expr, type FunctionDef, type Program, type Stmt } from "../lang/parser";
 import { Memory, MemoryFault, type Allocation } from "./memory";
 import { Trace, type ArraySnapshot, type FrameVariable, type FrameView } from "./trace";
 import { localArraySizeof, isFixedArrayBound } from "./fixedArraySizeof";
@@ -9,7 +9,7 @@ type LocalArray = { values: Value[]; type: string; dimensions: number[];
 type RuntimeVariable = { value: Value; type: string; pointer: boolean; pointerDepth?: number; array?: Value[]; dimensions?: number[]; fixedArrayBounds?: boolean; matrixColumnCount?: number; elementSize?: number; arrayBase?: number; address?: number };
 type Ref = { get: () => Value; set: (value: Value) => void; address?: number; allocation?: Allocation };
 type HeapObject = { address: number; fields: Map<string, Value>; type?: string };
-type FixedMember = { name: string; address: number; invocation: number; values?: Value[]; scalar: Value };
+type FixedMember = { name: string; type: "char" | "int"; stride: number; address: number; invocation: number; values?: Value[]; scalar: Value };
 type FixedLocalStruct = { address: number; invocation: number; members: Map<string, FixedMember> };
 type FlowSignal = "break" | "continue";
 
@@ -72,7 +72,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
           for (const member of fixed.members.values()) {
             const snapshot = member.values ? captureArray(member.address, [member.values.length], member.values) : undefined;
             fields.push([`${key}.${member.name}`, {
-              type: snapshot ? `int[${snapshot.cells.length}]` : "int",
+              type: snapshot ? `${member.type}[${snapshot.cells.length}]` : member.type,
               value: snapshot ? `${snapshot.cells.length} cells` : member.scalar === null ? "uninitialized" : String(member.scalar),
               storage: member.address, pointer: false, ...(snapshot ? {array: snapshot} : {}),
             }]);
@@ -122,7 +122,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
     if (!Number.isInteger(index) || index < 0 || index >= values.length)
       runtimeError(`array member '${member.name}' index out of bounds (${index}); valid indexes: 0 through ${values.length - 1}`, line);
     const result: Ref = {
-      address: member.address + 4 * index,
+      address: member.address + member.stride * index,
       get: () => {
         checkMemberLifetime(member, line);
         const value = values[index];
@@ -131,7 +131,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       },
       set: value => {
         checkMemberLifetime(member, line);
-        values[index] = asNum(value) | 0;
+        values[index] = member.type === "char" ? String.fromCharCode(asNum(value) & 255) : asNum(value) | 0;
       },
     };
     if (addressOnly) locations.set(result.address!, result);
@@ -382,10 +382,11 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
           const owner = pointerMeta(sized.object);
           const fields = owner && program.fixedStructFields.get(owner.type);
           if (fields) {
-            const length = fields.get(sized.name);
-            if (length === undefined || argument?.kind === "index" && length === null)
-              runtimeError("invalid struct field in sizeof", expression.line);
-            return argument?.kind === "index" ? 4 : 4 * (length ?? 1);
+            const member = fields.get(sized.name);
+            if (!member || argument?.kind === "index" && member.length === null)
+              return runtimeError("invalid struct field in sizeof", expression.line);
+            const stride = member.type === "char" ? 1 : 4;
+            return argument?.kind === "index" ? stride : stride * (member.length ?? 1);
           }
         }
         if (argument?.kind === "name" || argument?.kind === "unary" && argument.op === "*") {
@@ -754,20 +755,20 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
           runtimeError("fixed array structs currently need a non-static, non-const declaration directly in a function body", statement.line);
         if (statement.arrayLength || statement.init || statement.arrayInitializer)
           runtimeError("arrays of these structs and whole-struct initializers are not yet supported", statement.line);
-        const bytes = 4 + fixedStructBytes(fixed);
+        const layout = fixedStructLayout(fixed);
+        const bytes = 4 + Math.ceil(layout.bytes / 4) * 4;
         if (nextFixedAddress + bytes - fixedAddressStart > 262144)
           runtimeError("fixed struct storage exceeds simulator limit (262144 bytes)", statement.line);
         const invocation = frames.at(-1)!.invocation;
         const address = nextFixedAddress;
         const members = new Map<string, FixedMember>();
-        for (const [name, size] of fixed) {
-          const member: FixedMember = { name, address: nextFixedAddress, invocation, scalar: null,
-            ...(size === null ? {} : { values: Array<Value>(size).fill(null) }) };
+        for (const { name, type, length, offset, stride } of layout.members) {
+          const member: FixedMember = { name, type, stride, address: address + offset, invocation, scalar: null,
+            ...(length === null ? {} : { values: Array<Value>(length).fill(null) }) };
           if (member.values) fixedArrays.set(member.address, member);
           members.set(name, member);
-          nextFixedAddress += 4 * (size ?? 1);
         }
-        nextFixedAddress += 4; // Keep the one-past address separate from another object.
+        nextFixedAddress += bytes; // Keep separate objects beyond this object's storage.
         fixedObjects.set(address, { address, invocation, members });
         variable.value = address;
         variable.address = address;

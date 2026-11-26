@@ -376,3 +376,10 @@ footer{padding:16px 24px;font-size:10px}
 .struct-queue-cells { display: flex; gap: .35rem; overflow: auto; padding: .15rem; }
 .struct-queue-cell { display: grid; min-width: 5.8rem; min-height: 4.45rem; text-align: center; align-content: space-around; border: 1px solid currentColor; border-radius: .4rem; }
 .struct-queue-cell small { min-height: 1em; }
+
+.struct-stack-diagram { display: grid; gap: .6rem; padding: .85rem; min-width: 0; }
+.struct-stack-diagram p { margin: 0; }
+.struct-stack-cells { display: grid; gap: .22rem; padding: 0; margin: 0; list-style: none; width: min(100%, 15rem); }
+.struct-stack-cells li { display: grid; grid-template-columns: 2.5rem minmax(0, 1fr) 4rem; align-items: center; min-height: 2rem; padding: .15rem .4rem; }
+.struct-stack-cells code { display: grid; place-items: center; border: 1px solid currentColor; min-height: 2rem; }
+.struct-stack-cells b { margin-inline-start: .4rem; white-space: nowrap; }
