@@ -12,8 +12,8 @@ export type Expr =
   | { kind: "index"; object: Expr; index: Expr; line: number }
   | { kind: "cast"; type: string; pointer: boolean; expr: Expr; line: number };
 export type Stmt =
-  | { kind: "block"; body: Stmt[]; line: number }
-  | { kind: "decl"; type: string; pointer: boolean; pointerDepth?: number; name: string; init?: Expr; line: number; arrayLength?: Expr; arrayLengths?: Expr[]; arrayInitializer?: Expr[] }
+  | { kind: "block"; body: Stmt[]; line: number; declarationGroup?: true }
+  | { kind: "decl"; type: string; pointer: boolean; pointerDepth?: number; name: string; init?: Expr; line: number; arrayLength?: Expr; arrayLengths?: Expr[]; arrayInitializer?: Expr[]; staticStorage?: true; readOnly?: true }
   | { kind: "expr"; expr: Expr; line: number }
   | { kind: "if"; test: Expr; yes: Stmt; no?: Stmt; line: number }
   | { kind: "while"; test: Expr; body: Stmt; line: number }
@@ -24,7 +24,12 @@ export type Stmt =
   | { kind: "continue"; line: number }
   | { kind: "return"; value?: Expr; line: number };
 export type FunctionDef = { name: string; returnType: string; returnsPointer: boolean; params: { name?: string; pointer: boolean; pointerDepth?: number; array?: boolean; matrixColumns?: Expr; type: string }[]; body: Stmt; line: number };
-export type Program = { functions: Map<string, FunctionDef>; structs: Map<string, string[]>; structPointerFields: Map<string, ReadonlySet<string>>; aliasedTreeStructs: Set<string>; body: Stmt[]; constants: Map<string, number | string>; floatingConstants: Set<string> };
+// A null length denotes an ordinary signed-int field.
+export type FixedStructFields = ReadonlyMap<string, number | null>;
+export function fixedStructBytes(fields: FixedStructFields) {
+  return 4 * [...fields.values()].reduce<number>((sum, count) => sum + (count ?? 1), 0);
+}
+export type Program = { functions: Map<string, FunctionDef>; structs: Map<string, string[]>; structPointerFields: Map<string, ReadonlySet<string>>; fixedStructFields: Map<string, FixedStructFields>; aliasedTreeStructs: Set<string>; body: Stmt[]; constants: Map<string, number | string>; floatingConstants: Set<string> };
 
 const types = new Set(["int", "char", "long", "long", "short", "unsigned", "float", "double", "void", "struct", "const", "static"]);
 
@@ -46,6 +51,7 @@ function parseNumberLiteral(text: string, line: number): number {
 export function parse(source: string): Program {
   const constants = new Map<string, number | string>();
   const floatingConstants = new Set<string>();
+  const simplePositiveBounds = new Set<string>();
   const { text, continuedLines } = stripComments(source);
   const lines = text.split(/\r?\n/);
   for (let start = 0; start < lines.length;) {
@@ -69,6 +75,8 @@ export function parse(source: string): Program {
             ? rawValue
             : parseNumberLiteral(rawValue, valueLine + 1);
         constants.set(name, value);
+        if (/^(?:[0-9]+|0[xX][0-9a-fA-F]+)$/.test(rawValue)) simplePositiveBounds.add(name);
+        else simplePositiveBounds.delete(name);
         if (typeof value === "number" && /^[+-]?(?:[0-9]+\.[0-9]*|\.[0-9]+|[0-9]+(?:\.[0-9]*)?[eE][+-]?[0-9]+)$/.test(rawValue)) floatingConstants.add(name);
         else floatingConstants.delete(name);
       }
@@ -78,6 +86,7 @@ export function parse(source: string): Program {
   }
   const ts = lex(lines.join("\n")); let p = 0;
   const structs = new Map<string, string[]>(); const aliasedTreeStructs = new Set<string>(); const structPointerFields = new Map<string, ReadonlySet<string>>(); const knownTypes = new Set(["int", "char", "long", "void"]); const aliasTypes = new Map<string, string>();
+  const fixedStructFields = new Map<string, FixedStructFields>();
   const functions = new Map<string, FunctionDef>(); const body: Stmt[] = [];
   const peek = (value?: string) => value === undefined ? ts[p] : (ts[p]?.kind === "symbol" || ts[p]?.kind === "id") && ts[p]?.value === value;
   const take = (value?: string) => { const token = ts[p]; if (value && !peek(value)) throw new Error(`line ${token.line}: expected '${value}'`); p++; return token; };
@@ -98,23 +107,44 @@ export function parse(source: string): Program {
       if (!anonymous) take("{"); const fields: string[] = [];
       const pointerFields = new Set<string>();
       const selfPointers = new Set<string>();
+      const fixedFields = new Map<string, number | null>();
+      let hasFixedArray = false;
       const structType = `struct${name ? ` ${name}` : ""}`;
-      const field = (self: boolean) => {
+      const field = (base: string, self: boolean) => {
         let depth = 0;
         while (peek("*")) { take(); depth++; }
         const label = take().value;
         fields.push(label);
+        if (peek("[")) {
+          const bracket = take("[");
+          if (!name || base !== "int" || depth) throw new Error(`line ${bracket.line}: only fixed int arrays in named structs are supported`);
+          const bound = take();
+          const length = bound.kind === "number" && !/[.]/.test(bound.value)
+            ? parseNumberLiteral(bound.value, bound.line)
+            : bound.kind === "id" && simplePositiveBounds.has(bound.value) ? constants.get(bound.value) : undefined;
+          if (typeof length !== "number" || !Number.isSafeInteger(length) || length <= 0)
+            throw new Error(`line ${bound.line}: struct array member needs a positive integer literal or constant`);
+          take("]");
+          if (peek("[")) throw new Error(`line ${bracket.line}: multidimensional struct array members are not supported`);
+          fixedFields.set(label, length);
+          hasFixedArray = true;
+        } else if (base === "int" && !depth) fixedFields.set(label, null);
         if (depth) pointerFields.add(label);
         if (self && depth === 1) selfPointers.add(label);
       };
       while (!peek("}")) {
         const base = take().value;
         const self = base === "struct" ? take().value === name : aliasTypes.get(base) === structType;
-        field(self);
-        while (peek(",")) { take(); field(self); }
+        field(base, self);
+        while (peek(",")) { take(); field(base, self); }
         take(";");
       }
       take("}"); structs.set(name, fields); structPointerFields.set(structType, pointerFields);
+      if (hasFixedArray) {
+        if (fixedFields.size !== fields.length) throw new Error(`line ${nameToken.line}: a struct with a fixed array currently needs distinct signed int fields`);
+        if (fixedStructBytes(fixedFields) > 65536) throw new Error(`line ${nameToken.line}: struct exceeds simulator limit (65536 bytes)`);
+        fixedStructFields.set(structType, fixedFields);
+      }
       // A threaded tree can use the same pointer names for successors.
       // Leave known flag-marked layouts to a future thread-aware renderer.
       const threadMarker = fields.some(label => /^(?:[lr](?:tag|flag|bit|thread)|(?:left|right)(?:tag|flag|bit|thread)|threaded|isthreaded|thread)$/.test(label.toLowerCase().replace(/_/g, "")));
@@ -133,7 +163,11 @@ export function parse(source: string): Program {
     } else if (token.value === "(") { left = parseExpression(); take(")"); }
     else if (token.kind === "number") left = { kind: "literal", value: parseNumberLiteral(token.value, token.line), line: token.line,
       ...(token.value.includes(".") ? { literalKind: "floating" as const } : {}) };
-    else if (token.value === "struct" || token.value === "int" || token.value === "char" || token.value === "long" || knownTypes.has(token.value)) { if (token.value === "struct") take(); left = { kind: "literal", value: token.value === "char" ? 1 : token.value === "int" ? 4 : 16, line: token.line }; }
+    else if (token.value === "struct" || token.value === "int" || token.value === "char" || token.value === "long" || knownTypes.has(token.value)) {
+      const type = token.value === "struct" ? `struct ${take().value}` : aliasTypes.get(token.value);
+      const fields = type && fixedStructFields.get(type);
+      left = { kind: "literal", value: fields ? fixedStructBytes(fields) : token.value === "char" ? 1 : token.value === "int" ? 4 : 16, line: token.line };
+    }
     else if (token.value === "NULL") left = { kind: "literal", value: null, line: token.line };
     else if (token.value === "sizeof" && !peek("(")) left = { kind: "call", name: "sizeof", args: [parseExpression(12)], line: token.line };
     else if (["!", "-", "*", "&", "++", "--"].includes(token.value)) left = { kind: "unary", op: token.value, expr: parseExpression(12), line: token.line };
@@ -157,7 +191,9 @@ export function parse(source: string): Program {
     return left;
   };
   const declaration = (): Stmt => {
-    const start = ts[p]; const isTypedef = start.value === "typedef"; const type = parseType();
+    const offset = p, start = ts[p]; const isTypedef = start.value === "typedef"; const type = parseType();
+    const qualifiers: string[] = [];
+    for (let i = offset; ["typedef", "static", "const"].includes(ts[i]?.value); i++) qualifiers.push(ts[i].value);
     if (peek(";")) { take(";"); return { kind: "block", body: [], line: start.line }; }
     const declarations: Stmt[] = [];
     while (true) {
@@ -185,13 +221,14 @@ export function parse(source: string): Program {
           throw new Error(`line ${start.line}: unsupported omitted array bound; specify explicit positive dimensions or use a one-dimensional initializer`);
         arrayLengths[0] = { kind: "literal", value: inferred, line: start.line };
       }
-      declarations.push({ kind: "decl", type, pointer, ...(pointerDepth ? { pointerDepth } : {}), name: name.value, init, arrayLength: arrayLengths[0], arrayLengths: arrayLengths.length ? arrayLengths : undefined, arrayInitializer, line: start.line });
+      declarations.push({ kind: "decl", type, pointer, ...(pointerDepth ? { pointerDepth } : {}), name: name.value, init, arrayLength: arrayLengths[0], arrayLengths: arrayLengths.length ? arrayLengths : undefined, arrayInitializer, line: start.line,
+        ...(qualifiers.includes("static") ? { staticStorage: true } : {}), ...(qualifiers.includes("const") ? { readOnly: true } : {}) });
       if (!peek(",")) break;
       take(",");
     }
     take(";");
     if (isTypedef) { const alias = declarations.at(-1); if (alias?.kind === "decl") { knownTypes.add(alias.name); aliasTypes.set(alias.name, type); } return { kind: "block", body: [], line: start.line }; }
-    return declarations.length === 1 ? declarations[0] : { kind: "block", body: declarations, line: start.line };
+    return declarations.length === 1 ? declarations[0] : { kind: "block", body: declarations, line: start.line, declarationGroup: true };
   };
   const statement = (): Stmt => {
     const start = ts[p];
@@ -249,5 +286,5 @@ export function parse(source: string): Program {
       } else { p = save; body.push(statement()); }
     } else if (peek(";")) take(";"); else body.push(statement());
   }
-  return { functions, structs, structPointerFields, aliasedTreeStructs, body, constants, floatingConstants };
+  return { functions, structs, structPointerFields, fixedStructFields, aliasedTreeStructs, body, constants, floatingConstants };
 }

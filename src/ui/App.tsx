@@ -3,6 +3,7 @@ import { stepNumber } from "./traceLabels";
 import { GraphDiagram } from "./GraphDiagram";
 import { graphSize } from "../viz/graph";
 import { IndexedArray } from "./IndexedArray";
+import { canShowLinearQueue, readLinearQueue, StructQueueDiagram } from "./StructQueueDiagram";
 import { describeChange, frameKey, stepChanges, type VariableChange } from "./stepChanges";
 import { useVisualizerFullscreen } from "./visualizerFullscreen";
 import { PointerQuickLook } from "./PointerQuickLook";
@@ -194,6 +195,7 @@ export function App() {
   const [previousDraft, setPreviousDraft] = useState<{ code: string; setup: string }>();
   const [runGeneration, setRunGeneration] = useState(0);
   const [selectedGraph, setSelectedGraph] = useState<{ generation: number; base: number; name: string }>();
+  const [selectedQueue, setSelectedQueue] = useState<{ generation: number; base: number; name: string; invocation?: number }>();
   const session = useRef<InteractiveRun>();
   const [inputMode, setInputMode] = useState<"ahead" | "interactive">("ahead");
   const [waiting, setWaiting] = useState(false);
@@ -229,6 +231,10 @@ export function App() {
     ? view?.frames.flatMap(frame => Object.values(frame.variables ?? {})).find(item => item.array?.base === customGraph.base)?.array
     : labGraph ? view?.frames.find(frame => frame.name === "main")?.variables?.g?.array : undefined;
   const showGraph = Boolean(view && (customGraph || matrix && labGraph));
+  const customQueue = selectedQueue?.generation === runGeneration ? selectedQueue : undefined;
+  const queueFrame = customQueue && view?.frames.find(frame => frame.invocation === customQueue.invocation &&
+    frame.variables?.[customQueue.name]?.array?.base === customQueue.base);
+  const queue = customQueue && queueFrame?.variables ? readLinearQueue(queueFrame.variables, customQueue.name) : undefined;
   // Include newly allocated and freed blocks: a pointer can target either.
   // Derive choices from both snapshots, never from the correct answer itself.
   const predictionNodes = prediction && trace ? [...new Map([
@@ -427,16 +433,17 @@ export function App() {
           <button type="button" disabled={previousEvent === undefined} onClick={() => { if (previousEvent !== undefined) moveTo(previousEvent); }}>Previous event</button>
           <button type="button" disabled={nextEvent === undefined} onClick={() => { if (nextEvent !== undefined) moveTo(nextEvent); }}>Next event</button>
         </>}<span>{view ? `${location(view.line)} · ${view.event ?? "step"}` : emptyRun ? "Run finished · no recorded steps" : "No trace loaded"} · score {score} · streak {streak}</span></div>{prediction && <div className="prediction"><b>Where will {prediction.label} point after this line?</b><button disabled={predictionResult !== undefined} onClick={() => answerPrediction(null)}>NULL</button>{predictionNodes.map(node => <button key={node.address} disabled={predictionResult !== undefined} onClick={() => answerPrediction(node.address)}>{`0x${node.address.toString(16)}`}{node.freeStep !== undefined ? " (freed)" : !allocations.some(allocation => allocation.address === node.address) ? " (new block)" : ""}</button>)}{predictionResult !== undefined && <strong className={predictionResult ? "correct" : "incorrect"}>{predictionResult ? "Correct!" : "Not quite"}</strong>}</div>}</div>
-        <div className={`columns${!model?.nodes.length && !arrayStackStep && !showGraph ? " empty-heap" : ""}`}>
+        <div className={`columns${!model?.nodes.length && !arrayStackStep && !showGraph && !customQueue ? " empty-heap" : ""}`}>
           <div className="heap-column">
-            <h3>{arrayStackStep || showGraph ? "DATA STRUCTURE" : "HEAP STRUCTURE"} <small>{showGraph ? "graph" : arrayStackStep ? "stack" : model?.shape ?? "ready"}</small></h3>
+            <h3>{arrayStackStep || showGraph || customQueue ? "DATA STRUCTURE" : "HEAP STRUCTURE"} <small>{showGraph ? "graph" : customQueue ? "queue" : arrayStackStep ? "stack" : model?.shape ?? "ready"}</small></h3>
             {arrayStackStep && <ArrayStackDiagram stack={readArrayStack(arrayStackStep)} />}
+            {customQueue && <StructQueueDiagram name={customQueue.name} queue={queue} onClose={() => setSelectedQueue(undefined)} />}
             {showGraph && view && <GraphDiagram
               key={`${runGeneration}:${customGraph?.base ?? "lab"}`}
               name={customGraph?.name ?? "g"} array={matrix} step={view}
               exactLab={labGraph && customGraph === undefined}
               onClose={customGraph ? () => setSelectedGraph(undefined) : undefined} />}
-            {((!arrayStackStep && !showGraph) || Boolean(model?.nodes.length)) && (model
+            {((!arrayStackStep && !showGraph && !customQueue) || Boolean(model?.nodes.length)) && (model
               ? <StructureDiagram model={model} highlighted={highlightedAddress} onHighlight={setHighlightedAddress} memoryViewRequest={memoryViewRequest} changedHeap={changes.heap} />
               : <div className="diagram-empty">{emptyRun ? "No heap activity was recorded." : "Run a program to visualize its structure."}</div>)}
             <div className="heap-summary">{allocations.filter(allocation => allocation.freeStep === undefined).length} live · {allocations.filter(allocation => allocation.freeStep !== undefined).length} freed · {model?.nodes.filter(node => node.orphaned).length ?? 0} orphaned</div>
@@ -453,7 +460,12 @@ export function App() {
                   <span><b>{key}</b><small>{variable.type}</small></span>
                   <StackValue name={key} variable={variable} change={change} generation={runGeneration} />
                   {candidate && <button type="button" className="graph-trigger" aria-pressed={customGraph?.base === candidate.base}
-                    onClick={() => setSelectedGraph({generation:runGeneration, base:candidate.base, name:key})}>View {key} as graph</button>}
+                    onClick={() => { setSelectedQueue(undefined); setSelectedGraph({generation:runGeneration, base:candidate.base, name:key}); }}>View {key} as graph</button>}
+                  {variable.array && frame.variables && canShowLinearQueue(frame.variables, key) &&
+                    <button type="button" className="graph-trigger" aria-pressed={customQueue?.base === variable.array.base} onClick={() => {
+                      setSelectedGraph(undefined);
+                      setSelectedQueue({ generation:runGeneration, base:variable.array!.base, name:key, invocation:frame.invocation });
+                    }}>View {key} as linear queue</button>}
                   {variable.pointer && <button className="quick-look-trigger" type="button" aria-label={`Quick Look pointer ${key}`} onClick={event => { event.stopPropagation(); setPlaying(false); setQuickLook({ name:key, variable, step:view, trigger:event.currentTarget }); }}>Quick Look</button>}
                 </div>;
               })}

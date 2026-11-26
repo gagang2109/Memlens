@@ -370,3 +370,9 @@ footer{padding:16px 24px;font-size:10px}
 .graph-state dd{margin:0;color:#e1efff;font-family:ui-monospace,monospace}
 
 .crime a{color:var(--cyan);text-underline-offset:2px}
+.struct-queue-diagram { display: grid; gap: .65rem; padding: .85rem; min-width: 0; }
+.struct-queue-heading { display: flex; align-items: center; justify-content: space-between; gap: .55rem; flex-wrap: wrap; }
+.struct-queue-diagram p { margin: 0; }
+.struct-queue-cells { display: flex; gap: .35rem; overflow: auto; padding: .15rem; }
+.struct-queue-cell { display: grid; min-width: 5.8rem; min-height: 4.45rem; text-align: center; align-content: space-around; border: 1px solid currentColor; border-radius: .4rem; }
+.struct-queue-cell small { min-height: 1em; }

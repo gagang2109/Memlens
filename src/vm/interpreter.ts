@@ -1,6 +1,6 @@
-import { parse, type Expr, type FunctionDef, type Program, type Stmt } from "../lang/parser";
+import { fixedStructBytes, parse, type Expr, type FunctionDef, type Program, type Stmt } from "../lang/parser";
 import { Memory, MemoryFault, type Allocation } from "./memory";
-import { Trace, type ArraySnapshot, type FrameView } from "./trace";
+import { Trace, type ArraySnapshot, type FrameVariable, type FrameView } from "./trace";
 import { localArraySizeof, isFixedArrayBound } from "./fixedArraySizeof";
 
 type Value = number | string | null;
@@ -8,6 +8,8 @@ type LocalArray = { values: Value[]; type: string; dimensions: number[] };
 type RuntimeVariable = { value: Value; type: string; pointer: boolean; pointerDepth?: number; array?: Value[]; dimensions?: number[]; fixedArrayBounds?: boolean; matrixColumnCount?: number; elementSize?: number; arrayBase?: number; address?: number };
 type Ref = { get: () => Value; set: (value: Value) => void; address?: number; allocation?: Allocation };
 type HeapObject = { address: number; fields: Map<string, Value>; type?: string };
+type FixedMember = { name: string; address: number; invocation: number; values?: Value[]; scalar: Value };
+type FixedLocalStruct = { address: number; invocation: number; members: Map<string, FixedMember> };
 type FlowSignal = "break" | "continue";
 
 export type RunResult = { executionMode?: "program" | "snippet"; trace: Trace; status: "ok" | "error" | "waiting"; waitingLine?: number; error?: MemoryFault; leaks: { address: number; line: number }[]; orphanedAtExit: number[] };
@@ -32,6 +34,10 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
   const memory = new Memory(); const heap = new Map<number, HeapObject>(); const cells = new Map<number, Value>();
   const arrayRefs = new Map<number, LocalArray>(); const locations = new Map<number, Ref>(); let nextStackAddress = 0x7000;
   const frames: { invocation: number; name: string; vars: Map<string, RuntimeVariable> }[] = [{ invocation: 0, name: "main", vars: new Map() }];
+  const fixedObjects = new Map<number, FixedLocalStruct>();
+  const fixedArrays = new Map<number, FixedMember>();
+  const fixedAddressStart = 0x100000;
+  let nextFixedAddress = fixedAddressStart;
   let nextInvocation = 1;
   let previousArrays = new Map<number, ArraySnapshot>();
   let stdout = ""; let stdinCursor = 0; let steps = 0; let error: MemoryFault | undefined;
@@ -44,22 +50,36 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
   const pointerMeta = (expression: Expr) => expression.kind === "name" ? findVariable(expression.name) : undefined;
   const record = (line: number, event: "step" | "alloc" | "free" | "error" | "call" | "return" = "step", message?: string) => {
     const arrays = new Map<number, ArraySnapshot>();
+    const captureArray = (base: number, dimensions: number[], values: Value[]) => {
+      const previous = previousArrays.get(base);
+      // Share unchanged snapshots; copy a changed array so rewind cannot
+      // see writes that happened after the selected step.
+      const snapshot = previous?.cells.length === values.length && values.every((value,i) => Object.is(value, previous.cells[i]))
+        ? previous : { base, dimensions: [...dimensions], cells: [...values] };
+      arrays.set(base, snapshot);
+      return snapshot;
+    };
     const visible: FrameView[] = frames.map(frame => {
-      const variables = Object.fromEntries([...frame.vars].map(([key, variable]) => {
+      const variables = Object.fromEntries([...frame.vars].flatMap(([key, variable]): [string, FrameVariable][] => {
         const { array, arrayBase, dimensions, address } = variable;
-        let snapshot: ArraySnapshot | undefined;
-        if (array && arrayBase !== undefined && dimensions) {
-          const previous = previousArrays.get(arrayBase);
-          // Share unchanged snapshots; copy a changed array so rewind cannot
-          // see writes that happened after the selected step.
-          snapshot = previous?.cells.length === array.length && array.every((value,i) => Object.is(value, previous.cells[i]))
-            ? previous : { base: arrayBase, dimensions: [...dimensions], cells: [...array] };
-          arrays.set(arrayBase, snapshot);
+        const fixed = !variable.pointer && typeof variable.value === "number" ? fixedObjects.get(variable.value) : undefined;
+        if (fixed && program.fixedStructFields.has(variable.type)) {
+          const fields: [string, FrameVariable][] = [[key, { type: variable.type, value: `0x${fixed.address.toString(16)}`, storage: fixed.address, pointer: false }]];
+          for (const member of fixed.members.values()) {
+            const snapshot = member.values ? captureArray(member.address, [member.values.length], member.values) : undefined;
+            fields.push([`${key}.${member.name}`, {
+              type: snapshot ? `int[${snapshot.cells.length}]` : "int",
+              value: snapshot ? `${snapshot.cells.length} cells` : member.scalar === null ? "uninitialized" : String(member.scalar),
+              storage: member.address, pointer: false, ...(snapshot ? {array: snapshot} : {}),
+            }]);
+          }
+          return fields;
         }
-        return [key, { type: `${variable.type}${variable.pointer ? " *" : ""}`,
+        const snapshot = array && arrayBase !== undefined && dimensions ? captureArray(arrayBase, dimensions, array) : undefined;
+        return [[key, { type: `${variable.type}${variable.pointer ? " *" : ""}`,
           value: array ? `[${array.join(", ")}]` : String(variable.value), pointer: variable.pointer,
           ...(address !== undefined ? {storage:address} : {}), ...(snapshot ? {array:snapshot} : {}),
-          ...(variable.pointer && !array && typeof variable.value === "string" ? { stringPointer: true } : {}) }];
+          ...(variable.pointer && !array && typeof variable.value === "string" ? { stringPointer: true } : {}) }]];
       }));
       return { invocation: frame.invocation, name: frame.name, variables,
         locals: Object.fromEntries(Object.entries(variables).map(([key, variable]) => [key, variable.value])) };
@@ -89,6 +109,30 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
     throw new InputNeeded(line);
   };
   const runtimeError = (reason: string, line: number, allocation?: ReturnType<Memory["find"]>): never => { throw new MemoryFault(reason, line, steps, allocation); };
+  const checkMemberLifetime = (member: FixedMember, line: number) => {
+    if (!frames.some(frame => frame.invocation === member.invocation)) runtimeError("struct member used after its function returned", line);
+  };
+  const fixedCell = (member: FixedMember, index: number, line: number, addressOnly = false): Ref => {
+    checkMemberLifetime(member, line);
+    const values = member.values!;
+    if (!Number.isInteger(index) || index < 0 || index >= values.length)
+      runtimeError(`array member '${member.name}' index out of bounds (${index}); valid indexes: 0 through ${values.length - 1}`, line);
+    const result: Ref = {
+      address: member.address + 4 * index,
+      get: () => {
+        checkMemberLifetime(member, line);
+        const value = values[index];
+        if (value === null) runtimeError(`uninitialized read of '${member.name}[${index}]'`, line);
+        return value;
+      },
+      set: value => {
+        checkMemberLifetime(member, line);
+        values[index] = asNum(value) | 0;
+      },
+    };
+    if (addressOnly) locations.set(result.address!, result);
+    return result;
+  };
   const addressFor = (expression: Expr, line: number) => {
     const value = asNum(evaluate(expression)); const allocation = memory.find(value);
     if (allocation?.freeStep !== undefined) runtimeError("use-after-free", line, allocation);
@@ -108,13 +152,33 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
   const ref = (expression: Expr, addressOnly = false): Ref => {
     if (expression.kind === "name") {
       const variable = findVariable(expression.name); if (!variable) throw new Error(`line ${expression.line}: unknown variable ${expression.name}`);
+      if (!variable.pointer && program.fixedStructFields.has(variable.type) && typeof variable.value === "number") {
+        return { get: () => variable.value, set: () => runtimeError("whole-struct assignment is not supported for array members", expression.line), address: variable.value };
+      }
       if (variable.array) return { get: () => variable.array![0], set: () => runtimeError("array is not assignable", expression.line), address: variable.arrayBase };
       if (!variable.address) variable.address = nextStackAddress++;
       const result = { get: () => variable.value, set: (value: Value) => { variable.value = value; }, address: variable.address };
       locations.set(variable.address, result); return result;
     }
     if (expression.kind === "member") {
-      const object = evaluate(expression.object); const allocation = memory.find(asNum(object));
+      const object = evaluate(expression.object);
+      const fixed = fixedObjects.get(asNum(object));
+      if (fixed) {
+        const member = fixed.members.get(expression.name);
+        if (!member) return runtimeError(`unknown struct member '${expression.name}'`, expression.line);
+        checkMemberLifetime(member, expression.line);
+        if (member.values) return { get: () => member.address, set: () => runtimeError("array member is not assignable", expression.line), address: member.address };
+        const result: Ref = { address: member.address, get: () => {
+          checkMemberLifetime(member, expression.line);
+          if (member.scalar === null) runtimeError(`uninitialized read of '${member.name}'`, expression.line);
+          return member.scalar;
+        }, set: value => { checkMemberLifetime(member, expression.line); member.scalar = asNum(value) | 0; } };
+        if (addressOnly) locations.set(member.address, result);
+        return result;
+      }
+      if (program.fixedStructFields.has(pointerMeta(expression.object)?.type ?? "") && asNum(object) !== 0)
+        runtimeError("fixed array members are currently supported only on local struct objects", expression.line);
+      const allocation = memory.find(asNum(object));
       if (!allocation) runtimeError(asNum(object) === 0 ? "null pointer dereference" : "invalid pointer dereference", expression.line);
       if (allocation!.freeStep !== undefined) runtimeError("use-after-free", expression.line, allocation);
       const block = heap.get(asNum(object)); if (!block) runtimeError("invalid pointer dereference", expression.line);
@@ -154,6 +218,8 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       if (pointerMeta(expression.object)?.matrixColumnCount)
         runtimeError("matrix row used without a column; row values are not supported", expression.line);
       const base = asNum(evaluate(expression.object));
+      const member = fixedArrays.get(base);
+      if (member) return fixedCell(member, index, expression.line, addressOnly);
       const variable = pointerMeta(expression.object); const array = expression.object.kind === "name" ? findVariable(expression.object.name)?.array : undefined;
       if (array) { if (!Number.isInteger(index) || index < 0 || index >= array.length) runtimeError(`array index out of bounds (${index})`, expression.line); return { get: () => array[index], set: value => { array[index] = value; }, address: (findVariable(expression.object.kind === "name" ? expression.object.name : "")?.arrayBase ?? 0) + index * (variable?.elementSize ?? 4) }; }
       const baseArray = arrayRefs.get(base); if (baseArray) { if (!Number.isInteger(index) || index < 0 || index >= baseArray.values.length) runtimeError(`pointer index out of bounds (${index})`, expression.line); return { get: () => baseArray.values[index], set: value => { baseArray.values[index] = value; }, address: base + index * (variable?.elementSize ?? elementSize(baseArray.type)) }; }
@@ -172,6 +238,8 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       const address = asNum(evaluate(expression.expr)); const allocation = memory.find(address);
       const location = locations.get(address);
       if (location) return liveRef(location, expression.line);
+      const fixedArray = fixedArrays.get(address);
+      if (fixedArray) return fixedCell(fixedArray, 0, expression.line);
       if (!allocation) runtimeError(address === 0 ? "null pointer dereference" : "invalid pointer dereference", expression.line);
       if (allocation!.freeStep !== undefined) runtimeError("use-after-free", expression.line, allocation);
       return { get: () => cells.get(address) ?? memory.read(address, steps, expression.line), set: value => { cells.set(address, value); memory.write(address, asNum(value), steps, expression.line); }, address };
@@ -275,6 +343,23 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
         runtimeError("missing scanf format argument", expression.line);
       if (expression.name === "sizeof") {
         const argument = args[0];
+        const sized = argument?.kind === "index" ? argument.object : argument;
+        if (sized?.kind === "member") {
+          const owner = pointerMeta(sized.object);
+          const fields = owner && program.fixedStructFields.get(owner.type);
+          if (fields) {
+            const length = fields.get(sized.name);
+            if (length === undefined || argument?.kind === "index" && length === null)
+              runtimeError("invalid struct field in sizeof", expression.line);
+            return argument?.kind === "index" ? 4 : 4 * (length ?? 1);
+          }
+        }
+        if (argument?.kind === "name" || argument?.kind === "unary" && argument.op === "*") {
+          const variable = pointerMeta(argument.kind === "name" ? argument : argument.expr);
+          const fields = variable && program.fixedStructFields.get(variable.type);
+          if (fields && variable && (argument.kind === "name" && !variable.pointer || argument.kind === "unary" && variable.pointerDepth === 1))
+            return fixedStructBytes(fields);
+        }
         const arrayBytes = localArraySizeof(argument, sizeofContext, runtimeError);
         if (arrayBytes !== undefined) return arrayBytes;
         if (argument?.kind === "name") {
@@ -537,6 +622,9 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       if (args.length !== fn.params.length)
         runtimeError(`function '${fn.name}' expects ${fn.params.length} arguments, received ${args.length}`, expression.line);
       if (frames.length >= recursionLimit) runtimeError("stack overflow", expression.line);
+      if ((!fn.returnsPointer && program.fixedStructFields.has(fn.returnType)) ||
+          fn.params.some(param => !param.pointer && program.fixedStructFields.has(param.type)))
+        runtimeError("structs with fixed array members cannot be passed or returned by value yet", expression.line);
       const values = args.map(argument => evaluate(argument));
       const vars = new Map<string, RuntimeVariable>();
       fn.params.forEach((parameter, index) => {
@@ -560,7 +648,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       frames.push({ invocation: nextInvocation++, name: fn.name, vars });
       record(expression.line, "call");
       let returned: Value = null; let failed = false;
-      try { execute(fn.body); }
+      try { execute(fn.body, true); }
       catch (caught) {
         if (caught instanceof ReturnSignal) returned = caught.value;
         else {
@@ -617,11 +705,42 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
   // at a function boundary rather than allowing them to control a caller's loop.
   class BreakSignal { readonly message: string; constructor(public readonly line: number) { this.message = `line ${line}: break outside loop or switch`; } }
   class ContinueSignal { readonly message: string; constructor(public readonly line: number) { this.message = `line ${line}: continue outside loop`; } }
-  const execute = (statement: Stmt): void => {
+  const execute = (statement: Stmt, allowFixedLocal = false): void => {
     if (steps >= stepLimit) runtimeError("step limit reached", statement.line);
-    if (statement.kind === "block") { for (const child of statement.body) execute(child); return; }
+    if (statement.kind === "block") {
+      for (const child of statement.body)
+        execute(child, allowFixedLocal && (child.kind !== "block" || child.declarationGroup === true));
+      return;
+    }
     if (statement.kind === "decl") {
       const variable: RuntimeVariable = { value: null, type: statement.type, pointer: statement.pointer, pointerDepth: statement.pointerDepth, elementSize: elementSize(statement.type) };
+      const fixed = !statement.pointer && program.fixedStructFields.get(statement.type);
+      if (fixed) {
+        if (!allowFixedLocal || statement.staticStorage || statement.readOnly)
+          runtimeError("fixed array structs currently need a non-static, non-const declaration directly in a function body", statement.line);
+        if (statement.arrayLength || statement.init || statement.arrayInitializer)
+          runtimeError("arrays of these structs and whole-struct initializers are not yet supported", statement.line);
+        const bytes = 4 + fixedStructBytes(fixed);
+        if (nextFixedAddress + bytes - fixedAddressStart > 262144)
+          runtimeError("fixed struct storage exceeds simulator limit (262144 bytes)", statement.line);
+        const invocation = frames.at(-1)!.invocation;
+        const address = nextFixedAddress;
+        const members = new Map<string, FixedMember>();
+        for (const [name, size] of fixed) {
+          const member: FixedMember = { name, address: nextFixedAddress, invocation, scalar: null,
+            ...(size === null ? {} : { values: Array<Value>(size).fill(null) }) };
+          if (member.values) fixedArrays.set(member.address, member);
+          members.set(name, member);
+          nextFixedAddress += 4 * (size ?? 1);
+        }
+        nextFixedAddress += 4; // Keep the one-past address separate from another object.
+        fixedObjects.set(address, { address, invocation, members });
+        variable.value = address;
+        variable.address = address;
+        current().set(statement.name, variable);
+        record(statement.line);
+        return;
+      }
       if (statement.arrayLength) {
         const bounds = statement.arrayLengths ?? [statement.arrayLength];
         variable.fixedArrayBounds = bounds.every(bound => isFixedArrayBound(bound, sizeofContext));
@@ -681,7 +800,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       return;
     }
   };
-  try { if (program.body.length) execute({ kind: "block", body: program.body, line: program.body[0].line }); const main = program.functions.get("main"); if (main) { record(main.line, "call"); execute(main.body); record(main.line, "return"); } else if (!program.body.length) execute({ kind: "block", body: [], line: 1 }); }
+  try { if (program.body.length) execute({ kind: "block", body: program.body, line: program.body[0].line }); const main = program.functions.get("main"); if (main) { record(main.line, "call"); execute(main.body, true); record(main.line, "return"); } else if (!program.body.length) execute({ kind: "block", body: [], line: 1 }); }
   catch (caught) { if (caught instanceof InputNeeded) return { executionMode: program.functions.has("main") ? "program" : "snippet", trace, status: "waiting", waitingLine: caught.line, leaks: [], orphanedAtExit: [] }; if (caught instanceof MemoryFault) { error = caught; record(caught.line, "error", caught.reason); } else if (!(caught instanceof ReturnSignal) && !(caught instanceof ExitSignal)) { const message = caught instanceof Error || caught instanceof BreakSignal || caught instanceof ContinueSignal ? caught.message : "unsupported construct"; const match = message.match(/line (\d+)/); const line = match ? Number(match[1]) : 1; error = new MemoryFault(message, line, steps); record(line, "error", message); } }
   const roots = [...frames.flatMap(frame => [...frame.vars.values()].map(variable => variable.value))].filter((value): value is number => typeof value === "number");
   const reachable = new Set<number>(); const visit = (address: number) => { const allocation = memory.allocationAt(address); if (!allocation || allocation.freeStep !== undefined || reachable.has(allocation.address)) return; reachable.add(allocation.address); const object = heap.get(allocation.address); if (object) for (const value of object.fields.values()) if (typeof value === "number") visit(value); };
