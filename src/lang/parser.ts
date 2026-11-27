@@ -24,8 +24,8 @@ export type Stmt =
   | { kind: "continue"; line: number }
   | { kind: "return"; value?: Expr; line: number };
 export type FunctionDef = { name: string; returnType: string; returnsPointer: boolean; params: { name?: string; pointer: boolean; pointerDepth?: number; array?: boolean; matrixColumns?: Expr; type: string }[]; body: Stmt; line: number };
-// A null length denotes an ordinary signed-int field.
-export type FixedStructField = { type: "int" | "char"; length: number | null };
+// A null length denotes an ordinary signed-int or float field.
+export type FixedStructField = { type: "int" | "char" | "float"; length: number | null };
 export type FixedStructFields = ReadonlyMap<string, FixedStructField>;
 export function fixedStructLayout(fields: FixedStructFields) {
   let bytes = 0;
@@ -145,7 +145,7 @@ export function parse(source: string): Program {
           if (peek("[")) throw new Error(`line ${bracket.line}: multidimensional struct array members are not supported`);
           fixedFields.set(label, { type: base, length });
           hasFixedArray = true;
-        } else if (base === "int" && !depth) fixedFields.set(label, { type: "int", length: null });
+        } else if ((base === "int" || base === "float") && !depth) fixedFields.set(label, { type: base, length: null });
         if (depth) pointerFields.add(label);
         if (self && depth === 1) selfPointers.add(label);
       };
@@ -158,14 +158,14 @@ export function parse(source: string): Program {
       }
       take("}"); structs.set(name, fields); structPointerFields.set(structType, pointerFields);
       if (hasFixedArray) {
-        if (fixedFields.size !== fields.length) throw new Error(`line ${nameToken.line}: a struct with a fixed array currently needs distinct signed int fields or fixed char arrays`);
+        if (fixedFields.size !== fields.length) throw new Error(`line ${nameToken.line}: a struct with a fixed array currently needs distinct signed int or float fields, or fixed int or char arrays`);
         if (fixedStructBytes(fixedFields) > 65536) throw new Error(`line ${nameToken.line}: struct exceeds simulator limit (65536 bytes)`);
         fixedStructFields.set(structType, fixedFields);
       }
       // A threaded tree can use the same pointer names for successors.
       // Leave known flag-marked layouts to a future thread-aware renderer.
       const threadMarker = fields.some(label => /^(?:[lr](?:tag|flag|bit|thread)|(?:left|right)(?:tag|flag|bit|thread)|threaded|isthreaded|thread)$/.test(label.toLowerCase().replace(/_/g, "")));
-      const destinations = ["to", "dest", "vertex"].filter(label => fixedFields.get(label)?.length === null);
+      const destinations = ["to", "dest", "vertex"].filter(label => { const field = fixedFields.get(label); return field?.type === "int" && field.length === null; });
       if (name && selfPointers.has("next") && destinations.length === 1)
         adjacencyShapes.set(structType, { destination: destinations[0], next: "next" });
       else adjacencyShapes.delete(structType);

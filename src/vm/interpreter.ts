@@ -1,4 +1,4 @@
-import { SIM_POINTER_BYTES, fixedStructBytes, fixedStructLayout, parse, type Expr, type FunctionDef, type Program, type Stmt } from "../lang/parser";
+import { SIM_POINTER_BYTES, fixedStructBytes, fixedStructLayout, parse, type Expr, type FixedStructField, type FunctionDef, type Program, type Stmt } from "../lang/parser";
 import { Memory, MemoryFault, type Allocation } from "./memory";
 import { Trace, type ArraySnapshot, type FrameVariable, type FrameView } from "./trace";
 import { parseScanset } from "./scanfScanset";
@@ -9,9 +9,9 @@ type LocalArrayOwner = { vars: Map<string, RuntimeVariable>; name: string; varia
 type LocalArray = { values: Value[]; type: string; dimensions: number[];
   owner?: LocalArrayOwner; scanBufferOwner?: LocalArrayOwner };
 type RuntimeVariable = { value: Value; type: string; pointer: boolean; pointerDepth?: number; array?: Value[]; dimensions?: number[]; fixedArrayBounds?: boolean; matrixColumnCount?: number; elementSize?: number; arrayBase?: number; address?: number; fixedRecords?: FixedLocalStruct[]; borrowedRecords?: FixedLocalStruct[] };
-type Ref = { get: () => Value; set: (value: Value) => void; address?: number; allocation?: Allocation };
+type Ref = { get: () => Value; set: (value: Value) => void; address?: number; allocation?: Allocation; floatRecordField?: true };
 type HeapObject = { address: number; fields: Map<string, Value>; type?: string };
-type FixedMember = { name: string; type: "char" | "int"; stride: number; address: number; invocation: number; values?: Value[]; scalar: Value };
+type FixedMember = { name: string; type: FixedStructField["type"]; stride: number; address: number; invocation: number; values?: Value[]; scalar: Value };
 type FixedLocalStruct = { type: string; address: number; invocation: number; members: Map<string, FixedMember> };
 type FlowSignal = "break" | "continue";
 
@@ -348,11 +348,18 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
         if (!member) return runtimeError(`unknown struct member '${expression.name}'`, expression.line);
         checkMemberLifetime(member, expression.line);
         if (member.values) return { get: () => member.address, set: () => runtimeError("array member is not assignable", expression.line), address: member.address };
-        const result: Ref = { address: member.address, get: () => {
+        const result: Ref = { address: member.address, ...(member.type === "float" ? { floatRecordField: true } : {}), get: () => {
           checkMemberLifetime(member, expression.line);
           if (member.scalar === null) runtimeError(`uninitialized read of '${member.name}'`, expression.line);
           return member.scalar;
-        }, set: value => { checkMemberLifetime(member, expression.line); member.scalar = asNum(value) | 0; } };
+        }, set: value => {
+          checkMemberLifetime(member, expression.line);
+          if (member.type === "float") {
+            const number = Math.fround(asNum(value));
+            if (!Number.isFinite(number)) runtimeError("record field is outside the supported finite float range", expression.line);
+            member.scalar = number;
+          } else member.scalar = asNum(value) | 0;
+        } };
         if (addressOnly) locations.set(member.address, result);
         return result;
       }
@@ -508,6 +515,11 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
     if (expr.kind === "name") {
       const variable = findVariable(expr.name);
       return variable && !variable.pointer && !variable.array ? variable.type : undefined;
+    }
+    if (expr.kind === "member") {
+      const owner = pointerMeta(expr.object) ?? indexedRecordArray(expr.object);
+      const field = owner && program.fixedStructFields.get(owner.type)?.get(expr.name);
+      if (field?.type === "float" && field.length === null) return "float";
     }
     if (expr.kind === "index") {
       const variable = pointerMeta(expr.object);
@@ -855,6 +867,8 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
           if (target === undefined) return runtimeError("missing scanf destination", expression.line);
           const { address: destination, matrixInt } = target;
           if (specifier === "d") {
+            if (locations.get(destination)?.floatRecordField)
+              return runtimeError("scanf %d cannot read into a float record field; %f input is not supported yet", expression.line);
             if (matrixInt) matrixRef(destination, 0, 1, expression.line).set(Number(token));
             else write(destination, Number(token));
           }
