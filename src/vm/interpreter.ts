@@ -9,7 +9,7 @@ type Value = number | string | null;
 type LocalArrayOwner = { vars: Map<string, RuntimeVariable>; name: string; variable: RuntimeVariable };
 type LocalArray = { values: Value[]; type: string; dimensions: number[];
   owner?: LocalArrayOwner; scanBufferOwner?: LocalArrayOwner };
-type RuntimeVariable = { value: Value; type: string; pointer: boolean; pointerDepth?: number; array?: Value[]; dimensions?: number[]; fixedArrayBounds?: boolean; matrixColumnCount?: number; elementSize?: number; arrayBase?: number; address?: number; fixedRecords?: FixedLocalStruct[]; borrowedRecords?: FixedLocalStruct[] };
+type RuntimeVariable = { value: Value; type: string; pointer: boolean; pointerDepth?: number; array?: Value[]; dimensions?: number[]; fixedArrayBounds?: boolean; matrixColumnCount?: number; elementSize?: number; arrayBase?: number; address?: number; fixedRecords?: FixedLocalStruct[]; borrowedRecords?: FixedLocalStruct[]; recordPointer?: true; initializedRecordPointer?: true; recordTarget?: FixedLocalStruct };
 type Ref = { get: () => Value; set: (value: Value) => void; address?: number; allocation?: Allocation; scanFloat?: (value: number, line: number) => void };
 type HeapObject = { address: number; fields: Map<string, Value>; type?: string };
 type FixedMember = { name: string; type: FixedStructField["type"]; stride: number; address: number; invocation: number; values?: Value[]; scalar: Value };
@@ -142,7 +142,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
         locals: Object.fromEntries(Object.entries(variables).map(([key, variable]) => [key, variable.value])) };
     });
     previousArrays = arrays;
-    const pointers = frames.flatMap(frame => [...frame.vars].flatMap(([name, variable]) => variable.pointer && typeof variable.value === "number" ? [{ from: `${frame.name}.${name}`, to: variable.value, label: name, dangling: Boolean(memory.allocations.find(a => a.address === variable.value)?.freeStep !== undefined) }] : []));
+    const pointers = frames.flatMap(frame => [...frame.vars].flatMap(([name, variable]) => variable.pointer && typeof variable.value === "number" ? [{ from: `${frame.name}.${name}`, to: variable.value, label: name, dangling: variable.recordTarget ? !frames.some(owner => owner.invocation === variable.recordTarget!.invocation) : Boolean(memory.allocations.find(a => a.address === variable.value)?.freeStep !== undefined) }] : []));
     const arrayHeads = collectStructArrayHeads();
     for (const frame of frames) for (const [name, variable] of frame.vars) {
       for (const { index, address, dangling } of arrayHeads(variable)) {
@@ -203,6 +203,39 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
     const record = local && !local.pointer && !local.fixedRecords && typeof local.value === "number" &&
       program.fixedStructFields.has(local.type) ? fixedObjects.get(local.value) : undefined;
     return record ? { type: record.type, read: () => record } : undefined;
+  };
+  const bindRecordPointer = (variable: RuntimeVariable, source: Expr, line: number): Value => {
+    if (source.kind === "call" && ["malloc", "calloc", "realloc"].includes(source.name))
+      return runtimeError("fixed array members are supported only on local structs, not heap records", line);
+    let record: FixedLocalStruct | undefined;
+    if (source.kind === "literal" && !source.literalKind && (source.value === null || source.value === 0)) {
+      variable.recordTarget = undefined;
+      variable.initializedRecordPointer = true;
+      return variable.value = null;
+    }
+    if (source.kind === "unary" && source.op === "&") {
+      const operand = recordOperand(source.expr);
+      if (operand?.type === variable.type) record = operand.read();
+    } else if (source.kind === "name") {
+      const alias = pointerMeta(source);
+      if (alias?.recordPointer && alias.type === variable.type) {
+        if (alias.value === null && !alias.recordTarget) {
+          // Explicit NULL can be copied; an uninitialized binding cannot.
+          if (alias.initializedRecordPointer) {
+            variable.recordTarget = undefined;
+            variable.initializedRecordPointer = true;
+            return variable.value = null;
+          }
+        } else record = alias.recordTarget;
+      }
+    }
+    if (!record)
+      return runtimeError("record pointer requires NULL, the direct address of a matching local record, or a matching record pointer", line);
+    if (!frames.some(frame => frame.invocation === record!.invocation))
+      return runtimeError("record pointer used after its target function returned", line);
+    variable.recordTarget = record;
+    variable.initializedRecordPointer = true;
+    return variable.value = record.address;
   };
   const copyRecord = (target: FixedLocalStruct, source: FixedLocalStruct) => {
     if (target === source) return;
@@ -327,6 +360,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
   const ref = (expression: Expr, addressOnly = false): Ref => {
     if (expression.kind === "name") {
       const variable = findVariable(expression.name); if (!variable) throw new Error(`line ${expression.line}: unknown variable ${expression.name}`);
+      if (variable.recordPointer) return runtimeError("record pointers only support direct rebinding and named member access", expression.line);
       if (variable.borrowedRecords)
         return runtimeError("borrowed record array parameters support indexed members and forwarding only", expression.line);
       if (variable.fixedRecords)
@@ -352,10 +386,23 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
     }
     if (expression.kind === "member") {
       const operand = expression.object;
-      const records = recordBacking(indexedRecordArray(operand));
-      const object = records && operand.kind === "index"
-        ? readIndexedRecord(records, operand.index, operand.line).address : evaluate(operand);
-      const fixed = fixedObjects.get(asNum(object));
+      const ownerVariable = pointerMeta(operand);
+      let fixed: FixedLocalStruct | undefined;
+      if (ownerVariable?.recordPointer) {
+        if (!expression.pointer) return runtimeError("use '->' to read a record pointer member", expression.line);
+        if (!ownerVariable.initializedRecordPointer) return runtimeError("uninitialized record pointer", expression.line);
+        fixed = ownerVariable.recordTarget;
+        if (!fixed) return runtimeError("null pointer dereference", expression.line);
+        if (!frames.some(frame => frame.invocation === fixed!.invocation))
+          return runtimeError("record pointer used after its target function returned", expression.line);
+      } else if (!expression.pointer) {
+        fixed = recordOperand(operand)?.read();
+      } else if (operand.kind === "unary" && operand.op === "&") {
+        fixed = recordOperand(operand.expr)?.read();
+      }
+      const object = fixed ? fixed.address : evaluate(operand);
+      if (!fixed && fixedObjects.has(asNum(object)))
+        return runtimeError("local record members need a direct local record or a typed record pointer", expression.line);
       if (fixed) {
         const member = fixed.members.get(expression.name);
         if (!member) return runtimeError(`unknown struct member '${expression.name}'`, expression.line);
@@ -398,6 +445,8 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       return liveRef(result, expression.line);
     }
     if (expression.kind === "index") {
+      if (pointerMeta(expression.object)?.recordPointer)
+        return runtimeError("indexed access through a record pointer is not supported; use a direct record array", expression.line);
       if (indexedRecordArray(expression))
         return runtimeError("whole-record assignment or access is not supported; select a member", expression.line);
       const index = asNum(evaluate(expression.index));
@@ -452,6 +501,8 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       };
     }
     if (expression.kind === "unary" && expression.op === "*") {
+      if (pointerMeta(expression.expr)?.recordPointer)
+        return runtimeError("use '->' to read a record pointer member", expression.line);
       const depth = matrixPointerDepth(expression.expr);
       const address = asNum(evaluate(expression.expr));
       if (depth === 1 || depth === 2) return matrixRef(address, 0, depth, expression.line);
@@ -614,13 +665,19 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
         return runtimeError("borrowed record array parameters support indexed members and forwarding only", expression.line);
       if (variable?.fixedRecords)
         return runtimeError("record arrays currently need direct indexed member access", expression.line);
+      if (variable?.recordPointer && !variable.initializedRecordPointer)
+        return runtimeError("uninitialized record pointer", expression.line);
       if (variable) return variable.array ? variable.arrayBase ?? 0 : variable.value;
       if (program.constants.has(expression.name)) return program.constants.get(expression.name)!;
       if (expression.name === "EOF") return -1;
       return runtimeError(`unknown variable ${expression.name}`, expression.line);
     }
     if (expression.kind === "member" || expression.kind === "index" || (expression.kind === "unary" && expression.op === "*")) return ref(expression).get();
-    if (expression.kind === "cast") return evaluate(expression.expr);
+    if (expression.kind === "cast") {
+      if (pointerMeta(expression.expr)?.recordPointer)
+        return runtimeError("casts of record pointers are not supported", expression.line);
+      return evaluate(expression.expr);
+    }
     if (expression.kind === "conditional") return asNum(evaluate(expression.test)) ? evaluate(expression.yes) : evaluate(expression.no);
     if (expression.kind === "unary") {
       if (expression.op === "!" || expression.op === "-") { const old = asNum(evaluate(expression.expr)); return expression.op === "!" ? (old ? 0 : 1) : -old; }
@@ -1025,8 +1082,12 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       const values = args.map((argument, index) => {
         const source = pointerMeta(argument);
         const records = recordBacking(source);
-        if (!records) return { value: evaluate(argument) };
         const parameter = fn.params[index];
+        if (!records && parameter.pointerDepth === 1 && program.fixedStructFields.has(parameter.type)) {
+          const alias: RuntimeVariable = { type: parameter.type, pointer: true, pointerDepth: 1, recordPointer: true, value: null };
+          return { value: bindRecordPointer(alias, argument, expression.line), recordPointer: alias };
+        }
+        if (!records) return { value: evaluate(argument) };
         if (parameter.pointerDepth !== 1 || parameter.matrixColumns || parameter.type !== source?.type)
           return runtimeError("record arrays require a matching single-pointer parameter", expression.line);
         if (!frames.some(frame => frame.invocation === records[0].invocation))
@@ -1036,7 +1097,8 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       const vars = new Map<string, RuntimeVariable>();
       fn.params.forEach((parameter, index) => {
         if (parameter.name !== undefined) {
-          const { value, borrowedRecords } = values[index];
+          const { value, borrowedRecords, recordPointer } = values[index];
+          if (recordPointer) { vars.set(parameter.name, recordPointer); return; }
           let matrixColumnCount: number | undefined;
           if (parameter.matrixColumns) {
             if (!["int", "char"].includes(parameter.type) || !isFixedArrayBound(parameter.matrixColumns, sizeofContext))
@@ -1071,6 +1133,11 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       return returned;
     }
     if (expression.kind === "binary") {
+      const recordDestination = pointerMeta(expression.left);
+      if (expression.op === "=" && recordDestination?.recordPointer) {
+        const value = bindRecordPointer(recordDestination, expression.right, expression.line);
+        record(expression.line); return value;
+      }
       if (["*=", "/=", "%="].includes(expression.op)) {
         const target = scalarLvalueType(expression.left);
         const direct = pointerMeta(expression.left);
@@ -1098,6 +1165,9 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       if (expression.op === "&&") return asNum(evaluate(expression.left)) ? (asNum(evaluate(expression.right)) ? 1 : 0) : 0;
       if (expression.op === "||") return asNum(evaluate(expression.left)) ? 1 : (asNum(evaluate(expression.right)) ? 1 : 0);
       const arithmetic = expression.op === "+" || expression.op === "-";
+      if ((recordDestination?.recordPointer || pointerMeta(expression.right)?.recordPointer) &&
+          !["==", "!="].includes(expression.op))
+        return runtimeError("record pointer arithmetic is not supported; use a direct record array index", expression.line);
       const leftDepth = arithmetic ? matrixPointerDepth(expression.left) : undefined;
       const rightDepth = arithmetic ? matrixPointerDepth(expression.right) : undefined;
       const left = evaluate(expression.left); const right = evaluate(expression.right);
@@ -1141,6 +1211,16 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
     }
     if (statement.kind === "decl") {
       const variable: RuntimeVariable = { value: null, type: statement.type, pointer: statement.pointer, pointerDepth: statement.pointerDepth, elementSize: elementSize(statement.type) };
+      if (statement.pointerDepth === 1 && !statement.arrayLength && program.fixedStructFields.has(statement.type)) {
+        if (statement.readOnly || statement.staticStorage)
+          return runtimeError("qualified record pointer declarations are not supported", statement.line);
+        variable.recordPointer = true;
+        variable.address = nextStackAddress++;
+        current().set(statement.name, variable);
+        if (statement.init) bindRecordPointer(variable, statement.init, statement.line);
+        record(statement.line);
+        return;
+      }
       const fixed = !statement.pointer && program.fixedStructFields.get(statement.type);
       if (fixed) {
         if (!allowDirectLocal || statement.staticStorage || statement.readOnly)
