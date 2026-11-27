@@ -1,7 +1,7 @@
-import type { Expr, Program } from "../lang/parser";
+import { SIM_POINTER_BYTES, type Expr, type Program } from "../lang/parser";
 
 type BoundsContext = Pick<Program, "constants" | "floatingConstants"> & { lookup: (name: string) => ArrayVariable | undefined };
-type ArrayVariable = { type: string; pointer: boolean; pointerDepth?: number; array?: readonly unknown[]; dimensions?: number[]; fixedArrayBounds?: boolean; elementSize?: number };
+type ArrayVariable = { type: string; pointer: boolean; pointerDepth?: number; array?: readonly unknown[]; dimensions?: number[]; matrixColumnCount?: number; fixedArrayBounds?: boolean; elementSize?: number };
 type Context = BoundsContext & Pick<Program, "functions">;
 
 const arithmetic = new Set(["+", "-", "*", "/", "%"]);
@@ -145,4 +145,32 @@ export function localArraySizeof(expr: Expr | undefined, context: Context, fail:
   for (const { index } of levels.reverse())
     if (index && !isIntegral(indexType(index, context))) fail("sizeof array index requires a supported integer expression", index.line);
   return array.dimensions.slice(levels.length).reduce((size, bound) => size * bound, array.elementSize!);
+}
+
+
+// Type-only traversal of named pointer operands. Each dereference or index
+// removes one pointer level. No pointer value or subscript is evaluated.
+export function pointerOperandSizeof(expr: Expr | undefined, context: Context,
+  fail: (reason: string, line: number) => never, pointeeBytes: (type: string) => number): number | undefined {
+  const levels: { line: number; index?: Expr }[] = [];
+  let root = expr;
+  while (root?.kind === "index" || (root?.kind === "unary" && root.op === "*")) {
+    if (root.kind === "index") {
+      levels.push({ line: root.line, index: root.index });
+      root = root.object;
+    } else {
+      levels.push({ line: root.line });
+      root = root.expr;
+    }
+  }
+  if (root?.kind !== "name") return;
+  const variable = context.lookup(root.name);
+  if (!variable?.pointer || variable.array || variable.matrixColumnCount) return;
+  const depth = variable.pointerDepth ?? 1;
+  if (levels.length > depth) fail("too many subscripts or dereferences in sizeof pointer operand", levels[0].line);
+  for (const { index } of levels.reverse())
+    if (index && !isIntegral(indexType(index, context))) fail("sizeof pointer index requires a supported integer expression", index.line);
+  if (depth > levels.length) return SIM_POINTER_BYTES;
+  if (normalized(variable.type) === "void") return fail("sizeof cannot size a void pointee", root.line);
+  return pointeeBytes(normalized(variable.type));
 }

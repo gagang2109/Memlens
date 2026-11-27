@@ -44,6 +44,8 @@ const treeChildPairs = [["lchild", "rchild"], ["llink", "rlink"]] as const;
 export type TreeChildAliases = typeof treeChildPairs[number];
 export type Program = { functions: Map<string, FunctionDef>; structs: Map<string, string[]>; structPointerFields: Map<string, ReadonlySet<string>>; fixedStructFields: Map<string, FixedStructFields>; aliasedTreeStructs: Map<string, TreeChildAliases>; body: Stmt[]; constants: Map<string, number | string>; floatingConstants: Set<string> };
 
+// The teaching VM stores pointers in four-byte slots; this is not the host ABI.
+export const SIM_POINTER_BYTES = 4;
 const types = new Set(["int", "char", "long", "long", "short", "unsigned", "float", "double", "void", "struct", "const", "static"]);
 
 function parseNumberLiteral(text: string, line: number): number {
@@ -168,6 +170,24 @@ export function parse(source: string): Program {
     }
     return `struct${name ? ` ${name}` : ""}`;
   };
+  const pointerTypeEnd = () => {
+    // Recognize simple abstract pointer declarators only. Leave parenthesized
+    // value operands to the regular parser and do not accept array/function types.
+    if (!peek("(")) return undefined;
+    let end = p + 1;
+    const words: string[] = [];
+    while (ts[end]?.kind === "id") words.push(ts[end++].value);
+    const qualifiers = new Set(["const", "volatile", "restrict"]);
+    const base = words.filter(word => !qualifiers.has(word)).join(" ");
+    if (!/^(?:(?:unsigned|signed)(?: (?:char|short(?: int)?|int|long(?: long)?(?: int)?))?|char|short(?: int)?|int|long(?: long)?(?: int)?|float|double|void|struct [A-Za-z_]\w*)$/.test(base)
+        && !aliasTypes.has(base)) return undefined;
+    const firstStar = end;
+    while (ts[end]?.kind === "symbol" && ts[end].value === "*") {
+      end++;
+      while (ts[end]?.kind === "id" && qualifiers.has(ts[end].value)) end++;
+    }
+    if (end > firstStar && ts[end]?.kind === "symbol" && ts[end].value === ")") return end;
+  };
   const parseExpression = (min = 0): Expr => {
     const token = take(); let left: Expr;
     if (token.kind === "string" || token.kind === "char") left = { kind: "literal", value: token.value, line: token.line, literalKind: token.kind };
@@ -183,7 +203,14 @@ export function parse(source: string): Program {
       left = { kind: "literal", value: fields ? fixedStructBytes(fields) : token.value === "char" ? 1 : token.value === "int" ? 4 : 16, line: token.line };
     }
     else if (token.value === "NULL") left = { kind: "literal", value: null, line: token.line };
-    else if (token.value === "sizeof" && !peek("(")) left = { kind: "call", name: "sizeof", args: [parseExpression(12)], line: token.line };
+    else if (token.value === "sizeof") {
+      const end = pointerTypeEnd();
+      if (end !== undefined) {
+        p = end + 1;
+        left = { kind: "literal", value: SIM_POINTER_BYTES, line: token.line };
+      } else if (!peek("(")) left = { kind: "call", name: "sizeof", args: [parseExpression(12)], line: token.line };
+      else left = { kind: "name", name: "sizeof", line: token.line };
+    }
     else if (["!", "-", "*", "&", "++", "--"].includes(token.value)) left = { kind: "unary", op: token.value, expr: parseExpression(12), line: token.line };
     else left = { kind: "name", name: token.value, line: token.line };
     while (p < ts.length) {

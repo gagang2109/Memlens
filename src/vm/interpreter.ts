@@ -2,7 +2,7 @@ import { fixedStructBytes, fixedStructLayout, parse, type Expr, type FunctionDef
 import { Memory, MemoryFault, type Allocation } from "./memory";
 import { Trace, type ArraySnapshot, type FrameVariable, type FrameView } from "./trace";
 import { parseScanset } from "./scanfScanset";
-import { localArraySizeof, isFixedArrayBound } from "./fixedArraySizeof";
+import { localArraySizeof, isFixedArrayBound, pointerOperandSizeof } from "./fixedArraySizeof";
 
 type Value = number | string | null;
 type LocalArrayOwner = { vars: Map<string, RuntimeVariable>; name: string; variable: RuntimeVariable };
@@ -430,6 +430,11 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
         }
         const arrayBytes = localArraySizeof(argument, sizeofContext, runtimeError);
         if (arrayBytes !== undefined) return arrayBytes;
+        const pointerBytes = pointerOperandSizeof(argument, sizeofContext, runtimeError, type => {
+          const fields = program.fixedStructFields.get(type);
+          return fields ? fixedStructBytes(fields) : elementSize(type);
+        });
+        if (pointerBytes !== undefined) return pointerBytes;
         if (argument?.kind === "name") {
           const variable = findVariable(argument.name);
           if (variable && !variable.pointer && !variable.array) {
