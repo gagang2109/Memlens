@@ -119,7 +119,7 @@ function indexType(expr: Expr, context: Context): ValueType | undefined {
         if (actual.rank > 1 || actual.pointers + Number(actual.rank === 1) !== depth || actual.base !== baseType(parameter.type)) return;
       } else if (baseType(parameter.type) === "other" || !isNumeric(actual)) return;
     }
-    return { base: baseType(fn.returnType), pointers: fn.returnsPointer ? 1 : 0, rank: 0 };
+    return { base: baseType(fn.returnType), pointers: fn.returnPointerDepth, rank: 0 };
   }
 }
 

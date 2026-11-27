@@ -24,7 +24,7 @@ export type Stmt =
   | { kind: "break"; line: number }
   | { kind: "continue"; line: number }
   | { kind: "return"; value?: Expr; line: number };
-export type FunctionDef = { name: string; returnType: string; returnsPointer: boolean; params: { name?: string; pointer: boolean; pointerDepth?: number; array?: boolean; matrixColumns?: Expr; type: string }[]; body: Stmt; line: number };
+export type FunctionDef = { name: string; returnType: string; returnsPointer: boolean; returnPointerDepth: number; params: { name?: string; pointer: boolean; pointerDepth?: number; array?: boolean; matrixColumns?: Expr; type: string }[]; body: Stmt; line: number };
 // A null length denotes an ordinary signed-int, float or char field.
 export type FixedStructField = { type: "int" | "char" | "float"; length: number | null };
 export type FixedStructFields = ReadonlyMap<string, FixedStructField>;
@@ -246,6 +246,8 @@ export function parse(source: string): Program {
     const declarations: Stmt[] = [];
     while (true) {
       let pointerDepth = 0; while (peek("*")) { take(); pointerDepth++; }
+      if (peek("(") && ts[p + 1]?.value === "*")
+        throw new UnsupportedC(start.line, "parenthesized pointer declarators, such as pointers to arrays or functions, are not modeled");
       const pointer = pointerDepth > 0; const name = take();
       const arrayLengths: Expr[] = []; const omittedDimensions: number[] = [];
       while (peek("[")) { take("["); if (!peek("]")) arrayLengths.push(parseExpression(1)); else { omittedDimensions.push(arrayLengths.length); arrayLengths.push({ kind: "literal", value: 0, line: start.line }); } take("]"); }
@@ -296,7 +298,12 @@ export function parse(source: string): Program {
   };
   while (ts[p].kind !== "eof") {
     if (isType()) {
-      const save = p; const type = parseType(); const pointer = Boolean(peek("*") && take()); const name = take();
+      const save = p; const type = parseType();
+      // A function may return a pointer to a pointer, e.g. a heap matrix
+      // constructor. Consume the whole declarator before looking for its name.
+      let returnPointerDepth = 0;
+      while (peek("*")) { take(); returnPointerDepth++; }
+      const pointer = returnPointerDepth > 0; const name = take();
       if (peek("(")) {
         take("("); const params: FunctionDef["params"] = [];
         const parameterNames = new Set<string>();
@@ -330,7 +337,7 @@ export function parse(source: string): Program {
         take(")");
         if (peek(";")) { take(); continue; }
         if (functions.has(name.value)) throw new Error(`line ${name.line}: duplicate definition of function '${name.value}'`);
-        functions.set(name.value, { name: name.value, returnType: type, returnsPointer: pointer, params, body: statement(), line: name.line });
+        functions.set(name.value, { name: name.value, returnType: type, returnsPointer: pointer, returnPointerDepth, params, body: statement(), line: name.line });
       } else { p = save; body.push(statement()); }
     } else if (peek(";")) take(";"); else body.push(statement());
   }
