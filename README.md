@@ -5,8 +5,7 @@
 <h1 align="center">Memlens</h1>
 <p align="center"><strong>Step through your C code. See the pointers. Rewind the mistake.</strong></p>
 
-**Main demo:** [memlensc.vercel.app](https://memlensc.vercel.app)  
-**Alternate demo:** [memlens-six.vercel.app](https://memlens-six.vercel.app)
+**Try Memlens:** [memlensc.vercel.app](https://memlensc.vercel.app/)
 
 Memlens is a browser-based learning tool for C data structures and memory. Edit a program, run it, then explore its recorded execution one change at a time: stack frames, heap allocations, pointer arrows, and memory errors.
 
@@ -22,8 +21,8 @@ Memlens is a browser-based learning tool for C data structures and memory. Edit 
 
 ## Try it in a minute
 
-1. Open the [main demo](https://memlensc.vercel.app) and choose a sample, or edit the C source.
-2. If your program uses `scanf`, enter its values in **Program input**.
+1. Open the [main demo](https://memlensc.vercel.app) and paste your own C program into Source, or choose a sample.
+2. If your program uses `scanf`, enter its values in **Console → Program input**, or select **Interactive console** in the Source panel to answer prompts during execution.
 3. Click **Run** to record execution.
 4. Step forward and backward. Watch the current explanation, console, call stack, and heap change together.
 5. Zoom or pan the memory view to follow pointers. When an error appears, step backward to find what caused it.
@@ -35,6 +34,10 @@ Try the [doubly linked list sample](https://memlensc.vercel.app/#sample=doubly-l
 Try [Swap two tree children](https://memlensc.vercel.app/#sample=tree-swap) and step through its three pointer assignments. In the middle, both links point to the same node while `saved` keeps the original left child reachable. After the swap, the children trade sides but keep their addresses.
 
 Try [BFS / DFS](https://memlensc.vercel.app/#sample=graph-traversal) to follow the waiting BFS queue and the active recursive DFS calls as you step or rewind. For your own code, select **View as graph** on a square numeric adjacency matrix with up to 16 vertices. Each nonzero entry is an edge, including weighted edges and self-loops. The default is directed; you can choose an undirected view when the matrix is symmetric. Traversal labels are provided for the bundled sample only, not inferred from arbitrary variable names.
+
+After running, step until the variable is visible in **Memory → Call Stack**. Arrays and matrices are shown there. Eligible variables have buttons for graph, stack, queue, or heap-matrix views. A missing button does not mean the code is invalid; Memlens does not infer arbitrary diagram shapes.
+
+[Report a problem on GitHub](https://github.com/gagang2109/Memlens/issues). Issues are public; include only the C code and input you choose to share. Memlens does not attach them automatically.
 
 ## What you can explore
 
@@ -219,7 +222,7 @@ The byte-addressable memory model tracks initialized, uninitialized, and freed m
 
 ## Possible future directions
 
-Function pointers, unions, a bit-level memory view, shareable links, and image/GIF export are ideas for future work, **not current features**.
+Function pointers, unions, a bit-level memory view, links for custom code, and image/GIF export are ideas for future work, **not current features**.
 
 ## License
 
@@ -229,7 +232,7 @@ Function pointers, unions, a bit-level memory view, shareable links, and image/G
 
 `main()` is optional for supported snippets. Put your types, helper functions and function in the source editor, then open **Test setup & call** to create inputs and call it. The setup is appended after the source; trace and diagnostic labels distinguish source lines from test-setup lines. No function or arguments are guessed. Use `printf` when you want to display a result. Clear setup before running a complete program with `main()`. Both editor drafts are saved separately in this browser when storage is available.
 
-Choose **Practice tree height — separate test setup** for an editable two-node tree example. Its height convention counts nodes (empty tree 0, leaf 1). Selecting any sample explicitly replaces the source and setup; copy your draft before replacing it. The runner still supports only Memlens's documented C subset, not arbitrary missing types, libraries or function signatures.
+Choose **Practice tree height — separate test setup** for an editable two-node tree example. Its height convention counts nodes (empty tree 0, leaf 1). Selecting a sample replaces the source and setup, but you can recover the last replaced custom draft using **Restore previous draft**. The runner still supports only Memlens's documented C subset, not arbitrary missing types, libraries or function signatures.
 
 ### Start a data-structure exercise
 
@@ -237,7 +240,7 @@ The **Start from a scaffold** control directly above the source editor is separa
 
 For custom adjacency-list C programs, select **View head as adjacency list** in **Call Stack** (the label follows your array name). Choose the number of active vertices, including isolated ones; the array may have a larger capacity. The graph shows directed connections, with the actual neighbor order and node addresses below. This view supports up to 16 active vertices, one-dimensional arrays of named struct pointers, and heap nodes with a signed int field named `to`, `dest` or `vertex` plus a self-pointer `next`. It neither guesses traversal state nor treats an integer named `next` as a link.
 
-Choosing a category does not alter your draft. **Use starter** asks before replacing source and clearing the optional test setup; **Cancel** leaves both intact. **Restore previous draft** recovers the source/setup pair replaced by the most recent starter during this session (until reload or another starter). Copy important work before replacing it. The Graph starter uses a 2D adjacency matrix. After running, find `graph` in **Call Stack** and click **View graph as graph**. Turn on **Undirected if symmetric** to show each completed connection once. While stepping through the two assignments in `addEdge`, you may briefly see a directed edge until the reverse entry is set. All starters use Memlens's supported subset; they do not infer arbitrary types or function signatures.
+Choosing a category does not alter your draft. **Use starter** asks before replacing source and clearing the optional test setup; **Cancel** leaves both intact. **Restore previous draft** recovers one previous source/setup pair. When browser storage is available, it also works after a reload. Save important work separately if you need to retain multiple drafts. The Graph starter uses a 2D adjacency matrix. After running, find `graph` in **Call Stack** and click **View graph as graph**. Turn on **Undirected if symmetric** to show each completed connection once. While stepping through the two assignments in `addEdge`, you may briefly see a directed edge until the reverse entry is set. All starters use Memlens's supported subset; they do not infer arbitrary types or function signatures.
 
 
 ### Interactive input (optional)

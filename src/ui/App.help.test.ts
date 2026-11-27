@@ -46,6 +46,11 @@ it("opens a single shortcuts and usage panel from ? or the Help button, with foc
   expect(key(region(), "Tab").defaultPrevented).toBe(true);
   expect(document.activeElement).toBe(readme);
   key(readme, "Tab");
+  const report = dialog()!.querySelector<HTMLAnchorElement>('a[href$="/issues"]')!;
+  expect(document.activeElement).toBe(report);
+  expect(report.href).toBe("https://github.com/gagang2109/Memlens/issues");
+  expect(dialog()?.textContent).toContain("nothing is attached automatically");
+  key(report, "Tab");
   expect(document.activeElement).toBe(dismiss());
   expect(key(dismiss(), "Tab").defaultPrevented).toBe(true);
   expect(document.activeElement).toBe(region());

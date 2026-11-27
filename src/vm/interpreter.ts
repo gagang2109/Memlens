@@ -1,3 +1,4 @@
+import { InvalidC, UnsupportedC } from "../lang/diagnostics";
 import { SIM_POINTER_BYTES, fixedStructBytes, fixedStructLayout, parse, type Expr, type FixedStructField, type FunctionDef, type Program, type Stmt } from "../lang/parser";
 import { Memory, MemoryFault, type Allocation } from "./memory";
 import { Trace, type ArraySnapshot, type FrameVariable, type FrameView } from "./trace";
@@ -35,7 +36,8 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
   try { program = parse(source); } catch (caught) {
     const message = caught instanceof Error ? caught.message : "unsupported construct";
     const match = message.match(/line (\d+)/); const line = match ? Number(match[1]) : 1;
-    const error = new MemoryFault(`parse error: ${message}`, line, 0, undefined, true, "parse");
+    const unsupported = caught instanceof UnsupportedC;
+    const error = new MemoryFault(unsupported ? message : `parse error: ${message}`, line, 0, undefined, true, unsupported ? "unsupported-c" : caught instanceof InvalidC ? "invalid-c" : "parse");
     trace.add({ line, stdout: "", memory: { bytes: [], shadows: [], allocations: [] }, frames: [], event: "error", message: error.reason });
     return { trace, status: "error", error, leaks: [], orphanedAtExit: [] };
   }
@@ -844,7 +846,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
             stdinCursor++; continue;
           }
           const conversion = format.slice(i).match(/^%(\*)?(\d*)([dfcs\[])/);
-          if (!conversion) runtimeError("unsupported scanf conversion", expression.line);
+          if (!conversion) throw new MemoryFault("unsupported scanf conversion; see the supported C subset for available formats", expression.line, steps, undefined, true, "unsupported-c");
           const [, suppressed, widthText, specifier] = conversion!;
           i += conversion![0].length - 1;
           const scanset = specifier === "[" ? parseScanset(format, i + 1) : undefined;

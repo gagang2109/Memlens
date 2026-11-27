@@ -76,5 +76,5 @@ export class Memory {
     return this.allocations.filter(a => a.freeStep === undefined && !rootAddresses.some(root => this.find(root) === a));
   }
 }
-export type DiagnosticKind = "parse" | "unresolved-function";
+export type DiagnosticKind = "parse" | "invalid-c" | "unsupported-c" | "unresolved-function";
 export class MemoryFault extends Error { constructor(public readonly reason: string, public readonly line: number, public readonly step: number, public readonly allocation?: Allocation, public readonly fatal = true, public readonly diagnosticKind?: DiagnosticKind) { super(reason); } }

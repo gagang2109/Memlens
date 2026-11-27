@@ -1,3 +1,4 @@
+import { UnsupportedC } from "./diagnostics";
 import { isDecimalFloatingLiteral, lex, type Token } from "./lexer";
 import { stripComments } from "./comments";
 
@@ -134,7 +135,7 @@ export function parse(source: string): Program {
         fields.push(label);
         if (peek("[")) {
           const bracket = take("[");
-          if (!name || (base !== "int" && base !== "char") || depth) throw new Error(`line ${bracket.line}: only fixed int or char arrays in named structs are supported`);
+          if (!name || (base !== "int" && base !== "char") || depth) throw new UnsupportedC(bracket.line, "only fixed int or char arrays in named structs are supported");
           const bound = take();
           const length = bound.kind === "number" && !isDecimalFloatingLiteral(bound.value)
             ? parseNumberLiteral(bound.value, bound.line)
@@ -142,7 +143,7 @@ export function parse(source: string): Program {
           if (typeof length !== "number" || !Number.isSafeInteger(length) || length <= 0)
             throw new Error(`line ${bound.line}: struct array member needs a positive integer literal or constant`);
           take("]");
-          if (peek("[")) throw new Error(`line ${bracket.line}: multidimensional struct array members are not supported`);
+          if (peek("[")) throw new UnsupportedC(bracket.line, "multidimensional struct array members are not supported");
           fixedFields.set(label, { type: base, length });
           hasFixedArray = true;
         } else if ((base === "int" || base === "float") && !depth) fixedFields.set(label, { type: base, length: null });
@@ -158,8 +159,8 @@ export function parse(source: string): Program {
       }
       take("}"); structs.set(name, fields); structPointerFields.set(structType, pointerFields);
       if (hasFixedArray) {
-        if (fixedFields.size !== fields.length) throw new Error(`line ${nameToken.line}: a struct with a fixed array currently needs distinct signed int or float fields, or fixed int or char arrays`);
-        if (fixedStructBytes(fixedFields) > 65536) throw new Error(`line ${nameToken.line}: struct exceeds simulator limit (65536 bytes)`);
+        if (fixedFields.size !== fields.length) throw new UnsupportedC(nameToken.line, "a struct with a fixed array currently needs distinct signed int or float fields, or fixed int or char arrays");
+        if (fixedStructBytes(fixedFields) > 65536) throw new UnsupportedC(nameToken.line, "struct exceeds simulator limit (65536 bytes)");
         fixedStructFields.set(structType, fixedFields);
       }
       // A threaded tree can use the same pointer names for successors.
@@ -223,7 +224,7 @@ export function parse(source: string): Program {
       if ((peek("++") || peek("--")) && (left.kind === "name" || left.kind === "member" || left.kind === "index" || (token.value === "(" && left.kind === "unary" && left.op === "*"))) { const op = take().value; left = { kind: "unary", op, expr: left, line: token.line, postfix: true }; continue; }
       if (peek("(") && (left.kind === "name" || left.kind === "unary")) {
         take("("); const args: Expr[] = []; while (!peek(")")) { args.push(parseExpression(1)); if (!peek(",")) break; take(","); } take(")");
-        if (left.kind !== "name") throw new Error(`line ${token.line}: only named calls are supported`);
+        if (left.kind !== "name") throw new UnsupportedC(token.line, "only named calls are supported");
         left = { kind: "call", name: left.name, args, line: token.line }; continue;
       }
       if (peek("[")) { take("["); const index = parseExpression(); take("]"); left = { kind: "index", object: left, index, line: token.line }; continue; }
@@ -257,7 +258,7 @@ export function parse(source: string): Program {
         init = arrayInitializer[0]; arrayInitializer = undefined;
       }
       if (charArray && arrayInitializer?.some(value => value.kind === "literal" && value.literalKind === "string"))
-        throw new Error(`line ${start.line}: unsupported char array initializer; use one string or a list of character values`);
+        throw new UnsupportedC(start.line, "unsupported char array initializer; use one string or a list of character values");
       if (omittedDimensions.length) {
         // Preserve [] as an inferred bound, distinct from an explicit zero.
         // Only the one-dimensional initializer forms modeled by this VM are inferred.
@@ -319,7 +320,7 @@ export function parse(source: string): Program {
             if (parameterDepth || peek("]")) throw new Error(`line ${name.line}: matrix parameters need a fixed column count and a scalar element type`);
             matrixColumns = parseExpression();
             take("]");
-            if (peek("[")) throw new Error(`line ${name.line}: only two-dimensional matrix parameters are supported`);
+            if (peek("[")) throw new UnsupportedC(name.line, "only two-dimensional matrix parameters are supported");
           }
           const pointerDepth = parameterDepth + (array ? 1 : 0);
           params.push({ name: parameterName?.value, pointer: pointerDepth > 0, ...(pointerDepth ? { pointerDepth } : {}), array, ...(matrixColumns ? { matrixColumns } : {}), type: parameterType });

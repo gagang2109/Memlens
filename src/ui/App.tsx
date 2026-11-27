@@ -35,6 +35,17 @@ import { SectionNavigation } from "./SectionNavigation";
 import { shouldHandlePlaybackShortcut, shouldOpenWorkspaceHelp, workspaceRunShortcut } from "./shortcuts";
 import { checkPrediction, nextPointerPrediction, type PointerPrediction } from "../vm/predict";
 
+type Draft = { code: string; setup: string };
+const previousDraftKey = "memlens-previous-draft";
+const reportProblem = "https://github.com/gagang2109/Memlens/issues";
+
+function readPreviousDraft(): Draft | undefined {
+  try {
+    const draft = JSON.parse(localStorage.getItem(previousDraftKey) ?? "null");
+    if (typeof draft?.code === "string" && typeof draft.setup === "string") return draft;
+  } catch { /* storage is optional */ }
+}
+
 function StackValue({ name, variable, change, generation }: { name: string; variable: FrameVariable; change?: VariableChange; generation: number }) {
   if (variable.array) return <IndexedArray key={`${generation}:${variable.array.base}`} name={name} array={variable.array} change={change} />;
   const delta = change && "before" in change ? change : undefined;
@@ -195,7 +206,7 @@ export function App() {
   // Preserve an explicitly chosen alias, otherwise identify the actual editor content.
   const codeSample = code === samples[sample].code ? sample : (Object.keys(samples) as (keyof typeof samples)[]).find(key => samples[key].code === code) ?? "custom";
   const selectedSample = codeSample !== "custom" && setup === (codeSample === "tree-height" ? treeHeightSetup : "") ? codeSample : "custom";
-  const [previousDraft, setPreviousDraft] = useState<{ code: string; setup: string }>();
+  const [previousDraft, setPreviousDraft] = useState<Draft | undefined>(readPreviousDraft);
   const [runGeneration, setRunGeneration] = useState(0);
   const [selectedHeapMatrix, setSelectedHeapMatrix] = useState<{ generation: number; base: number; name: string; invocation?: number }>();
   const [selectedGraph, setSelectedGraph] = useState<{ generation: number; base: number; name: string; kind?: "list"; invocation?: number }>();
@@ -257,10 +268,13 @@ export function App() {
   ].map(node => [node.address, node])).values()].sort((a, b) => a.address - b.address) : [];
   const faultStep = fault && trace ? trace.steps.findIndex(step => step.event === "error") : -1;
   const faultReached = Boolean(fault && faultStep >= 0 && cursor >= faultStep);
-  const parseFailure = fault?.diagnosticKind === "parse";
+  const invalidC = fault?.diagnosticKind === "invalid-c";
+  const parseFailure = fault?.diagnosticKind === "parse" || invalidC;
+  const unsupportedC = fault?.diagnosticKind === "unsupported-c";
+  const faultHasInlineLine = /\bline \d+:/.test(error);
   const unresolvedFunction = fault?.diagnosticKind === "unresolved-function";
   const stepExplanation = explainStep(view, { kind: fault?.diagnosticKind, canRewind: cursor > 0 });
-  const faultLocation = fault && !((parseFailure || unresolvedFunction) && /\bline \d+:/.test(error)) ? location(fault.line) : undefined;
+  const faultLocation = fault && !((parseFailure || unresolvedFunction || unsupportedC) && faultHasInlineLine) ? location(fault.line) : undefined;
   const moveTo = (next: number) => { if (!trace) return; setPredictionResult(undefined); const bounded = Math.max(0, Math.min(next, trace.steps.length - 1)); if (predictMode && !stale && bounded > cursor) { const question = nextPointerPrediction(trace.steps[cursor], trace.steps[bounded]); if (question) { setPredictionTarget(bounded); setPrediction(question); setPlaying(false); return; } } setPrediction(undefined); setPredictionResult(undefined); setCursor(bounded); };
   const showHelp = (trigger?: HTMLElement) => {
     helpTrigger.current = trigger ?? (document.activeElement instanceof HTMLElement ? document.activeElement : undefined);
@@ -359,7 +373,17 @@ export function App() {
     setCode(nextCode); setSetup(nextSetup); setLastRun(undefined); setTrace(undefined); setExecutionMode(undefined);
     setFault(undefined); setError(""); setLeaks([]); setPlaying(false); setPrediction(undefined); setPredictionResult(undefined); setCursor(0); setHighlightedAddress(undefined);
   };
+  const savePreviousDraft = (draft: Draft | undefined) => {
+    // Save synchronously before replacing the active source; a reload can
+    // happen before passive effects run.
+    try {
+      if (draft) localStorage.setItem(previousDraftKey, JSON.stringify(draft));
+      else localStorage.removeItem(previousDraftKey);
+    } catch { /* the in-memory restore control is still available */ }
+    setPreviousDraft(draft);
+  };
   const selectSample = (key: keyof typeof samples) => {
+    if (selectedSample === "custom") savePreviousDraft({ code, setup });
     setSample(key); replaceDraft(samples[key].code, key === "tree-height" ? treeHeightSetup : "");
   };
   const loadLinkedSample = () => {
@@ -380,16 +404,20 @@ export function App() {
       },
     })),
   ];
-  const useStarter = (key: StarterKey) => { setPreviousDraft({ code, setup }); replaceDraft(starterScaffolds[key].code, ""); };
-  const restoreDraft = () => { if (previousDraft) { replaceDraft(previousDraft.code, previousDraft.setup); setPreviousDraft(undefined); } };
+  const useStarter = (key: StarterKey) => { if (!previousDraft || selectedSample === "custom") savePreviousDraft({ code, setup }); replaceDraft(starterScaffolds[key].code, ""); };
+  const restoreDraft = () => { if (previousDraft) { // Swap edited source rather than throwing it away on Restore.
+    const edited = selectedSample === "custom" && !Object.values(starterScaffolds).some(starter => starter.code === code && setup === "");
+    replaceDraft(previousDraft.code, previousDraft.setup);
+    savePreviousDraft(edited ? { code, setup } : undefined); } };
   const lines = useMemo(() => code.split(/\r?\n/), [code]);
   const spotlightDialog = spotlight && <Spotlight items={spotlightItems} onClose={closeSpotlight} onSelect={item => { if (item.action() !== false) closeSpotlight(); }} />;
-  const helpDialog = help && <WorkspaceHelp onClose={closeHelp} />;
+  const helpDialog = help && <WorkspaceHelp onClose={closeHelp} reportProblem={reportProblem} />;
   return <main ref={workspace} tabIndex={-1} aria-label="Code execution workspace">
     <header><div className="brand"><img className="brand-mark" src="/memlens-mark.svg" width="36" height="36" alt="" aria-hidden="true" /> MEMLENS</div><div className="tag">Step through your C code and watch memory rewind.</div>
       <select ref={samplesPicker} aria-label="Samples" value={selectedSample} onChange={e => { if (e.target.value !== "custom") selectSample(e.target.value as keyof typeof samples); }}><option value="custom" disabled>Custom code (current editor contents)</option>{Object.entries(sampleLabels).map(([key,label]) => <option key={key} value={key}>{label}</option>)}</select>
       <button type="button" className="spotlight-trigger" aria-keyshortcuts="Control+k Meta+k" onClick={event => { showSpotlight(); spotlightTrigger.current = event.currentTarget; }}>Spotlight <kbd>Ctrl / ⌘ K</kbd></button><button className="run" onClick={() => runCode()} title="Run code (Ctrl / ⌘ + Enter)" aria-keyshortcuts="Control+Enter Meta+Enter">Run</button></header>
-    <SectionNavigation onOpenHelp={showHelp} helpOpen={help} />
+    <SectionNavigation onOpenHelp={showHelp} helpOpen={help} onRun={() => runCode()} />
+    {!trace && !error && <p className="launch-quickstart">Paste your own C code or choose a sample. Select <strong>Run</strong>, then step forward or backward in <strong>Trace</strong>.</p>}
     {linkedSample && <section className="linked-sample" aria-label="Shared sample">
       <strong>{sampleLabels[linkedSample]}</strong>
       <span>Opening the link hasn’t changed your code or test setup.</span>
@@ -467,7 +495,7 @@ export function App() {
               : <div className="diagram-empty">{emptyRun ? "No heap activity was recorded." : "Run a program to visualize its structure."}</div>)}
             <div className="heap-summary">{allocations.filter(allocation => allocation.freeStep === undefined).length} live · {allocations.filter(allocation => allocation.freeStep !== undefined).length} freed{!customHeapMatrix && ` · ${model?.nodes.filter(node => node.orphaned).length ?? 0} orphaned`}</div>
           </div>
-          <div><h3>CALL STACK</h3><div className="stack-visual"><div className="stack-label">Active functions and local variables</div>{view && view.frames.slice().reverse().map((frame, frameIndex) => <div key={frameKey(frame.invocation, frame.name, view.frames.length-1-frameIndex)} className="frame" data-invocation={frame.invocation}>
+          <div><h3>CALL STACK</h3><div className="stack-visual"><div className="stack-label">Active functions and local variables</div>{view && <p className="view-guide">Matrices show rows and columns here. When a variable supports another view, use its <strong>View as</strong> button here.</p>}{view && view.frames.slice().reverse().map((frame, frameIndex) => <div key={frameKey(frame.invocation, frame.name, view.frames.length-1-frameIndex)} className="frame" data-invocation={frame.invocation}>
               <small className="frame-name">{frame.invocation === -1 ? "File scope" : executionMode === "snippet" && frameIndex === view.frames.length - 1 ? "snippet" : `${frame.name}()`}</small>
               {Object.entries(frame.variables ?? {}).map(([key, variable]) => {
                 const change = frame.invocation === undefined ? undefined : changes.frames.get(frame.invocation)?.get(key);
@@ -523,14 +551,14 @@ export function App() {
         {error && !fault && <div className="crime" role="alert"><b>PROGRAM COULD NOT RUN</b><span>{diagnostic(error)}</span></div>}
         {fault && !faultReached && faultStep >= 0 && <div className="error-ahead">Error ahead at step {stepNumber(faultStep)}</div>}
         {fault && faultReached && <div className="crime" role="alert">
-          <b>{parseFailure ? "COULD NOT READ C CODE" : unresolvedFunction ? "FUNCTION NOT RESOLVED" : "EXECUTION ERROR"}</b>
+          <b>{unsupportedC ? "NOT SUPPORTED IN MEMLENS" : invalidC ? "C SYNTAX ERROR" : parseFailure ? "COULD NOT READ C CODE" : unresolvedFunction ? "FUNCTION NOT RESOLVED" : "EXECUTION ERROR"}</b>
           <span>{diagnostic(error)}{faultLocation && ` · ${faultLocation}`}</span>
-          {unresolvedFunction && <a href="https://github.com/gagang2109/Memlens#supported-c-subset" target="_blank" rel="noopener noreferrer">Supported C subset ↗</a>}
+          {(unresolvedFunction || unsupportedC || parseFailure) && <a href="https://github.com/gagang2109/Memlens#supported-c-subset" target="_blank" rel="noopener noreferrer">Supported C subset ↗</a>}
           {fault.allocation && <>
             <button onClick={() => setCursor(fault.allocation!.allocStep)}>alloc {location(fault.allocation.line)}</button>
             {fault.allocation.freeStep !== undefined && <button onClick={() => setCursor(fault.allocation!.freeStep!)}>free step {stepNumber(fault.allocation.freeStep)}</button>}
           </>}
-          {!parseFailure && !unresolvedFunction && <button onClick={() => setCursor(faultStep)}>access {location(fault.line)}</button>}
+          {!parseFailure && !unresolvedFunction && !unsupportedC && <button onClick={() => setCursor(faultStep)}>access {location(fault.line)}</button>}
         </div>}
         {!fault && leaks.length > 0 && <div className="leak-report"><b>MEMORY NOT FREED AT EXIT</b><span>{leaks.length} block{leaks.length === 1 ? " was" : "s were"} never freed.</span>{leaks.map(leak => <small key={leak.address}>allocation {location(leak.line)}</small>)}</div>}
         {quickLook && quickLook.step === view && <PointerQuickLook {...quickLook} onClose={closeQuickLook} />}
@@ -538,7 +566,7 @@ export function App() {
       </div><SplitDivider boundary={1} sizes={splitSizes} onSize={onSplitSizes}/>
       <div className="terminal-panel" hidden={Boolean(effectiveFocus && effectiveFocus !== "terminal")}><ConsoleWindow dockRequest={dockRequest} revealRequest={consoleReveal} focused={focusPane === "terminal"} onFocusPane={() => toggleFocus("terminal")} waiting={waiting && !stale}>{inputMode === "interactive" && <InteractiveConsole key={runGeneration} revealRequest={consoleReveal} outputExpanded={outputExpanded} onToggleOutput={toggleOutput} output={view?.stdout ?? ""} waiting={waiting} active={Boolean(lastRun)} stale={stale} atLatest={cursor === (trace?.steps.length ?? 0) - 1} transcript={transcript} error={consoleError} onSubmit={submitInteractive} onEOF={() => submitInteractive()} onLatest={() => { setPlaying(false); setCursor(Math.max(0, (trace?.steps.length ?? 1) - 1)); }} onStop={() => { session.current = undefined; setWaiting(false); setPlaying(false); setConsoleError("Stopped. The recorded trace remains available; Run starts a new session."); }} />}{inputMode === "ahead" && <div className="console"><div className="panel-title">CONSOLE</div><label className="stdin-label">Program input (scanf) <input aria-label="Standard input" value={stdin} onChange={event => setStdin(event.target.value)} placeholder="e.g. 3 10 20 30 (space-separated)" /></label><ConsoleOutput expanded={outputExpanded} onToggle={toggleOutput}>{view ? view.stdout || "No output printed at this step." : emptyRun ? "Run finished without printed output." : "Run a program to see its printed output (printf)."}</ConsoleOutput></div>}</ConsoleWindow></div></section>
     {!visualizer.fullscreen && (helpDialog || spotlightDialog)}
-    <footer><a href="https://github.com/gagang2109/Memlens" target="_blank" rel="noopener noreferrer">Memlens on GitHub ↗</a> · supports a subset of C, not a full C compiler · addresses and memory are simulated</footer>
+    <footer><a href="https://github.com/gagang2109/Memlens" target="_blank" rel="noopener noreferrer">Memlens on GitHub ↗</a> · <a href={reportProblem} target="_blank" rel="noopener noreferrer">Report a problem ↗</a> · supports a subset of C, not a full C compiler · addresses and memory are simulated</footer>
   </main>;
 }
 

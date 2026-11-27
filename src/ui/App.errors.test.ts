@@ -178,3 +178,43 @@ it("uses one visible free-step number in the fault, timeline, node and Quick Loo
   act(() => inspect.click());
   expect(container.querySelector('[aria-label="Quick Look: p"]')?.textContent).toContain(`Freed at step ${number}; not readable.`);
 });
+
+it("identifies a valid but unsupported multidimensional struct member before running", () => {
+  localStorage.setItem("memlens-code", "struct Grid {\n  int cells[2][2];\n};\nint main(void) { return 0; }");
+  act(() => root.render(createElement(App)));
+  clickRun();
+  const panel = container.querySelector(".crime");
+  expect(panel?.textContent).toContain("NOT SUPPORTED IN MEMLENS");
+  expect(panel?.textContent).toContain("line 2: multidimensional struct array members are not supported");
+  expect(panel?.textContent).not.toContain("parse error");
+  expect(panel?.querySelector('a')?.textContent).toContain("Supported C subset");
+});
+
+it("identifies an unsupported input conversion at the call, while keeping the preceding trace", () => {
+  localStorage.setItem("memlens-code", "#include <stdio.h>\nint main(void) {\n  double value;\n  scanf(\"%lf\", &value);\n}");
+  act(() => root.render(createElement(App)));
+  clickRun();
+  act(() => container.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true })));
+  expect(container.querySelector(".crime")?.textContent).toContain("NOT SUPPORTED IN MEMLENS");
+  expect(container.querySelector(".crime")?.textContent).toContain("line 4");
+  act(() => container.dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true })));
+  expect(container.querySelector(".crime")).toBeNull();
+});
+
+it("distinguishes an unterminated block comment from a simulator limitation", () => {
+  localStorage.setItem("memlens-code", "int main(void) { return 0; }\n/* never closed");
+  act(() => root.render(createElement(App)));
+  clickRun();
+  const panel = container.querySelector(".crime");
+  expect(panel?.textContent).toContain("C SYNTAX ERROR");
+  expect(panel?.textContent).toContain("line 2: unterminated block comment");
+  expect(panel?.textContent).not.toContain("NOT SUPPORTED");
+});
+
+it("offers Run inside the narrow-layout navigation as well as the header", () => {
+  localStorage.setItem("memlens-code", "int main(void) { int n = 2; printf(\"%d\", n); return 0; }");
+  act(() => root.render(createElement(App)));
+  expect(container.querySelector(".launch-quickstart")?.textContent).toContain("Paste your own C code");
+  act(() => container.querySelector<HTMLButtonElement>("nav .mobile-run")!.click());
+  expect(container.textContent).toContain("step 1 of");
+});

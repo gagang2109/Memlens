@@ -1,3 +1,5 @@
+import { InvalidC } from "./diagnostics";
+
 export type TokenKind = "id" | "number" | "string" | "char" | "symbol" | "eof";
 export type Token = { kind: TokenKind; value: string; line: number; column: number };
 
@@ -21,7 +23,7 @@ export function lex(source: string): Token[] {
         if (source[i] === "\n") { line++; column = 1; } else column++;
         i++;
       }
-      if (i >= source.length) throw new Error(`line ${openingLine}: unterminated block comment`);
+      if (i >= source.length) throw new InvalidC(openingLine, "unterminated block comment");
       i += 2; column += 2; continue;
     }
     const l = line, c = column;
@@ -57,7 +59,7 @@ export function lex(source: string): Token[] {
           v += escapes[escape];
         }
       }
-      if (i >= source.length) throw new Error(`line ${l}: unterminated ${quote === '"' ? "string" : "character"} literal`);
+      if (i >= source.length) throw new InvalidC(l, `unterminated ${quote === '"' ? "string" : "character"} literal`);
       i++; column++;
       if (quote === "'" && v.length !== 1) throw new Error(`line ${l}: expected a single character literal`);
       push(quote === '"' ? "string" : "char", v, l, c); continue;

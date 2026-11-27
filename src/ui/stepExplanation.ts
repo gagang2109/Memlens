@@ -3,13 +3,17 @@ import type { TraceStep } from "../vm/trace";
 
 /** Explain only recorded events, not an inferred C statement result. */
 export function explainStep(step?: Pick<TraceStep, "line" | "event" | "message">, options: { kind?: DiagnosticKind; canRewind?: boolean } = {}): string {
-  if (!step) return "Choose a sample, click Run, then use step forward to explore one recorded change at a time.";
+  if (!step) return "To record changes, click Run. Then step backward or forward.";
+  if (step.event === "error" && options.kind === "invalid-c")
+    return `Line ${step.line}: Fix the C syntax error below and run again. Nothing ran.`;
   if (step.event === "error" && options.kind === "parse") {
     const hint = step.message?.includes("expected ';'")
       ? " Check this line and the statement above it for a missing semicolon."
-      : " Review the reported token or construct, then run again.";
+      : " Check the reported location. If the code works in a C compiler, it may be outside Memlens’s supported subset.";
     return `Line ${step.line}: Memlens could not read the code, so nothing ran.${hint}`;
   }
+  if (step.event === "error" && options.kind === "unsupported-c")
+    return `Line ${step.line}: Memlens stopped at a feature it does not support. See the message below.`;
   if (step.event === "error" && options.kind === "unresolved-function")
     return `Line ${step.line}: Execution stopped at a function call that Memlens could not resolve. See the message below.`;
   const explanations = {

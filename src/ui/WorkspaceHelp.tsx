@@ -26,9 +26,10 @@ const shortcuts = {
   ],
 } as const;
 
-export function WorkspaceHelp({ onClose }: { onClose: () => void }) {
+export function WorkspaceHelp({ onClose, reportProblem }: { onClose: () => void; reportProblem: string }) {
   const content = useRef<HTMLDivElement>(null);
   const readme = useRef<HTMLAnchorElement>(null);
+  const report = useRef<HTMLAnchorElement>(null);
   const dismiss = useRef<HTMLButtonElement>(null);
   useEffect(() => { content.current?.focus({ preventScroll: true }); }, []);
 
@@ -40,7 +41,7 @@ export function WorkspaceHelp({ onClose }: { onClose: () => void }) {
       onClose();
     } else if (event.key === "Tab") {
       event.preventDefault();
-      const stops = [content.current, readme.current, dismiss.current];
+      const stops = [content.current, readme.current, report.current, dismiss.current];
       const active = stops.findIndex(stop => stop === document.activeElement);
       const next = active < 0 ? 0 : (active + (event.shiftKey ? -1 : 1) + stops.length) % stops.length;
       stops[next]?.focus();
@@ -64,9 +65,10 @@ export function WorkspaceHelp({ onClose }: { onClose: () => void }) {
           <h3>Using the workspace</h3>
           <p><strong>Start here:</strong> Choose a sample or paste your own C. Run, then step or play to see what changes. Memlens supports a subset of C; you can also run a snippet without <code>main()</code>.</p>
           <p><strong>Read the diagram:</strong> Arrows show where pointers point. <code>NULL</code> means no target, and <code>0x…</code> addresses are simulated. Don’t access freed blocks. Gold highlights compare this step with the previous recorded step. Use Fit width or the fullscreen control when you need more room.</p>
-          <p><strong>Read arrays:</strong> Find indexed cells in Call Stack. Matrices use row and column headers. Large arrays have page controls, including a shortcut to changes off the current page. For an adjacency matrix, choose View as graph, or run the BFS / DFS sample to see its queue and recursive calls.</p>
+          <p><strong>Find structure views:</strong> After Run, step until your variables appear under Memory → Call Stack. Indexed arrays and matrices are shown there. If a variable qualifies, select its View as button to open a graph, stack, queue, or heap matrix. Memlens does not infer arbitrary C data structures. For examples, try Array stack, Linked queue, or BFS / DFS under Samples.</p>
           <p><strong>Give the program input:</strong> Fill in standard input before running, or use Interactive console to type when prompted. Run &amp; Play leaves a waiting prompt ready for input.</p>
           <p><a ref={readme} href="https://github.com/gagang2109/Memlens#readme" target="_blank" rel="noopener noreferrer">Read the full guide on GitHub ↗</a></p>
+          <p><a ref={report} href={reportProblem} target="_blank" rel="noopener noreferrer">Report a problem on GitHub ↗</a> · Issues are public. Share only the code and input you choose to include; nothing is attached automatically.</p>
         </section>
       </div>
       <div className="help-actions"><span><kbd>Esc</kbd> to close</span><button type="button" ref={dismiss} onClick={onClose}>Dismiss</button></div>

@@ -39,7 +39,7 @@ it("filters samples and confirms before replacing edited code",()=>{
     expect(find('[data-editor]').textContent).toContain('original draft');
     key(find('.spotlight input'),'Enter');
     expect(find<HTMLSelectElement>('[aria-label="Samples"]').value).toBe('queue');
-    expect(find('.restore-draft')).toBeNull();
+    expect(find(".restore-draft")?.textContent).toBe("Restore previous draft");
     expect(confirm).toHaveBeenCalledTimes(2);
   } finally { confirm.mockRestore(); }
 });

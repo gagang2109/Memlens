@@ -41,3 +41,20 @@ it('stays usable when storage reads and writes are unavailable under StrictMode'
   act(()=>container.querySelector<HTMLButtonElement>('.clear-code')!.click());
   expect(container.querySelector('.source')?.textContent).toBe('');
 });
+
+it.each(['', 'int main(void){return 7;}'])('recovers draft %j and setup after switching samples and reloading', saved => {
+  const sampleSelect=()=>container.querySelector<HTMLSelectElement>('select[aria-label="Samples"]')!;
+  localStorage.setItem('memlens-code', saved);
+  localStorage.setItem('memlens-test-setup','printf("keep this setup");');
+  mount();
+  for(const key of ['stack','factorial']) act(()=>{
+    sampleSelect().value=key;
+    sampleSelect().dispatchEvent(new Event('change',{bubbles:true}));
+  });
+  expect(container.querySelector('.source')?.textContent).toBe(samples.factorial.code);
+  act(()=>root.unmount());root=createRoot(container);mount();
+  act(()=>container.querySelector<HTMLButtonElement>('.restore-draft')!.click());
+  expect(container.querySelector('.source')?.textContent).toBe(saved);
+  expect(container.querySelector<HTMLTextAreaElement>('[aria-label="C test setup"]')?.value).toBe('printf("keep this setup");');
+  expect(container.querySelector('.restore-draft')).toBeNull();
+});

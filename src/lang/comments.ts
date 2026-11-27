@@ -1,3 +1,5 @@
+import { InvalidC } from "./diagnostics";
+
 export type CommentScan = {
   text: string;
   // Zero-based physical line indices whose newline is inside a block comment.
@@ -41,7 +43,7 @@ export function stripComments(source: string): CommentScan {
         else out[i] = " ";
         i++;
       }
-      if (i >= source.length) throw new Error(`line ${openingLine}: unterminated block comment`);
+      if (i >= source.length) throw new InvalidC(openingLine, "unterminated block comment");
       out[i] = " ";
       out[++i] = " ";
     }
