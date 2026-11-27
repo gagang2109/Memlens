@@ -10,7 +10,7 @@ const code = "int main(){int n=1; n++; printf(\"%d\",n);}";
 const main = () => host.querySelector("main")!;
 const help = () => host.querySelector<HTMLButtonElement>(".help-trigger")!;
 const dialog = () => host.querySelector<HTMLElement>(".workspace-help");
-const dismiss = () => dialog()!.querySelector("button")!;
+const dismiss = () => [...dialog()!.querySelectorAll("button")].find(button => button.textContent === "Dismiss")!;
 const region = () => dialog()!.querySelector<HTMLElement>(".help-body")!;
 function key(target: EventTarget, key: string, modifiers: KeyboardEventInit = {}) {
   const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...modifiers });
@@ -51,6 +51,9 @@ it("opens a single shortcuts and usage panel from ? or the Help button, with foc
   expect(report.href).toBe("https://github.com/gagang2109/Memlens/issues");
   expect(dialog()?.textContent).toContain("nothing is attached automatically");
   key(report, "Tab");
+  const quickTour = [...dialog()!.querySelectorAll("button")].find(button => button.textContent === "Quick tour")!;
+  expect(document.activeElement).toBe(quickTour);
+  key(quickTour, "Tab");
   expect(document.activeElement).toBe(dismiss());
   expect(key(dismiss(), "Tab").defaultPrevented).toBe(true);
   expect(document.activeElement).toBe(region());

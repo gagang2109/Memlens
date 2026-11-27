@@ -26,10 +26,11 @@ const shortcuts = {
   ],
 } as const;
 
-export function WorkspaceHelp({ onClose, reportProblem }: { onClose: () => void; reportProblem: string }) {
+export function WorkspaceHelp({ onClose, reportProblem, onQuickTour }: { onClose: () => void; reportProblem: string; onQuickTour: () => void }) {
   const content = useRef<HTMLDivElement>(null);
   const readme = useRef<HTMLAnchorElement>(null);
   const report = useRef<HTMLAnchorElement>(null);
+  const quickTour = useRef<HTMLButtonElement>(null);
   const dismiss = useRef<HTMLButtonElement>(null);
   useEffect(() => { content.current?.focus({ preventScroll: true }); }, []);
 
@@ -41,7 +42,7 @@ export function WorkspaceHelp({ onClose, reportProblem }: { onClose: () => void;
       onClose();
     } else if (event.key === "Tab") {
       event.preventDefault();
-      const stops = [content.current, readme.current, report.current, dismiss.current];
+      const stops = [content.current, readme.current, report.current, quickTour.current, dismiss.current];
       const active = stops.findIndex(stop => stop === document.activeElement);
       const next = active < 0 ? 0 : (active + (event.shiftKey ? -1 : 1) + stops.length) % stops.length;
       stops[next]?.focus();
@@ -71,7 +72,7 @@ export function WorkspaceHelp({ onClose, reportProblem }: { onClose: () => void;
           <p><a ref={report} href={reportProblem} target="_blank" rel="noopener noreferrer">Report a problem on GitHub ↗</a> · Issues are public. Share only the code and input you choose to include; nothing is attached automatically.</p>
         </section>
       </div>
-      <div className="help-actions"><span><kbd>Esc</kbd> to close</span><button type="button" ref={dismiss} onClick={onClose}>Dismiss</button></div>
+      <div className="help-actions"><button type="button" ref={quickTour} onClick={onQuickTour}>Quick tour</button><span><kbd>Esc</kbd> to close</span><button type="button" ref={dismiss} onClick={onClose}>Dismiss</button></div>
     </section>
   </div>;
 }
