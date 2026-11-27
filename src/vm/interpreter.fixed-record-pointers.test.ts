@@ -52,7 +52,7 @@ describe("pointers to bounded local records", () => {
     ["struct Row *p = (struct Row *)1048576;","record pointer requires"],
     ["struct Other *p = &a[0];", "record pointer requires"],
     ["struct Row *p = &a[0]; p++;", "record pointers only support direct rebinding"],
-    ["struct Row *p = &a[0]; p = p + 1;", "record pointer requires"],
+    ["struct Row *p = &a[0]; p = p + 2;", "record pointer index out of bounds"],
     ["struct Row *p = &a[0]; printf(\"%d\", p[0].id);", "indexed access through a record pointer is not supported"],
     ["struct Row *p = NULL; p->id = 7;", "null pointer dereference"],
     ["struct Row *p; p->id = 7;", "uninitialized record pointer"],

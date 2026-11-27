@@ -61,6 +61,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
   const isFixedLive = (storage: FixedLifetime) =>
     storage.scope?.active !== false && frames.some(frame => frame.invocation === storage.invocation);
   const fixedObjects = new Map<number, FixedLocalStruct>();
+  const fixedRecordPositions = new WeakMap<FixedLocalStruct, { records: FixedLocalStruct[]; index: number }>();
   const fixedArrays = new Map<number, FixedMember>();
   const fixedAddressStart = 0x100000;
   const fixedStorageBytes = 262144;
@@ -221,37 +222,66 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
     if (target.scope?.active === false) runtimeError("record pointer used after its target block ended", line);
     if (!isFixedLive(target)) runtimeError("record pointer used after its target function returned", line);
   };
+  // Identify supported forms without running index expressions. Actual
+  // resolution retains the original array identity, not just its address.
+  const recordPointerType = (expr: Expr): string | undefined => {
+    const variable = pointerMeta(expr);
+    if (variable && (variable.recordPointer || recordBacking(variable))) return variable.type;
+    if (expr.kind === "unary" && expr.op === "&") return recordOperand(expr.expr)?.type;
+    if (expr.kind === "binary" && (expr.op === "+" || expr.op === "-"))
+      return recordPointerType(expr.left) ?? (expr.op === "+" ? recordPointerType(expr.right) : undefined);
+  };
+  const resolveRecordPointer = (expr: Expr, type: string, line: number): FixedLocalStruct | null => {
+    if (expr.kind === "literal" && !expr.literalKind && (expr.value === null || expr.value === 0)) return null;
+    if (expr.kind === "unary" && expr.op === "&") {
+      const operand = recordOperand(expr.expr);
+      if (operand?.type === type) {
+        const target = operand.read();
+        checkRecordPointerLifetime(target, line);
+        return target;
+      }
+    }
+    const variable = pointerMeta(expr);
+    if (variable?.type === type) {
+      if (variable.recordPointer) {
+        if (!variable.initializedRecordPointer) return runtimeError("uninitialized record pointer", line);
+        if (variable.recordTarget) checkRecordPointerLifetime(variable.recordTarget, line);
+        return variable.recordTarget ?? null;
+      }
+      const array = recordBacking(variable);
+      if (array) {
+        checkRecordPointerLifetime(array[0], line);
+        return array[0];
+      }
+    }
+    if (expr.kind === "binary" && (expr.op === "+" || expr.op === "-")) {
+      const left = recordPointerType(expr.left), right = recordPointerType(expr.right);
+      if (left && right) return runtimeError("arithmetic between two record pointers is not supported", line);
+      const baseExpr = left === type ? expr.left : right === type && expr.op === "+" ? expr.right : undefined;
+      if (baseExpr) {
+        const indexExpr = baseExpr === expr.left ? expr.right : expr.left;
+        if (!hasIntegerProvenance(indexExpr)) return runtimeError("record pointer offset requires a supported integer expression", line);
+        const base = resolveRecordPointer(baseExpr, type, line);
+        if (!base) return runtimeError("cannot offset a null record pointer", line);
+        const position = fixedRecordPositions.get(base);
+        if (!position) return runtimeError("record pointer offsets require an original local record array", line);
+        const raw = evaluate(indexExpr);
+        const offset = raw === null ? NaN : asNum(raw);
+        const index = position.index + (expr.op === "+" ? offset : -offset);
+        if (!Number.isSafeInteger(index) || index < 0 || index >= position.records.length)
+          return runtimeError(`record pointer index out of bounds (${index}); valid indexes: 0 through ${position.records.length - 1}`, line);
+        return position.records[index];
+      }
+    }
+    return runtimeError("record pointer requires NULL, the direct address of a matching local record, a matching record pointer, or a bounded offset from a matching record array", line);
+  };
   const bindRecordPointer = (variable: RuntimeVariable, source: Expr, line: number): Value => {
     if (source.kind === "call" && ["malloc", "calloc", "realloc"].includes(source.name))
       return runtimeError("fixed array members are supported only on local structs, not heap records", line);
-    let record: FixedLocalStruct | undefined;
-    if (source.kind === "literal" && !source.literalKind && (source.value === null || source.value === 0)) {
-      variable.recordTarget = undefined;
-      variable.initializedRecordPointer = true;
-      return variable.value = null;
-    }
-    if (source.kind === "unary" && source.op === "&") {
-      const operand = recordOperand(source.expr);
-      if (operand?.type === variable.type) record = operand.read();
-    } else if (source.kind === "name") {
-      const alias = pointerMeta(source);
-      if (alias?.recordPointer && alias.type === variable.type) {
-        if (alias.value === null && !alias.recordTarget) {
-          // Explicit NULL can be copied; an uninitialized binding cannot.
-          if (alias.initializedRecordPointer) {
-            variable.recordTarget = undefined;
-            variable.initializedRecordPointer = true;
-            return variable.value = null;
-          }
-        } else record = alias.recordTarget;
-      }
-    }
-    if (!record)
-      return runtimeError("record pointer requires NULL, the direct address of a matching local record, or a matching record pointer", line);
-    checkRecordPointerLifetime(record, line);
-    variable.recordTarget = record;
+    const target = resolveRecordPointer(source, variable.type, line);
+    variable.recordTarget = target ?? undefined;
     variable.initializedRecordPointer = true;
-    return variable.value = record.address;
+    return variable.value = target?.address ?? null;
   };
   const copyRecord = (target: FixedLocalStruct, source: FixedLocalStruct) => {
     if (target === source) return;
@@ -402,14 +432,13 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
     }
     if (expression.kind === "member") {
       const operand = expression.object;
-      const ownerVariable = pointerMeta(operand);
+      const pointerType = expression.pointer ? recordPointerType(operand) : undefined;
       let fixed: FixedLocalStruct | undefined;
-      if (ownerVariable?.recordPointer) {
-        if (!expression.pointer) return runtimeError("use '->' to read a record pointer member", expression.line);
-        if (!ownerVariable.initializedRecordPointer) return runtimeError("uninitialized record pointer", expression.line);
-        fixed = ownerVariable.recordTarget;
+      if (pointerType) {
+        fixed = resolveRecordPointer(operand, pointerType, expression.line) ?? undefined;
         if (!fixed) return runtimeError("null pointer dereference", expression.line);
-        checkRecordPointerLifetime(fixed, expression.line);
+      } else if (pointerMeta(operand)?.recordPointer) {
+        return runtimeError("use '->' to read a record pointer member", expression.line);
       } else if (!expression.pointer) {
         fixed = recordOperand(operand)?.read();
       } else if (operand.kind === "unary" && operand.op === "&") {
@@ -638,8 +667,9 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
     }
     if (expr.kind === "member") {
       const owner = pointerMeta(expr.object) ?? indexedRecordArray(expr.object);
-      const field = owner && program.fixedStructFields.get(owner.type)?.get(expr.name);
-      if (field?.type === "float" && field.length === null) return "float";
+      const type = expr.pointer ? recordPointerType(expr.object) ?? owner?.type : owner?.type;
+      const field = type ? recordFieldsFor(type)?.get(expr.name) : undefined;
+      if (field && field.length === null) return field.type;
     }
     if (expr.kind === "index") {
       const variable = pointerMeta(expr.object);
@@ -773,7 +803,9 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
           const indexed = indexedRecordArray(sized.object);
           if (indexed && sized.object.kind === "index") checkRecordIndexType(sized.object.index, sized.object.line);
           const owner = pointerMeta(sized.object) ?? indexed;
-          const fields = owner && (indexed ? recordFieldsFor(owner.type) : program.fixedStructFields.get(owner.type));
+          const recordType = sized.pointer ? recordPointerType(sized.object) : undefined;
+          const fields = recordType ? recordFieldsFor(recordType) : owner &&
+            (indexed ? recordFieldsFor(owner.type) : program.fixedStructFields.get(owner.type));
           if (fields) {
             const member = fields.get(sized.name);
             if (!member || argument?.kind === "index" && member.length === null)
@@ -1353,7 +1385,10 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
           return record;
         });
         nextFixedAddress += bytes; // Keep separate objects beyond this object's storage.
-        if (statement.arrayLength) variable.fixedRecords = records;
+        if (statement.arrayLength) {
+          variable.fixedRecords = records;
+          records.forEach((entry, index) => fixedRecordPositions.set(entry, { records, index }));
+        }
         variable.value = address;
         variable.address = address;
         if (origin) copyRecord(records[0], origin.read());
