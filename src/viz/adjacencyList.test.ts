@@ -29,7 +29,7 @@ int main(void) {
     const steps = result.trace.steps;
     const built = steps.find(s => s.stdout === "built")!;
     const root = built.frames[0].variables!.heads;
-    const selection = { name:"heads", invocation:0, base:root.array!.base };
+    const selection = { name:"heads", invocation:built.frames[0].invocation, base:root.array!.base };
     const graph = readAdjacencyList(built, selection, 5)!;
     expect(root.array?.cells).toHaveLength(50);
     expect(graph.rows.map(row => row.neighbors.map(node => node.vertex))).toEqual([[3-first, first], [3], [3], [], []]);

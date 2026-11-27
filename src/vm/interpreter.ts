@@ -39,7 +39,9 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
   // Local storage uses virtual addresses outside both the simulated heap and
   // the separate bounded struct storage. Numeric equality must not alias them.
   let nextStackAddress = 0x200000;
-  const frames: { invocation: number; name: string; vars: Map<string, RuntimeVariable> }[] = [{ invocation: 0, name: "main", vars: new Map() }];
+  const main = program.functions.get("main");
+  const separateFileScope = Boolean(main && program.body.some(statement => statement.kind !== "block" || statement.body.length > 0));
+  const frames: { invocation: number; name: string; vars: Map<string, RuntimeVariable> }[] = [{ invocation: separateFileScope ? -1 : 0, name: separateFileScope ? "file scope" : "main", vars: new Map() }];
   const fixedObjects = new Map<number, FixedLocalStruct>();
   const fixedArrays = new Map<number, FixedMember>();
   const fixedAddressStart = 0x100000;
@@ -53,7 +55,11 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
   // Character values use one-character strings in the existing VM representation.
   // Promote these to basic execution-character codes, including digits and NUL.
   const asNum = (value: Value) => typeof value === "number" ? value : value === null ? 0 : value.length === 1 ? value.charCodeAt(0) : Number(value);
-  const findVariable = (name: string) => [...frames].reverse().map(frame => frame.vars.get(name)).find(Boolean);
+  // A function's expressions can name its own bindings and file-scope
+  // bindings, but never a caller's locals. Explicit addresses passed as
+  // parameters still use the existing by-address storage lookup.
+  const findVariable = (name: string) => current().get(name) ??
+    ((!main || separateFileScope) ? frames[0].vars.get(name) : undefined);
   const sizeofContext = { constants: program.constants, floatingConstants: program.floatingConstants, functions: program.functions, lookup: findVariable };
   const pointerMeta = (expression: Expr) => expression.kind === "name" ? findVariable(expression.name) : undefined;
   const structArrayPointee = (variable: RuntimeVariable) =>
@@ -563,6 +569,8 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
         if (pointerBytes !== undefined) return pointerBytes;
         if (argument?.kind === "name") {
           const variable = findVariable(argument.name);
+          if (!variable && !program.constants.has(argument.name) && !["char", "int", "EOF"].includes(argument.name))
+            return runtimeError("unknown variable " + argument.name, expression.line);
           if (variable && !variable.pointer && !variable.array) {
             const type = variable.type.split(/\s+/).filter(part => part !== "const" && part !== "static").join(" ");
             if (type === "int" || type === "char") return elementSize(type);
@@ -856,7 +864,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       if (!fn) throw new MemoryFault(`line ${expression.line}: Memlens could not resolve '${expression.name}()'. Check the spelling and include the function definition if it is yours. If it is a library function, check Memlens’s supported C subset.`, expression.line, steps, undefined, true, "unresolved-function");
       if (args.length !== fn.params.length)
         runtimeError(`function '${fn.name}' expects ${fn.params.length} arguments, received ${args.length}`, expression.line);
-      if (frames.length >= recursionLimit) runtimeError("stack overflow", expression.line);
+      if (frames.length - Number(separateFileScope && frames.length > 1) >= recursionLimit) runtimeError("stack overflow", expression.line);
       if ((!fn.returnsPointer && program.fixedStructFields.has(fn.returnType)) ||
           fn.params.some(param => !param.pointer && program.fixedStructFields.has(param.type)))
         runtimeError("structs with fixed array members cannot be passed or returned by value yet", expression.line);
@@ -1088,7 +1096,13 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       return;
     }
   };
-  try { if (program.body.length) execute({ kind: "block", body: program.body, line: program.body[0].line }); const main = program.functions.get("main"); if (main) { record(main.line, "call"); execute(main.body, true); record(main.line, "return"); } else if (!program.body.length) execute({ kind: "block", body: [], line: 1 }); }
+  try {
+    if (program.body.length) execute({ kind: "block", body: program.body, line: program.body[0].line });
+    if (main) {
+      if (separateFileScope) frames.push({ invocation: 0, name: "main", vars: new Map() });
+      record(main.line, "call"); execute(main.body, true); record(main.line, "return");
+    } else if (!program.body.length) execute({ kind: "block", body: [], line: 1 });
+  }
   catch (caught) { if (caught instanceof InputNeeded) return { executionMode: program.functions.has("main") ? "program" : "snippet", trace, status: "waiting", waitingLine: caught.line, leaks: [], orphanedAtExit: [] }; if (caught instanceof MemoryFault) { error = caught; record(caught.line, "error", caught.reason); } else if (!(caught instanceof ReturnSignal) && !(caught instanceof ExitSignal)) { const message = caught instanceof Error || caught instanceof BreakSignal || caught instanceof ContinueSignal ? caught.message : "unsupported construct"; const match = message.match(/line (\d+)/); const line = match ? Number(match[1]) : 1; error = new MemoryFault(message, line, steps); record(line, "error", message); } }
   const roots = [...frames.flatMap(frame => [...frame.vars.values()].map(variable => variable.value))].filter((value): value is number => typeof value === "number");
   const arrayHeads = collectStructArrayHeads();

@@ -33,15 +33,15 @@ int main(void) {
   expect(declared.frames[0].variables?.head.arrayPointee).toBe("struct Edge");
   expect(declared.frames[0].variables?.head.array?.cells).toEqual([null, ...Array(49).fill(0)]);
   expect(declared.pointers).toEqual([]);
-  const built = steps.find(step => step.stdout === "2 1\n" && step.frames.length === 1)!;
+  const built = steps.find(step => step.stdout === "2 1\n" && step.frames.length === 2)!;
   const [first, second] = built.memory.allocations;
-  const heads = (step: typeof built) => step.pointers?.filter(pointer => pointer.from.startsWith("main.head["));
-  expect(heads(built)).toEqual([{ from: "main.head[0]", to: second.address, label: "head[0]", dangling: false }]);
+  const heads = (step: typeof built) => step.pointers?.filter(pointer => pointer.from.startsWith("file scope.head["));
+  expect(heads(built)).toEqual([{ from: "file scope.head[0]", to: second.address, label: "head[0]", dangling: false }]);
   expect(renderModel(built).nodes.every(node => !node.orphaned)).toBe(true);
   const freed = steps.find(step => step.event === "free")!;
   expect(heads(freed)).toEqual([
-    { from: "main.head[0]", to: second.address, label: "head[0]", dangling: true },
-    { from: "main.head[1]", to: first.address, label: "head[1]", dangling: false }
+    { from: "file scope.head[0]", to: second.address, label: "head[0]", dangling: true },
+    { from: "file scope.head[1]", to: first.address, label: "head[1]", dangling: false }
   ]);
   expect(heads(steps.at(-1)!)).toEqual([]);
   expect(heads(result.trace.goto(built.index)!)).toEqual(heads(built));
