@@ -45,6 +45,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
   }
   const memory = new Memory(); const heap = new Map<number, HeapObject>(); const cells = new Map<number, Value>();
   const arrayRefs = new Map<number, LocalArray>(); const locations = new Map<number, Ref>();
+  const asciiStringLiterals = new Map<string, boolean>();
   // Local storage uses virtual addresses outside both the simulated heap and
   // the separate bounded struct storage. Numeric equality must not alias them.
   let nextStackAddress = 0x200000;
@@ -467,7 +468,8 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
         return runtimeError("indexed access through a record pointer is not supported; use a direct record array", expression.line);
       if (indexedRecordArray(expression))
         return runtimeError("whole-record assignment or access is not supported; select a member", expression.line);
-      const index = asNum(evaluate(expression.index));
+      const indexValue = evaluate(expression.index);
+      const index = asNum(indexValue);
       if (expression.object.kind === "index" && expression.object.object.kind === "name") {
         const outerVariable = findVariable(expression.object.object.name);
         const base = outerVariable?.arrayBase ?? (outerVariable?.matrixColumnCount ? outerVariable.value : undefined);
@@ -490,7 +492,38 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       }
       if (pointerMeta(expression.object)?.matrixColumnCount)
         runtimeError("matrix row used without a column; row values are not supported", expression.line);
-      const base = asNum(evaluate(expression.object));
+      const value = evaluate(expression.object);
+      if (typeof value === "string") {
+        const pointer = pointerMeta(expression.object);
+        const operand = expression.object;
+        if (!(pointer?.pointerDepth === 1 && signedBase(pointer.type) === "char") &&
+            !(operand.kind === "literal" && operand.literalKind === "string"))
+          return runtimeError("string-backed indexing requires a named char pointer or a string literal", expression.line);
+        if (addressOnly)
+          throw new MemoryFault(`line ${expression.line}: addresses of individual string-literal bytes are not modeled`, expression.line, steps, undefined, true, "unsupported-c");
+        const indexVariable = pointerMeta(expression.index);
+        if (hasFloatingProvenance(expression.index) || indexVariable?.pointer || indexVariable?.array ||
+            expression.index.kind === "literal" && expression.index.literalKind === "string")
+          throw new MemoryFault(`line ${expression.line}: a C array subscript must be an integer`, expression.line, steps, undefined, true, "invalid-c");
+        if (indexValue === null || !hasIntegerProvenance(expression.index))
+          throw new MemoryFault(`line ${expression.line}: string subscript requires a supported integer index`, expression.line, steps, undefined, true, "unsupported-c");
+        let ascii = asciiStringLiterals.get(value);
+        if (ascii === undefined) {
+          ascii = !/[^\x00-\x7f]/.test(value);
+          asciiStringLiterals.set(value, ascii);
+        }
+        if (!ascii)
+          throw new MemoryFault(`line ${expression.line}: indexing string literals with non-ASCII bytes is not modeled`, expression.line, steps, undefined, true, "unsupported-c");
+        // Keep embedded NULs and the final implicit terminator addressable as
+        // characters without treating the string as a numeric heap address.
+        if (!Number.isSafeInteger(index) || index < 0 || index > value.length)
+          return runtimeError(`string literal index out of bounds (${index}); valid indexes: 0 through ${value.length}`, expression.line);
+        return {
+          get: () => value[index] ?? "\0",
+          set: () => runtimeError("cannot modify a read-only string literal", expression.line),
+        };
+      }
+      const base = asNum(value);
       const member = fixedArrays.get(base);
       if (member) return fixedCell(member, index, expression.line, addressOnly);
       const variable = pointerMeta(expression.object); const array = expression.object.kind === "name" ? findVariable(expression.object.name)?.array : undefined;
