@@ -52,7 +52,7 @@ it("computes int array member sizes without evaluating their subscripts", () => 
 
 it.each([
   ["struct Q q={0};", /whole-struct initializer/],
-  ["struct Q a[2];", /arrays of these structs/],
+  ["struct Q a[2]={0};", /whole-struct initializer/],
   ["static struct Q q;", /non-static/],
   ["{ struct Q q; }", /directly in a function body/],
   ["struct Q q; int x=q.items[0];", /uninitialized read/],

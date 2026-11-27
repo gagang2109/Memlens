@@ -8,7 +8,7 @@ type Value = number | string | null;
 type LocalArrayOwner = { vars: Map<string, RuntimeVariable>; name: string; variable: RuntimeVariable };
 type LocalArray = { values: Value[]; type: string; dimensions: number[];
   owner?: LocalArrayOwner; scanBufferOwner?: LocalArrayOwner };
-type RuntimeVariable = { value: Value; type: string; pointer: boolean; pointerDepth?: number; array?: Value[]; dimensions?: number[]; fixedArrayBounds?: boolean; matrixColumnCount?: number; elementSize?: number; arrayBase?: number; address?: number };
+type RuntimeVariable = { value: Value; type: string; pointer: boolean; pointerDepth?: number; array?: Value[]; dimensions?: number[]; fixedArrayBounds?: boolean; matrixColumnCount?: number; elementSize?: number; arrayBase?: number; address?: number; fixedRecords?: FixedLocalStruct[] };
 type Ref = { get: () => Value; set: (value: Value) => void; address?: number; allocation?: Allocation };
 type HeapObject = { address: number; fields: Map<string, Value>; type?: string };
 type FixedMember = { name: string; type: "char" | "int"; stride: number; address: number; invocation: number; values?: Value[]; scalar: Value };
@@ -67,6 +67,10 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
     ((!main || separateFileScope) ? frames[0].vars.get(name) : undefined);
   const sizeofContext = { constants: program.constants, floatingConstants: program.floatingConstants, functions: program.functions, lookup: findVariable };
   const pointerMeta = (expression: Expr) => expression.kind === "name" ? findVariable(expression.name) : undefined;
+  const indexedRecordArray = (expression: Expr) => {
+    const variable = expression.kind === "index" ? pointerMeta(expression.object) : undefined;
+    return variable?.fixedRecords ? variable : undefined;
+  };
   const structArrayPointee = (variable: RuntimeVariable) =>
     variable.array && variable.dimensions?.length === 1 && variable.pointerDepth === 1 &&
     variable.type.startsWith("struct ") ? variable.type : undefined;
@@ -100,22 +104,27 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       arrays.set(base, snapshot);
       return snapshot;
     };
+    const recordFields = (key: string, type: string, fixed: FixedLocalStruct) => {
+      const fields: [string, FrameVariable][] = [[key, { type, value: `0x${fixed.address.toString(16)}`, storage: fixed.address, pointer: false }]];
+      for (const member of fixed.members.values()) {
+        const snapshot = member.values ? captureArray(member.address, [member.values.length], member.values) : undefined;
+        fields.push([`${key}.${member.name}`, {
+          type: snapshot ? `${member.type}[${snapshot.cells.length}]` : member.type,
+          value: snapshot ? `${snapshot.cells.length} cells` : member.scalar === null ? "uninitialized" : String(member.scalar),
+          storage: member.address, pointer: false, ...(snapshot ? {array: snapshot} : {}),
+        }]);
+      }
+      return fields;
+    };
     const visible: FrameView[] = frames.map(frame => {
       const variables = Object.fromEntries([...frame.vars].flatMap(([key, variable]): [string, FrameVariable][] => {
-        const { array, arrayBase, dimensions, address } = variable;
+        const { array, arrayBase, dimensions, address, fixedRecords } = variable;
+        if (fixedRecords) return [
+          [key, { type: `${variable.type}[${fixedRecords.length}]`, value: `${fixedRecords.length} records`, storage: address, pointer: false }],
+          ...fixedRecords.flatMap((entry, i) => recordFields(`${key}[${i}]`, variable.type, entry)),
+        ];
         const fixed = !variable.pointer && typeof variable.value === "number" ? fixedObjects.get(variable.value) : undefined;
-        if (fixed && program.fixedStructFields.has(variable.type)) {
-          const fields: [string, FrameVariable][] = [[key, { type: variable.type, value: `0x${fixed.address.toString(16)}`, storage: fixed.address, pointer: false }]];
-          for (const member of fixed.members.values()) {
-            const snapshot = member.values ? captureArray(member.address, [member.values.length], member.values) : undefined;
-            fields.push([`${key}.${member.name}`, {
-              type: snapshot ? `${member.type}[${snapshot.cells.length}]` : member.type,
-              value: snapshot ? `${snapshot.cells.length} cells` : member.scalar === null ? "uninitialized" : String(member.scalar),
-              storage: member.address, pointer: false, ...(snapshot ? {array: snapshot} : {}),
-            }]);
-          }
-          return fields;
-        }
+        if (fixed && program.fixedStructFields.has(variable.type)) return recordFields(key, variable.type, fixed);
         const snapshot = array && arrayBase !== undefined && dimensions ? captureArray(arrayBase, dimensions, array) : undefined;
         return [[key, { type: `${variable.type}${variable.pointer ? " *" : ""}`,
           value: array ? `[${array.join(", ")}]` : String(variable.value), pointer: variable.pointer,
@@ -283,6 +292,8 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
   const ref = (expression: Expr, addressOnly = false): Ref => {
     if (expression.kind === "name") {
       const variable = findVariable(expression.name); if (!variable) throw new Error(`line ${expression.line}: unknown variable ${expression.name}`);
+      if (variable.fixedRecords)
+        return runtimeError("record arrays currently need direct indexed member access", expression.line);
       if (!variable.pointer && program.fixedStructFields.has(variable.type) && typeof variable.value === "number") {
         return { get: () => variable.value, set: () => runtimeError("whole-struct assignment is not supported for array members", expression.line), address: variable.value };
       }
@@ -292,7 +303,18 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       locations.set(variable.address, result); return result;
     }
     if (expression.kind === "member") {
-      const object = evaluate(expression.object);
+      const operand = expression.object;
+      const records = indexedRecordArray(operand)?.fixedRecords;
+      let object: Value;
+      if (records && operand.kind === "index") {
+        const indexOperand = operand.index;
+        checkRecordIndexType(indexOperand, operand.line);
+        const value = evaluate(indexOperand);
+        const index = value === null ? NaN : asNum(value);
+        if (!Number.isInteger(index) || index < 0 || index >= records.length)
+          return runtimeError(`record array index out of bounds (${index}); valid indexes: 0 through ${records.length - 1}`, operand.line);
+        object = records[index].address;
+      } else object = evaluate(operand);
       const fixed = fixedObjects.get(asNum(object));
       if (fixed) {
         const member = fixed.members.get(expression.name);
@@ -325,6 +347,8 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       return liveRef(result, expression.line);
     }
     if (expression.kind === "index") {
+      if (indexedRecordArray(expression))
+        return runtimeError("whole-record assignment or access is not supported; select a member", expression.line);
       const index = asNum(evaluate(expression.index));
       if (expression.object.kind === "index" && expression.object.object.kind === "name") {
         const outerVariable = findVariable(expression.object.object.name);
@@ -520,10 +544,18 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
     }
   };
   const fitsSignedInt = (value: number) => Number.isInteger(value) && value >= -2147483648 && value <= 2147483647;
+  const checkRecordIndexType = (operand: Expr, line: number) => {
+    const variable = pointerMeta(operand);
+    if (hasFloatingProvenance(operand) || variable?.pointer || variable?.array || variable?.fixedRecords ||
+        operand.kind === "literal" && operand.literalKind === "string")
+      runtimeError("record array index must be an integer", line);
+  };
   const evaluate = (expression: Expr): Value => {
     if (expression.kind === "literal") return expression.value;
     if (expression.kind === "name") {
       const variable = findVariable(expression.name);
+      if (variable?.fixedRecords)
+        return runtimeError("record arrays currently need direct indexed member access", expression.line);
       if (variable) return variable.array ? variable.arrayBase ?? 0 : variable.value;
       if (program.constants.has(expression.name)) return program.constants.get(expression.name)!;
       if (expression.name === "EOF") return -1;
@@ -571,7 +603,9 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
         const argument = args[0];
         const sized = argument?.kind === "index" ? argument.object : argument;
         if (sized?.kind === "member") {
-          const owner = pointerMeta(sized.object);
+          const indexed = indexedRecordArray(sized.object);
+          if (indexed && sized.object.kind === "index") checkRecordIndexType(sized.object.index, sized.object.line);
+          const owner = pointerMeta(sized.object) ?? indexed;
           const fields = owner && program.fixedStructFields.get(owner.type);
           if (fields) {
             const member = fields.get(sized.name);
@@ -581,11 +615,16 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
             return argument?.kind === "index" ? stride : stride * (member.length ?? 1);
           }
         }
+        const recordArray = argument && indexedRecordArray(argument);
+        if (recordArray && argument?.kind === "index") {
+          checkRecordIndexType(argument.index, argument.line);
+          return fixedStructBytes(program.fixedStructFields.get(recordArray.type)!);
+        }
         if (argument?.kind === "name" || argument?.kind === "unary" && argument.op === "*") {
           const variable = pointerMeta(argument.kind === "name" ? argument : argument.expr);
           const fields = variable && program.fixedStructFields.get(variable.type);
           if (fields && variable && (argument.kind === "name" && !variable.pointer || argument.kind === "unary" && variable.pointerDepth === 1))
-            return fixedStructBytes(fields);
+            return fixedStructBytes(fields) * (variable.fixedRecords?.length ?? 1);
         }
         const arrayBytes = localArraySizeof(argument, sizeofContext, runtimeError);
         if (arrayBytes !== undefined) return arrayBytes;
@@ -1017,23 +1056,39 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       if (fixed) {
         if (!allowDirectLocal || statement.staticStorage || statement.readOnly)
           runtimeError("fixed array structs currently need a non-static, non-const declaration directly in a function body", statement.line);
-        if (statement.arrayLength || statement.init || statement.arrayInitializer)
-          runtimeError("arrays of these structs and whole-struct initializers are not yet supported", statement.line);
+        if (statement.init || statement.arrayInitializer)
+          runtimeError("whole-struct initializers are not yet supported", statement.line);
+        let count = 1;
+        if (statement.arrayLength) {
+          if ((statement.arrayLengths?.length ?? 1) !== 1 || !isFixedArrayBound(statement.arrayLength, sizeofContext))
+            runtimeError("record arrays currently require a fixed one-dimensional bound", statement.line);
+          count = asNum(evaluate(statement.arrayLength));
+          if (!Number.isSafeInteger(count) || count < 1 || count > 32)
+            runtimeError("record arrays currently support 1 through 32 records", statement.line);
+        }
         const layout = fixedStructLayout(fixed);
-        const bytes = 4 + Math.ceil(layout.bytes / 4) * 4;
+        if (statement.arrayLength && layout.bytes * count > 65536)
+          runtimeError("local record array exceeds simulator limit (65536 bytes)", statement.line);
+        const bytes = 4 + Math.ceil(layout.bytes * count / 4) * 4;
         if (nextFixedAddress + bytes - fixedAddressStart > fixedStorageBytes)
           runtimeError("fixed struct storage exceeds simulator limit (262144 bytes)", statement.line);
         const invocation = frames.at(-1)!.invocation;
         const address = nextFixedAddress;
-        const members = new Map<string, FixedMember>();
-        for (const { name, type, length, offset, stride } of layout.members) {
-          const member: FixedMember = { name, type, stride, address: address + offset, invocation, scalar: null,
-            ...(length === null ? {} : { values: Array<Value>(length).fill(null) }) };
-          if (member.values) fixedArrays.set(member.address, member);
-          members.set(name, member);
-        }
+        const records = Array.from({ length: count }, (_, index) => {
+          const entryAddress = address + index * layout.bytes;
+          const members = new Map<string, FixedMember>();
+          for (const { name, type, length, offset, stride } of layout.members) {
+            const member: FixedMember = { name, type, stride, address: entryAddress + offset, invocation, scalar: null,
+              ...(length === null ? {} : { values: Array<Value>(length).fill(null) }) };
+            if (member.values) fixedArrays.set(member.address, member);
+            members.set(name, member);
+          }
+          const record = { address: entryAddress, invocation, members };
+          fixedObjects.set(entryAddress, record);
+          return record;
+        });
         nextFixedAddress += bytes; // Keep separate objects beyond this object's storage.
-        fixedObjects.set(address, { address, invocation, members });
+        if (statement.arrayLength) variable.fixedRecords = records;
         variable.value = address;
         variable.address = address;
         current().set(statement.name, variable);
