@@ -75,7 +75,7 @@ it("rejects an escaped buffer after its record array owner returns", () => {
 });
 
 it.each([
-  ["rows[0] = rows[1];", "whole-record"],
+  ["&rows[0];", "whole-record"],
   ["int n = 2; struct Row other[n];", "fixed one-dimensional"],
   ["struct Row other[2][2];", "fixed one-dimensional"],
   ["struct Row other[33];", "32 records"],

@@ -56,7 +56,7 @@ it.each([
   ["static struct Q q;", /non-static/],
   ["{ struct Q q; }", /directly in a function body/],
   ["struct Q q; int x=q.items[0];", /uninitialized read/],
-  ["struct Q q, r; q=r;", /whole-struct assignment/],
+  ["struct Q q; q=3;", /record copy requires/],
   ["struct Q *q=malloc(sizeof(struct Q)); q->items[0]=1;", /only on local struct/],
 ])("does not silently simulate an unsupported or invalid use: %s", (body, reason) => {
   const r = run(`struct Q { int items[3]; int rear; }; int main(void) { ${body} return 0; }`);

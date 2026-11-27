@@ -12,7 +12,7 @@ type RuntimeVariable = { value: Value; type: string; pointer: boolean; pointerDe
 type Ref = { get: () => Value; set: (value: Value) => void; address?: number; allocation?: Allocation };
 type HeapObject = { address: number; fields: Map<string, Value>; type?: string };
 type FixedMember = { name: string; type: "char" | "int"; stride: number; address: number; invocation: number; values?: Value[]; scalar: Value };
-type FixedLocalStruct = { address: number; invocation: number; members: Map<string, FixedMember> };
+type FixedLocalStruct = { type: string; address: number; invocation: number; members: Map<string, FixedMember> };
 type FlowSignal = "break" | "continue";
 
 export type RunResult = { executionMode?: "program" | "snippet"; trace: Trace; status: "ok" | "error" | "waiting"; waitingLine?: number; error?: MemoryFault; leaks: { address: number; line: number }[]; orphanedAtExit: number[] };
@@ -180,6 +180,36 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
   const checkMemberLifetime = (member: FixedMember, line: number) => {
     if (!frames.some(frame => frame.invocation === member.invocation)) runtimeError("struct member used after its function returned", line);
   };
+  const readIndexedRecord = (array: FixedLocalStruct[], indexOperand: Expr, line: number) => {
+    checkRecordIndexType(indexOperand, line);
+    const value = evaluate(indexOperand);
+    const index = value === null ? NaN : asNum(value);
+    if (!Number.isInteger(index) || index < 0 || index >= array.length)
+      return runtimeError(`record array index out of bounds (${index}); valid indexes: 0 through ${array.length - 1}`, line);
+    return array[index];
+  };
+  const recordOperand = (expression: Expr): { type: string; read: () => FixedLocalStruct } | undefined => {
+    const variable = indexedRecordArray(expression);
+    if (expression.kind === "index" && variable?.fixedRecords) {
+      const array = variable.fixedRecords;
+      return { type: variable.type, read: () => readIndexedRecord(array, expression.index, expression.line) };
+    }
+    const local = pointerMeta(expression);
+    const record = local && !local.pointer && !local.fixedRecords && typeof local.value === "number" &&
+      program.fixedStructFields.has(local.type) ? fixedObjects.get(local.value) : undefined;
+    return record ? { type: record.type, read: () => record } : undefined;
+  };
+  const copyRecord = (target: FixedLocalStruct, source: FixedLocalStruct) => {
+    if (target === source) return;
+    // Same named type, disjoint storage. Copy every cell, including
+    // indeterminate cells and initialized bytes after a string's NUL.
+    for (const [name, destination] of target.members) {
+      const origin = source.members.get(name)!;
+      destination.scalar = origin.scalar;
+      if (destination.values && origin.values)
+        for (let i = 0; i < destination.values.length; i++) destination.values[i] = origin.values[i];
+    }
+  };
   const fixedCell = (member: FixedMember, index: number, line: number, addressOnly = false): Ref => {
     checkMemberLifetime(member, line);
     const values = member.values!;
@@ -305,16 +335,8 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
     if (expression.kind === "member") {
       const operand = expression.object;
       const records = indexedRecordArray(operand)?.fixedRecords;
-      let object: Value;
-      if (records && operand.kind === "index") {
-        const indexOperand = operand.index;
-        checkRecordIndexType(indexOperand, operand.line);
-        const value = evaluate(indexOperand);
-        const index = value === null ? NaN : asNum(value);
-        if (!Number.isInteger(index) || index < 0 || index >= records.length)
-          return runtimeError(`record array index out of bounds (${index}); valid indexes: 0 through ${records.length - 1}`, operand.line);
-        object = records[index].address;
-      } else object = evaluate(operand);
+      const object = records && operand.kind === "index"
+        ? readIndexedRecord(records, operand.index, operand.line).address : evaluate(operand);
       const fixed = fixedObjects.get(asNum(object));
       if (fixed) {
         const member = fixed.members.get(expression.name);
@@ -1056,8 +1078,11 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       if (fixed) {
         if (!allowDirectLocal || statement.staticStorage || statement.readOnly)
           runtimeError("fixed array structs currently need a non-static, non-const declaration directly in a function body", statement.line);
-        if (statement.init || statement.arrayInitializer)
+        if (statement.arrayInitializer || statement.arrayLength && statement.init)
           runtimeError("whole-struct initializers are not yet supported", statement.line);
+        const origin = statement.init ? recordOperand(statement.init) : undefined;
+        if (statement.init && (!origin || origin.type !== statement.type || statement.init.kind === "name" && statement.init.name === statement.name))
+          runtimeError("record copy requires two local records of the same type", statement.line);
         let count = 1;
         if (statement.arrayLength) {
           if ((statement.arrayLengths?.length ?? 1) !== 1 || !isFixedArrayBound(statement.arrayLength, sizeofContext))
@@ -1083,7 +1108,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
             if (member.values) fixedArrays.set(member.address, member);
             members.set(name, member);
           }
-          const record = { address: entryAddress, invocation, members };
+          const record = { type: statement.type, address: entryAddress, invocation, members };
           fixedObjects.set(entryAddress, record);
           return record;
         });
@@ -1091,6 +1116,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
         if (statement.arrayLength) variable.fixedRecords = records;
         variable.value = address;
         variable.address = address;
+        if (origin) copyRecord(records[0], origin.read());
         current().set(statement.name, variable);
         record(statement.line);
         return;
@@ -1152,7 +1178,24 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       } }
       current().set(statement.name, variable); record(statement.line); return;
     }
-    if (statement.kind === "expr") { evaluate(statement.expr); if (statement.expr.kind !== "call" && statement.expr.kind !== "binary") record(statement.line); return; }
+    if (statement.kind === "expr") {
+      const expression = statement.expr;
+      if (expression.kind === "binary" && expression.op === "=") {
+        const target = recordOperand(expression.left);
+        const source = recordOperand(expression.right);
+        if (target || source) {
+          if (target && source && target.type === source.type) {
+            copyRecord(target.read(), source.read());
+            record(expression.line);
+            return;
+          }
+          return runtimeError("record copy requires two local records of the same type", expression.line);
+        }
+      }
+      evaluate(expression);
+      if (expression.kind !== "call" && expression.kind !== "binary") record(statement.line);
+      return;
+    }
     if (statement.kind === "return") throw new ReturnSignal(statement.value ? evaluate(statement.value) : null);
     if (statement.kind === "if") { if (asNum(evaluate(statement.test))) execute(statement.yes); else if (statement.no) execute(statement.no); return; }
     if (statement.kind === "while" || statement.kind === "do") {
