@@ -56,6 +56,28 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
   const findVariable = (name: string) => [...frames].reverse().map(frame => frame.vars.get(name)).find(Boolean);
   const sizeofContext = { constants: program.constants, floatingConstants: program.floatingConstants, functions: program.functions, lookup: findVariable };
   const pointerMeta = (expression: Expr) => expression.kind === "name" ? findVariable(expression.name) : undefined;
+  const structArrayPointee = (variable: RuntimeVariable) =>
+    variable.array && variable.dimensions?.length === 1 && variable.pointerDepth === 1 &&
+    variable.type.startsWith("struct ") ? variable.type : undefined;
+  const collectStructArrayHeads = () => {
+    let byAddress: Map<number, (typeof memory.allocations)[number]> | undefined;
+    return (variable: RuntimeVariable) => {
+      const type = structArrayPointee(variable);
+      if (!type) return [];
+      const heads: { index: number; address: number; dangling: boolean }[] = [];
+      const cells = variable.array!;
+      for (let index = 0; index < cells.length; index++) {
+        const value = cells[index];
+        if (typeof value !== "number" || value === 0) continue;
+        const object = heap.get(value);
+        if (!object || object.type && object.type !== type) continue;
+        byAddress ??= new Map(memory.allocations.map(allocation => [allocation.address, allocation]));
+        const allocation = byAddress.get(value);
+        if (allocation) heads.push({ index, address: value, dangling: allocation.freeStep !== undefined });
+      }
+      return heads;
+    };
+  };
   const record = (line: number, event: "step" | "alloc" | "free" | "error" | "call" | "return" = "step", message?: string) => {
     const arrays = new Map<number, ArraySnapshot>();
     const captureArray = (base: number, dimensions: number[], values: Value[]) => {
@@ -87,6 +109,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
         return [[key, { type: `${variable.type}${variable.pointer ? " *" : ""}`,
           value: array ? `[${array.join(", ")}]` : String(variable.value), pointer: variable.pointer,
           ...(address !== undefined ? {storage:address} : {}), ...(snapshot ? {array:snapshot} : {}),
+          ...(structArrayPointee(variable) ? {arrayPointee: variable.type} : {}),
           ...(variable.type === "int" && variable.pointerDepth === 2 && variable.pointer && !variable.matrixColumnCount
             && typeof variable.value === "number" && memory.allocationAt(variable.value)?.address === variable.value
             ? {heapIntRows: true as const} : {}),
@@ -97,6 +120,13 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
     });
     previousArrays = arrays;
     const pointers = frames.flatMap(frame => [...frame.vars].flatMap(([name, variable]) => variable.pointer && typeof variable.value === "number" ? [{ from: `${frame.name}.${name}`, to: variable.value, label: name, dangling: Boolean(memory.allocations.find(a => a.address === variable.value)?.freeStep !== undefined) }] : []));
+    const arrayHeads = collectStructArrayHeads();
+    for (const frame of frames) for (const [name, variable] of frame.vars) {
+      for (const { index, address, dangling } of arrayHeads(variable)) {
+        const label = name + "[" + index + "]";
+        pointers.push({ from: frame.name + "." + label, to: address, label, dangling });
+      }
+    }
     const heapViews = [...heap.values()].map(object => {
       // An anonymous struct has no unique runtime type name in this VM.
       const fields = object.type && object.type !== "struct" ? program.structPointerFields.get(object.type) : undefined;
@@ -1054,6 +1084,10 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
   try { if (program.body.length) execute({ kind: "block", body: program.body, line: program.body[0].line }); const main = program.functions.get("main"); if (main) { record(main.line, "call"); execute(main.body, true); record(main.line, "return"); } else if (!program.body.length) execute({ kind: "block", body: [], line: 1 }); }
   catch (caught) { if (caught instanceof InputNeeded) return { executionMode: program.functions.has("main") ? "program" : "snippet", trace, status: "waiting", waitingLine: caught.line, leaks: [], orphanedAtExit: [] }; if (caught instanceof MemoryFault) { error = caught; record(caught.line, "error", caught.reason); } else if (!(caught instanceof ReturnSignal) && !(caught instanceof ExitSignal)) { const message = caught instanceof Error || caught instanceof BreakSignal || caught instanceof ContinueSignal ? caught.message : "unsupported construct"; const match = message.match(/line (\d+)/); const line = match ? Number(match[1]) : 1; error = new MemoryFault(message, line, steps); record(line, "error", message); } }
   const roots = [...frames.flatMap(frame => [...frame.vars.values()].map(variable => variable.value))].filter((value): value is number => typeof value === "number");
+  const arrayHeads = collectStructArrayHeads();
+  for (const frame of frames) for (const variable of frame.vars.values()) {
+    for (const head of arrayHeads(variable)) if (!head.dangling) roots.push(head.address);
+  }
   const reachable = new Set<number>(); const visit = (address: number) => { const allocation = memory.allocationAt(address); if (!allocation || allocation.freeStep !== undefined || reachable.has(allocation.address)) return; reachable.add(allocation.address); const object = heap.get(allocation.address); if (object) for (const value of object.fields.values()) if (typeof value === "number") visit(value); };
   roots.forEach(visit); const live = memory.allocations.filter(allocation => allocation.freeStep === undefined); const orphanedAtExit = live.filter(allocation => !reachable.has(allocation.address)).map(allocation => allocation.address);
   return { executionMode: program.functions.has("main") ? "program" : "snippet", trace, status: error ? "error" : "ok", error, leaks: (error ? memory.allocations : live).map(allocation => ({ address: allocation.address, line: allocation.line })), orphanedAtExit };
