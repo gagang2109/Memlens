@@ -10,7 +10,7 @@ type LocalArrayOwner = { vars: Map<string, RuntimeVariable>; name: string; varia
 type LocalArray = { values: Value[]; type: string; dimensions: number[];
   owner?: LocalArrayOwner; scanBufferOwner?: LocalArrayOwner };
 type RuntimeVariable = { value: Value; type: string; pointer: boolean; pointerDepth?: number; array?: Value[]; dimensions?: number[]; fixedArrayBounds?: boolean; matrixColumnCount?: number; elementSize?: number; arrayBase?: number; address?: number; fixedRecords?: FixedLocalStruct[]; borrowedRecords?: FixedLocalStruct[]; recordPointer?: true; initializedRecordPointer?: true; recordTarget?: FixedLocalStruct };
-type Ref = { get: () => Value; set: (value: Value) => void; address?: number; allocation?: Allocation; scanFloat?: (value: number, line: number) => void };
+type Ref = { get: () => Value; set: (value: Value) => void; address?: number; allocation?: Allocation; scanFloat?: (value: number, line: number) => void; scanCharMember?: (value: string, line: number) => void };
 type HeapObject = { address: number; fields: Map<string, Value>; type?: string };
 type FixedMember = { name: string; type: FixedStructField["type"]; stride: number; address: number; invocation: number; values?: Value[]; scalar: Value };
 type FixedLocalStruct = { type: string; address: number; invocation: number; members: Map<string, FixedMember> };
@@ -418,8 +418,13 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
             const number = Math.fround(asNum(value));
             if (!Number.isFinite(number)) runtimeError("record field is outside the supported finite float range", expression.line);
             member.scalar = number;
-          } else member.scalar = asNum(value) | 0;
+          } else if (member.type === "char") member.scalar = String.fromCharCode(asNum(value) & 255);
+          else member.scalar = asNum(value) | 0;
         } };
+        if (member.type === "char") result.scanCharMember = (value, line) => {
+          checkMemberLifetime(member, line);
+          member.scalar = String.fromCharCode(value.charCodeAt(0) & 255);
+        };
         if (member.type === "float") result.scanFloat = (value, line) => {
           checkMemberLifetime(member, line);
           member.scalar = value;
@@ -953,8 +958,13 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
           const target = destinations[destinationIndex++];
           if (target === undefined) return runtimeError("missing scanf destination", expression.line);
           const { address: destination, matrixInt } = target;
-          const floatTarget = locations.get(destination)?.scanFloat;
-          if (specifier === "f") {
+          const location = locations.get(destination);
+          const floatTarget = location?.scanFloat;
+          if (location?.scanCharMember) {
+            if (specifier !== "c" || width !== 1)
+              return runtimeError("a scalar char record field takes scanf %c with width one", expression.line);
+            location.scanCharMember(token, expression.line);
+          } else if (specifier === "f") {
             if (!floatTarget) return runtimeError("scanf %f needs the address of a writable float scalar or record field", expression.line);
             const number = Math.fround(Number(token));
             if (!Number.isFinite(number)) return runtimeError("scanf %f value is outside the supported finite float range", expression.line);
