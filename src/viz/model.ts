@@ -1,5 +1,6 @@
 import type { TraceStep, PointerArrow } from "../vm/trace";
 import type { TreeChildAliases } from "../lang/parser";
+import type { ConvertedList } from "./convertedList";
 
 export type LayoutNode = {
   address: number;
@@ -12,7 +13,7 @@ export type LayoutNode = {
   value: string;
   fields?: string[];
   next: string;
-  listLinks?: { next: string; prev: string };
+  listLinks?: { next: string; prev: string; names?: { next: string; prev: string } };
   treeChildAliases?: TreeChildAliases;
   treeChildren?: Partial<Record<"left" | "right", number | null>>;
   type?: string;
@@ -22,11 +23,13 @@ export type LayoutNode = {
 };
 export type RenderShape = "singly-linked-list" | "doubly-linked-list" | "tree" | "stack" | "queue" | "grid";
 export type QueueEndpoint = { role: "front" | "rear"; from: string; address: number | null };
-export type RenderModel = { queueEndpoints?: [QueueEndpoint, QueueEndpoint]; nodes: LayoutNode[]; arrows: PointerArrow[]; shape: RenderShape; canvasWidth: number; canvasHeight: number };
+export type LayoutArrow = PointerArrow & { listRole?: "prev" | "next" };
+export type RenderModel = { queueEndpoints?: [QueueEndpoint, QueueEndpoint]; nodes: LayoutNode[]; arrows: LayoutArrow[]; shape: RenderShape; canvasWidth: number; canvasHeight: number };
 
 export const VARIABLE_TAG_WIDTH = 72;
 export const variableTagX = (nodeX: number, index: number) => nodeX + 27 + index * (VARIABLE_TAG_WIDTH + 4);
 const variableTagRight = (count: number) => count ? variableTagX(0, count - 1) + VARIABLE_TAG_WIDTH : 0;
+const listNodeSpacing = (tagCount: number, spaceForTags: boolean) => Math.max(145, spaceForTags && tagCount ? variableTagRight(tagCount) + 16 : 0);
 
 export function treeSide(label: string): "left" | "right" | undefined {
   if (label === "left" || label === "lchild" || label === "llink") return "left";
@@ -174,8 +177,7 @@ export function renderModel(step: TraceStep): RenderModel {
       for (const node of row) {
         node.x = x; node.y = y;
         const tagCount = variableTagCounts.get(node.address) ?? 0;
-        const aliasWidth = shape !== "singly-linked-list" && tagCount ? variableTagRight(tagCount) + 16 : 0;
-        x += Math.max(145, aliasWidth);
+        x += listNodeSpacing(tagCount, shape !== "singly-linked-list");
       }
     };
     placeRow(reachableNodes, 105);
@@ -302,4 +304,34 @@ export function renderModel(step: TraceStep): RenderModel {
     }
   }
   return { nodes, ...(shape === "queue" ? { queueEndpoints } : {}), arrows, shape, canvasWidth, canvasHeight };
+}
+
+// The selected view changes grouping and route style, never the source
+// field names, trace addresses, or the underlying heap snapshot.
+export function renderConvertedList(step: TraceStep, base: RenderModel, list: ConvertedList): RenderModel {
+  const [prev, next] = list.fields;
+  const selected = new Set(list.addresses);
+  const nodesByAddress = new Map(base.nodes.map(node => [node.address, node]));
+  const objects = new Map((step.heap ?? []).map(node => [node.address, node]));
+  const arrows: LayoutArrow[] = base.arrows.flatMap(arrow => {
+    if (!selected.has(arrow.to)) return [];
+    if (!arrow.from.startsWith("0x")) return [arrow];
+    const from = Number.parseInt(arrow.from.slice(0, arrow.from.lastIndexOf(".")), 16);
+    if (!selected.has(from)) return [];
+    return arrow.label === prev ? [{ ...arrow, listRole: "prev" as const }]
+      : arrow.label === next ? [{ ...arrow, listRole: "next" as const }] : [];
+  });
+  const tags = new Map<number, number>();
+  for (const arrow of arrows) if (!arrow.from.startsWith("0x")) tags.set(arrow.to, (tags.get(arrow.to) ?? 0) + 1);
+  let x = 20;
+  const nodes = list.addresses.map(address => {
+    const node = nodesByAddress.get(address)!;
+    const fields = objects.get(address)!.fields;
+    const display = (value: string) => value === "null" || value === "0" ? "NULL" : addressOf(Number(value));
+    const links = { next: display(fields[next]), prev: display(fields[prev]), names: {next, prev} };
+    const adjusted: LayoutNode = { ...node, x, y: 105, listLinks: links };
+    x += listNodeSpacing(tags.get(address) ?? 0, true);
+    return adjusted;
+  });
+  return { shape: "doubly-linked-list", nodes, arrows, canvasWidth: Math.max(520, x), canvasHeight: 245 };
 }

@@ -27,7 +27,8 @@ import { ConsoleWindow } from "./ConsoleWindow";
 import { run } from "../vm/interpreter";
 import { samples } from "../samples";
 import type { Trace, TraceStep, FrameVariable } from "../vm/trace";
-import { listReturnLink, previousListLink, renderModel, treeSide, VARIABLE_TAG_WIDTH, variableTagX } from "../viz/model";
+import { convertedList } from "../viz/convertedList";
+import { listReturnLink, previousListLink, renderConvertedList, renderModel, treeSide, VARIABLE_TAG_WIDTH, variableTagX } from "../viz/model";
 import { DiagramViewport, type MemoryViewRequest } from "./DiagramViewport";
 import { CodeEditor } from "./CodeEditor";
 import { readSavedCount, saveCount } from "./storage";
@@ -90,12 +91,13 @@ function StructureDiagram({ model, highlighted, onHighlight, memoryViewRequest, 
           const left = side === "left"; const x1 = source.x + (left ? 20 : 106); const y1 = source.y + 18;
           return <line key={`arrow-${index}`} x1={x1} y1={y1} x2={target.x + 63} y2={target.y} className={arrow.dangling ? "dangling-arrow" : "pointer-arrow"} markerEnd="url(#arrow)" />;
         }
-        if (arrow.label === "prev" && (model.shape === "doubly-linked-list" || model.shape === "queue")) {
+        const role = arrow.listRole ?? arrow.label;
+        if (role === "prev" && (model.shape === "doubly-linked-list" || model.shape === "queue")) {
           const route = previousListLink(source, target);
-          return <path key={`arrow-${index}`} d={route.path} data-pointer-route="prev" className={arrow.dangling ? "dangling-arrow" : "pointer-arrow list-prev-arrow"} markerEnd={arrow.dangling ? "url(#arrow)" : "url(#prev-arrow)"}><title>{`${source.label}.prev → ${target.label}${arrow.dangling ? " (freed node)" : ""}`}</title></path>;
+          return <path key={`arrow-${index}`} d={route.path} data-pointer-route="prev" className={arrow.dangling ? "dangling-arrow" : "pointer-arrow list-prev-arrow"} markerEnd={arrow.dangling ? "url(#arrow)" : "url(#prev-arrow)"}><title>{`${source.label}.${arrow.label} → ${target.label}${arrow.dangling ? " (freed node)" : ""}`}</title></path>;
         }
-        const returning = listReturnLink(model.shape, arrow.label, source, target);
-        if (returning) return <path key={`arrow-${index}`} d={returning.path} data-pointer-route="return" className={arrow.dangling ? "dangling-arrow" : "pointer-arrow"} markerEnd="url(#arrow)"><title>{`${source.label}.next → ${target.label}${source === target ? " (same node)" : ""}${arrow.dangling ? " (freed node)" : ""}`}</title></path>;
+        const returning = listReturnLink(model.shape, role, source, target);
+        if (returning) return <path key={`arrow-${index}`} d={returning.path} data-pointer-route="return" className={arrow.dangling ? "dangling-arrow" : "pointer-arrow"} markerEnd="url(#arrow)"><title>{`${source.label}.${arrow.label} → ${target.label}${source === target ? " (same node)" : ""}${arrow.dangling ? " (freed node)" : ""}`}</title></path>;
         const targetX = target.x >= source.x ? target.x : target.x + 126;
         return <line key={`arrow-${index}`} x1={source.x + 95} y1={source.y + 27} x2={targetX} y2={target.y + 27} className={arrow.dangling ? "dangling-arrow" : "pointer-arrow"} markerEnd="url(#arrow)" />;
       })}
@@ -117,7 +119,7 @@ function StructureDiagram({ model, highlighted, onHighlight, memoryViewRequest, 
             {child === null ? <circle cx={x} cy="18" r="4" className="null-stub" fill="none" stroke="currentColor" /> : child !== undefined ? <text x={x} y="22" textAnchor="middle" className="next-dot">●</text> : null}
             <text x="7" y={42 + index * 12} textAnchor="start" className="node-kind">{node.treeChildAliases?.[index] ?? side} → {child === null ? "NULL" : child === undefined ? "—" : `0x${child.toString(16)}`}</text>
           </g>;
-        })}</> : node.listLinks ? <><rect width="126" height="78" rx="7" /><text x="63" y="21" textAnchor="middle">{node.value}</text><text x="8" y="38" className="node-kind">next → {node.listLinks.next}</text><text x="8" y="54" className="node-kind list-prev-label">prev → {node.listLinks.prev}</text></> : <><rect width="126" height="78" rx="7" /><line x1="63" y1="0" x2="63" y2="54" className="node-divider" />{(node.fields?.length ?? 0) > 1 ? node.fields!.map((field, index) => <text key={field} x="8" y={17 + index * 14} textAnchor="start" className="node-kind">{field}</text>) : <text x="31" y="24" textAnchor="middle">{node.value}</text>}<text x="95" y="24" textAnchor="middle" className="next-dot">●</text><text x="8" y="51" textAnchor="start" className="node-kind">next → {node.next}</text></>}<text x="8" y="70" textAnchor="start" className="node-address"><title>{`Simulated address ${node.label}${node.freed ? `; freed at step ${stepNumber(node.freedAtStep!)}` : ""}`}</title>{node.freed ? `${node.label} freed #${stepNumber(node.freedAtStep!)}` : `@ ${node.label}`}</text>
+        })}</> : node.listLinks ? <><rect width="126" height="78" rx="7" /><text x="63" y="21" textAnchor="middle">{node.value}</text><text x="8" y="38" className="node-kind">{node.listLinks.names?.next ?? "next"} → {node.listLinks.next}</text><text x="8" y="54" className="node-kind list-prev-label">{node.listLinks.names?.prev ?? "prev"} → {node.listLinks.prev}</text></> : <><rect width="126" height="78" rx="7" /><line x1="63" y1="0" x2="63" y2="54" className="node-divider" />{(node.fields?.length ?? 0) > 1 ? node.fields!.map((field, index) => <text key={field} x="8" y={17 + index * 14} textAnchor="start" className="node-kind">{field}</text>) : <text x="31" y="24" textAnchor="middle">{node.value}</text>}<text x="95" y="24" textAnchor="middle" className="next-dot">●</text><text x="8" y="51" textAnchor="start" className="node-kind">next → {node.next}</text></>}<text x="8" y="70" textAnchor="start" className="node-address"><title>{`Simulated address ${node.label}${node.freed ? `; freed at step ${stepNumber(node.freedAtStep!)}` : ""}`}</title>{node.freed ? `${node.label} freed #${stepNumber(node.freedAtStep!)}` : `@ ${node.label}`}</text>
       </g>)}
     </svg>
     </DiagramViewport>
@@ -216,6 +218,7 @@ export function App() {
   const selectedSample = codeSample !== "custom" && setup === (codeSample === "tree-height" ? treeHeightSetup : "") ? codeSample : "custom";
   const [previousDraft, setPreviousDraft] = useState<Draft | undefined>(readPreviousDraft);
   const [runGeneration, setRunGeneration] = useState(0);
+  const [selectedConvertedList, setSelectedConvertedList] = useState<{generation: number; name: string; base: number; invocation?: number}>();
   const [selectedHeapMatrix, setSelectedHeapMatrix] = useState<{ generation: number; base: number; name: string; invocation?: number }>();
   const [selectedGraph, setSelectedGraph] = useState<{ generation: number; base: number; name: string; kind?: "list"; invocation?: number }>();
   const [selectedStack, setSelectedStack] = useState<{ generation: number; base: number; name: string; invocation?: number }>();
@@ -262,7 +265,26 @@ export function App() {
   const changes = useMemo(() => stepChanges(stale ? undefined : trace?.steps[cursor-1], view), [trace, cursor, stale, view]);
   useEffect(() => { setQuickLook(undefined); }, [view]);
   const allocations = view?.memory.allocations ?? [];
-  const model = view ? renderModel(view) : undefined;
+  const baseModel = view ? renderModel(view) : undefined;
+  const selectedList = selectedConvertedList?.generation === runGeneration ? selectedConvertedList : undefined;
+  const listCandidates = useMemo(() => {
+    const candidates = new Map<number, NonNullable<ReturnType<typeof convertedList>>>();
+    if (!view) return candidates;
+    const addresses = new Set((view.pointers ?? []).filter(p => !p.dangling && !p.from.startsWith("0x")).map(p => p.to));
+    for (const node of view.heap ?? []) {
+      const fields = node.treeChildAliases;
+      if (!fields || !addresses.has(node.address) ||
+          !["null", "0"].includes(node.fields[fields[0]]) || !/^\d+$/.test(node.fields[fields[1]] ?? "") ||
+          Number(node.fields[fields[1]]) === 0) continue;
+      const chain = convertedList(view, node.address);
+      if (chain) candidates.set(node.address, chain);
+    }
+    return candidates;
+  }, [view]);
+  const selectionStillPointsToHead = selectedList && view?.frames.some(frame =>
+    frame.invocation === selectedList.invocation && frame.variables?.[selectedList.name]?.value === String(selectedList.base));
+  const chosenList = selectedList && selectionStillPointsToHead ? listCandidates.get(selectedList.base) : undefined;
+  const model = view && baseModel && chosenList ? renderConvertedList(view, baseModel, chosenList) : baseModel;
   const customHeapMatrix = selectedHeapMatrix?.generation === runGeneration ? selectedHeapMatrix : undefined;
   const heapMatrixPointer = customHeapMatrix && view?.frames.find(frame => frame.invocation === customHeapMatrix.invocation)?.variables?.[customHeapMatrix.name];
   const heapMatrix = customHeapMatrix && view && heapMatrixPointer?.heapIntRows && Number(heapMatrixPointer.value) === customHeapMatrix.base
@@ -487,6 +509,7 @@ export function App() {
         setFault(fault); setError(error); setLeaks(leaks); setWaiting(waiting); setTranscript(transcript);
         setConsoleError(consoleError); setRunGeneration(runGeneration); setPlaying(playing);
         setPrediction(prediction); setPredictionResult(predictionResult); setPredictionTarget(predictionTarget);
+        setSelectedConvertedList(selectedConvertedList);
         setSelectedGraph(selectedGraph); setSelectedStack(selectedStack); setSelectedQueue(selectedQueue); setSelectedHeapMatrix(selectedHeapMatrix);
         setHighlightedAddress(highlightedAddress);
       },
@@ -649,6 +672,12 @@ export function App() {
         <div className={`columns${!model?.nodes.length && !arrayStackStep && !showGraph && !customQueue && !customStack && !customHeapMatrix ? " empty-heap" : ""}`}>
           <div className="heap-column">
             <h3>{arrayStackStep || showGraph || customQueue || customStack || customHeapMatrix ? "DATA STRUCTURE" : "HEAP STRUCTURE"} <small>{showGraph ? "graph" : customQueue ? "queue" : arrayStackStep || customStack ? "stack" : customHeapMatrix ? "matrix" : model?.shape ?? "ready"}</small></h3>
+            {selectedList && <div className="view-guide">
+              <button type="button" className="graph-trigger" onClick={() => setSelectedConvertedList(undefined)}>Back to automatic heap view</button>
+              <div role="status">{chosenList
+                ? `List from ${selectedList.name}: ${chosenList.fields[0]} is previous, ${chosenList.fields[1]} is next.`
+                : `The selected list from ${selectedList.name} is not complete at this step. Showing the recorded heap instead.`}</div>
+            </div>}
             {customHeapMatrix && <HeapMatrixDiagram name={customHeapMatrix.name} matrix={heapMatrix} onClose={() => setSelectedHeapMatrix(undefined)} />}
             {arrayStackStep && <ArrayStackDiagram stack={readArrayStack(arrayStackStep)} />}
             {customStack && <StructStackDiagram name={customStack.name} stack={structStack} onClose={() => setSelectedStack(undefined)} />}
@@ -663,12 +692,13 @@ export function App() {
             {((!arrayStackStep && !showGraph && !customQueue && !customStack && !customHeapMatrix) || Boolean(model?.nodes.length && !customHeapMatrix)) && (model
               ? <StructureDiagram model={model} highlighted={highlightedAddress} onHighlight={setHighlightedAddress} memoryViewRequest={memoryViewRequest} changedHeap={changes.heap} />
               : <div className="diagram-empty">{emptyRun ? "No heap activity was recorded." : "Run a program to visualize its structure."}</div>)}
-            <div className="heap-summary">{allocations.filter(allocation => allocation.freeStep === undefined).length} live · {allocations.filter(allocation => allocation.freeStep !== undefined).length} freed{!customHeapMatrix && ` · ${model?.nodes.filter(node => node.orphaned).length ?? 0} orphaned`}</div>
+            <div className="heap-summary">{allocations.filter(allocation => allocation.freeStep === undefined).length} live · {allocations.filter(allocation => allocation.freeStep !== undefined).length} freed{!customHeapMatrix && ` · ${baseModel?.nodes.filter(node => node.orphaned).length ?? 0} orphaned`}</div>
           </div>
           <div><h3>CALL STACK</h3><div className="stack-visual"><div className="stack-label">Active functions and local variables</div>{view && <p className="view-guide">Matrices show rows and columns here. When a variable supports another view, use its <strong>View as</strong> button here.</p>}{view && view.frames.slice().reverse().map((frame, frameIndex) => <div key={frameKey(frame.invocation, frame.name, view.frames.length-1-frameIndex)} className="frame" data-invocation={frame.invocation}>
               <small className="frame-name">{frame.invocation === -1 ? "File scope" : executionMode === "snippet" && frameIndex === view.frames.length - 1 ? "snippet" : `${frame.name}()`}</small>
               {Object.entries(frame.variables ?? {}).map(([key, variable]) => {
                 const change = frame.invocation === undefined ? undefined : changes.frames.get(frame.invocation)?.get(key);
+                const list = variable.pointer && !variable.stringPointer ? listCandidates.get(Number(variable.value)) : undefined;
                 const candidate = !labGraph && variable.array && graphSize(variable.array) > 0 ? variable.array : undefined;
                 return <div className={`stack-slot ${variable.pointer ? "pointer-slot" : ""}${change ? " step-changed-slot" : ""}`} key={key}
                   title={`${variable.type} ${key}`}
@@ -677,15 +707,16 @@ export function App() {
                   <span><b>{key}</b><small>{variable.type}</small></span>
                   <StackValue name={key} variable={variable} change={change} generation={runGeneration} tourCell={tour === 4 && cursor === tourChange?.at && key === "values" ? tourChange.index : undefined} />
                   {candidate && <button type="button" className="graph-trigger" aria-pressed={customGraph?.base === candidate.base}
-                    onClick={() => { setSelectedQueue(undefined); setSelectedStack(undefined); setSelectedHeapMatrix(undefined); setSelectedGraph({generation:runGeneration, base:candidate.base, name:key}); }}>View {key} as graph</button>}
+                    onClick={() => { setSelectedConvertedList(undefined); setSelectedQueue(undefined); setSelectedStack(undefined); setSelectedHeapMatrix(undefined); setSelectedGraph({generation:runGeneration, base:candidate.base, name:key}); }}>View {key} as graph</button>}
                   {variable.array && variable.adjacencyShape && <button type="button" className="graph-trigger"
                     aria-pressed={customGraph?.kind === "list" && customGraph.base === variable.array.base && customGraph.invocation === frame.invocation}
                     onClick={() => {
-                      setSelectedQueue(undefined); setSelectedStack(undefined); setSelectedHeapMatrix(undefined);
+                      setSelectedConvertedList(undefined); setSelectedQueue(undefined); setSelectedStack(undefined); setSelectedHeapMatrix(undefined);
                       setSelectedGraph({generation:runGeneration, base:variable.array!.base, name:key, invocation:frame.invocation, kind:"list"});
                     }}>View {key} as adjacency list</button>}
                   {variable.array && frame.variables && canShowLinearQueue(frame.variables, key) &&
                     <button type="button" className="graph-trigger" aria-pressed={customQueue?.mode === "linear" && customQueue.base === variable.array.base} onClick={() => {
+                      setSelectedConvertedList(undefined);
                       setSelectedGraph(undefined);
                       setSelectedHeapMatrix(undefined);
                       setSelectedStack(undefined);
@@ -693,6 +724,7 @@ export function App() {
                     }}>View {key} as linear queue</button>}
                   {variable.array && frame.variables && readCircularQueue(frame.variables, key) &&
                     <button type="button" className="graph-trigger" aria-pressed={customQueue?.mode === "circular" && customQueue.base === variable.array.base} onClick={() => {
+                      setSelectedConvertedList(undefined);
                       setSelectedGraph(undefined);
                       setSelectedHeapMatrix(undefined);
                       setSelectedStack(undefined);
@@ -700,14 +732,22 @@ export function App() {
                     }}>View {key} as circular queue</button>}
                   {variable.array && frame.variables && readStructStack(frame.variables, key) &&
                     <button type="button" className="graph-trigger" aria-pressed={customStack?.base === variable.array.base} onClick={() => {
+                      setSelectedConvertedList(undefined);
                       setSelectedGraph(undefined);
                       setSelectedHeapMatrix(undefined);
                       setSelectedQueue(undefined);
                       setSelectedStack({ generation:runGeneration, base:variable.array!.base, name:key, invocation:frame.invocation });
                     }}>View {key} as stack</button>}
+                  {list && <button type="button" className="graph-trigger"
+                    aria-pressed={chosenList?.head === list.head && selectedList?.name === key && selectedList.invocation === frame.invocation}
+                    onClick={() => {
+                      setSelectedGraph(undefined); setSelectedQueue(undefined); setSelectedStack(undefined); setSelectedHeapMatrix(undefined);
+                      setSelectedConvertedList({generation:runGeneration, name:key, base:list.head, invocation:frame.invocation});
+                    }}>View {key} as doubly linked list</button>}
                   {variable.heapIntRows && <button type="button" className="graph-trigger"
                     aria-pressed={customHeapMatrix?.name === key && customHeapMatrix.invocation === frame.invocation && customHeapMatrix.base === Number(variable.value)}
                     onClick={() => {
+                      setSelectedConvertedList(undefined);
                       setSelectedGraph(undefined);
                       setSelectedQueue(undefined);
                       setSelectedStack(undefined);

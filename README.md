@@ -173,6 +173,7 @@ Select **Float terminal** to keep the console visible while reading the code or 
 
 - **Spotlight** (Ctrl/⌘ + K) searches sample programs and actions. **Reset memory view** resets zoom and pan only. Spotlight asks before replacing edited code or test setup with a sample.
 - Drag either **Split View** divider to resize its neighboring panes on desktop, or focus the divider and use the arrow keys. **Focus code**, **Focus memory**, and **Focus terminal** temporarily fill the workspace; **Restore workspace** or Escape returns to your old split.
+- After a tree-to-list conversion using supported `lchild/rchild` or `llink/rlink` fields, use **View … as doubly linked list** beside the head pointer in Call Stack. It appears only for a complete reciprocal chain. Rewinding before the links are complete shows the recorded heap, not an invented list.
 - Use a pointer’s **Quick Look** button to inspect its recorded address and target without changing the current step.
 - **Workspace layout** presets rearrange pane space for writing, tracing, or console work without resetting source or execution.
 
