@@ -23,6 +23,11 @@ const builtinArgumentCounts = new Map<string, number>([
   ["strlen", 1], ["strcpy", 2], ["strcat", 2], ["strcmp", 2],
   ["memset", 3], ["getchar", 0], ["exit", 1],
 ]);
+const characterPredicates = new Map<string, (code: number) => boolean>([
+  ["isspace", code => code === 32 || (code >= 9 && code <= 13)],
+  ["isalnum", code => (code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122)],
+  ["isdigit", code => code >= 48 && code <= 57],
+]);
 
 export function run(source: string, stepLimit = 100000, recursionLimit = 100, stdin = "", inputOpen = false): RunResult {
   const trace = new Trace();
@@ -535,9 +540,27 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
     }
     if (expression.kind === "call") {
       const args = expression.args;
-      const expectedArguments = builtinArgumentCounts.get(expression.name);
+      const characterPredicate = program.functions.has(expression.name) ? undefined : characterPredicates.get(expression.name);
+      const expectedArguments = characterPredicate ? 1 : builtinArgumentCounts.get(expression.name);
       if (expectedArguments !== undefined && args.length !== expectedArguments)
         runtimeError(`function '${expression.name}' expects ${expectedArguments} arguments, received ${args.length}`, expression.line);
+      if (characterPredicate) {
+        const argument = args[0];
+        const byteCast = argument.kind === "cast" && !argument.pointer && argument.type.replace(/^const /, "") === "unsigned char";
+        const operand = byteCast ? argument.expr : argument;
+        const variable = pointerMeta(operand);
+        if (variable?.pointer || variable?.array || operand.kind === "literal" && operand.literalKind === "string")
+          return runtimeError(`${expression.name} expects a character code, not a pointer`, expression.line);
+        const value = evaluate(operand);
+        const code = typeof value === "string" && value.length === 1 ? value.charCodeAt(0) : value;
+        if (typeof code !== "number" || !Number.isSafeInteger(code))
+          return runtimeError(`${expression.name} expects an integer character code`, expression.line);
+        if (!byteCast && (code < -1 || code > 255))
+          return runtimeError(`${expression.name} expects EOF or a character code from 0 to 255`, expression.line);
+        // Explicit unsigned-char conversion wraps to a byte; uncast EOF is
+        // negative and belongs to none of these C-locale character classes.
+        return Number(characterPredicate(byteCast ? code & 255 : code));
+      }
       if (expression.name === "scanf" && args.length === 0)
         runtimeError("missing scanf format argument", expression.line);
       if (expression.name === "sizeof") {
