@@ -80,6 +80,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
     ((!main || separateFileScope) ? frames[0].vars.get(name) : undefined);
   const sizeofContext = { constants: program.constants, floatingConstants: program.floatingConstants, functions: program.functions, lookup: findVariable };
   const pointerMeta = (expression: Expr) => expression.kind === "name" ? findVariable(expression.name) : undefined;
+  const recordFieldsFor = (type: string) => program.fixedStructFields.get(type) ?? program.integerRecordFields.get(type);
   const recordBacking = (variable: RuntimeVariable | undefined) => variable?.fixedRecords ?? variable?.borrowedRecords;
   const indexedRecordArray = (expression: Expr) => {
     const variable = expression.kind === "index" ? pointerMeta(expression.object) : undefined;
@@ -772,7 +773,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
           const indexed = indexedRecordArray(sized.object);
           if (indexed && sized.object.kind === "index") checkRecordIndexType(sized.object.index, sized.object.line);
           const owner = pointerMeta(sized.object) ?? indexed;
-          const fields = owner && program.fixedStructFields.get(owner.type);
+          const fields = owner && (indexed ? recordFieldsFor(owner.type) : program.fixedStructFields.get(owner.type));
           if (fields) {
             const member = fields.get(sized.name);
             if (!member || argument?.kind === "index" && member.length === null)
@@ -784,11 +785,11 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
         const recordArray = argument && indexedRecordArray(argument);
         if (recordArray && argument?.kind === "index") {
           checkRecordIndexType(argument.index, argument.line);
-          return fixedStructBytes(program.fixedStructFields.get(recordArray.type)!);
+          return fixedStructBytes(recordFieldsFor(recordArray.type)!);
         }
         if (argument?.kind === "name" || argument?.kind === "unary" && argument.op === "*") {
           const variable = pointerMeta(argument.kind === "name" ? argument : argument.expr);
-          const fields = variable && program.fixedStructFields.get(variable.type);
+          const fields = variable && (variable.fixedRecords ? recordFieldsFor(variable.type) : program.fixedStructFields.get(variable.type));
           if (fields && variable && (argument.kind === "name" && !variable.pointer || argument.kind === "unary" && variable.pointerDepth === 1))
             return fixedStructBytes(fields) * (variable.fixedRecords?.length ?? 1);
         }
@@ -1291,7 +1292,8 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       return;
     }
     if (statement.kind === "decl") {
-      const fixed = !statement.pointer && program.fixedStructFields.get(statement.type);
+      const fixed = !statement.pointer && (statement.integerRecordArray
+        ? recordFieldsFor(statement.type) : program.fixedStructFields.get(statement.type));
       const scopedRecord = fixed && blockScope && !statement.arrayLength ? blockScope : undefined;
       const previousBinding = current().get(statement.name);
       if ((scopedRecord && scopedRecord.declared.has(statement.name)) ||
@@ -1327,6 +1329,8 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
           if (!Number.isSafeInteger(count) || count < 1 || count > 32)
             runtimeError("record arrays currently support 1 through 32 records", statement.line);
         }
+        if (statement.aggregateRecords && statement.aggregateRecords.length > count)
+          throw new MemoryFault(`line ${statement.line}: too many records in an array initializer`, statement.line, steps, undefined, true, "invalid-c");
         const layout = fixedStructLayout(fixed);
         if (statement.arrayLength && layout.bytes * count > 65536)
           runtimeError("local record array exceeds simulator limit (65536 bytes)", statement.line);
@@ -1353,6 +1357,19 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
         variable.value = address;
         variable.address = address;
         if (origin) copyRecord(records[0], origin.read());
+        if (statement.aggregateRecords) {
+          // Preserve field order and the zero initialization of omitted cells.
+          for (const [index, entry] of records.entries()) {
+            const values = statement.aggregateRecords[index] ?? [];
+            let field = 0;
+            for (const member of entry.members.values()) {
+              const value = values[field++];
+              if (value && !hasIntegerProvenance(value))
+                throw new MemoryFault(`line ${value.line}: record array initialization currently requires supported integer expressions`, value.line, steps, undefined, true, "unsupported-c");
+              member.scalar = value ? asNum(evaluate(value)) | 0 : 0;
+            }
+          }
+        }
         if (scopedRecord) {
           scopedRecord.shadowed.set(statement.name, previousBinding);
           if (previousBinding) {

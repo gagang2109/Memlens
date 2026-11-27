@@ -1,4 +1,4 @@
-import { UnsupportedC } from "./diagnostics";
+import { InvalidC, UnsupportedC } from "./diagnostics";
 import { isDecimalFloatingLiteral, lex, type Token } from "./lexer";
 import { stripComments } from "./comments";
 
@@ -14,7 +14,7 @@ export type Expr =
   | { kind: "cast"; type: string; pointer: boolean; expr: Expr; line: number };
 export type Stmt =
   | { kind: "block"; body: Stmt[]; line: number; declarationGroup?: true }
-  | { kind: "decl"; type: string; pointer: boolean; pointerDepth?: number; name: string; init?: Expr; line: number; arrayLength?: Expr; arrayLengths?: Expr[]; arrayInitializer?: Expr[]; staticStorage?: true; readOnly?: true }
+  | { kind: "decl"; type: string; pointer: boolean; pointerDepth?: number; name: string; init?: Expr; line: number; arrayLength?: Expr; arrayLengths?: Expr[]; arrayInitializer?: Expr[]; aggregateRecords?: Expr[][]; integerRecordArray?: true; staticStorage?: true; readOnly?: true }
   | { kind: "expr"; expr: Expr; line: number }
   | { kind: "if"; test: Expr; yes: Stmt; no?: Stmt; line: number }
   | { kind: "while"; test: Expr; body: Stmt; line: number }
@@ -44,7 +44,7 @@ export const fixedStructBytes = (fields: FixedStructFields) => fixedStructLayout
 const treeChildPairs = [["lchild", "rchild"], ["llink", "rlink"]] as const;
 export type TreeChildAliases = typeof treeChildPairs[number];
 export type AdjacencyShape = { destination: string; next: "next" };
-export type Program = { functions: Map<string, FunctionDef>; structs: Map<string, string[]>; structPointerFields: Map<string, ReadonlySet<string>>; adjacencyShapes: Map<string, AdjacencyShape>; fixedStructFields: Map<string, FixedStructFields>; aliasedTreeStructs: Map<string, TreeChildAliases>; body: Stmt[]; constants: Map<string, number | string>; floatingConstants: Set<string> };
+export type Program = { functions: Map<string, FunctionDef>; structs: Map<string, string[]>; structPointerFields: Map<string, ReadonlySet<string>>; adjacencyShapes: Map<string, AdjacencyShape>; fixedStructFields: Map<string, FixedStructFields>; integerRecordFields: Map<string, FixedStructFields>; aliasedTreeStructs: Map<string, TreeChildAliases>; body: Stmt[]; constants: Map<string, number | string>; floatingConstants: Set<string> };
 
 // The teaching VM stores pointers in four-byte slots; this is not the host ABI.
 export const SIM_POINTER_BYTES = 4;
@@ -105,6 +105,7 @@ export function parse(source: string): Program {
   const structs = new Map<string, string[]>(); const aliasedTreeStructs = new Map<string, TreeChildAliases>(); const structPointerFields = new Map<string, ReadonlySet<string>>(); const knownTypes = new Set(["int", "char", "long", "void"]); const aliasTypes = new Map<string, string>();
   const adjacencyShapes = new Map<string, AdjacencyShape>();
   const fixedStructFields = new Map<string, FixedStructFields>();
+  const integerRecordFields = new Map<string, FixedStructFields>();
   const functions = new Map<string, FunctionDef>(); const body: Stmt[] = [];
   const peek = (value?: string) => value === undefined ? ts[p] : (ts[p]?.kind === "symbol" || ts[p]?.kind === "id") && ts[p]?.value === value;
   const take = (value?: string) => { const token = ts[p]; if (value && !peek(value)) throw new Error(`line ${token.line}: expected '${value}'`); p++; return token; };
@@ -163,6 +164,10 @@ export function parse(source: string): Program {
         if (fixedStructBytes(fixedFields) > 65536) throw new UnsupportedC(nameToken.line, "struct exceeds simulator limit (65536 bytes)");
         fixedStructFields.set(structType, fixedFields);
       }
+      if (name && fields.length && fixedFields.size === fields.length &&
+          [...fixedFields.values()].every(field => field.type === "int" && field.length === null))
+        integerRecordFields.set(structType, fixedFields);
+      else integerRecordFields.delete(structType);
       // A threaded tree can use the same pointer names for successors.
       // Leave known flag-marked layouts to a future thread-aware renderer.
       const threadMarker = fields.some(label => /^(?:[lr](?:tag|flag|bit|thread)|(?:left|right)(?:tag|flag|bit|thread)|threaded|isthreaded|thread)$/.test(label.toLowerCase().replace(/_/g, "")));
@@ -251,8 +256,61 @@ export function parse(source: string): Program {
       const pointer = pointerDepth > 0; const name = take();
       const arrayLengths: Expr[] = []; const omittedDimensions: number[] = [];
       while (peek("[")) { take("["); if (!peek("]")) arrayLengths.push(parseExpression(1)); else { omittedDimensions.push(arrayLengths.length); arrayLengths.push({ kind: "literal", value: 0, line: start.line }); } take("]"); }
-      let init: Expr | undefined; let arrayInitializer: Expr[] | undefined;
-      if (peek("=")) { take(); if (peek("{")) { take("{"); arrayInitializer = []; while (!peek("}")) { if (peek("{")) { take(); while (!peek("}")) { arrayInitializer.push(parseExpression(1)); if (!peek(",")) break; take(","); } take("}"); } else arrayInitializer.push(parseExpression(1)); if (!peek(",")) break; take(","); } take("}"); } else init = parseExpression(1); }
+      let init: Expr | undefined; let arrayInitializer: Expr[] | undefined; let aggregateRecords: Expr[][] | undefined;
+      if (peek("=")) {
+        take("=");
+        if (peek("{")) {
+          take("{");
+          const recordFields = !pointer && arrayLengths.length === 1 ? integerRecordFields.get(type) : undefined;
+          if (recordFields) {
+            const entries: (Expr | Expr[])[] = [];
+            const recordValue = () => {
+              if (peek(".") || peek("["))
+                throw new UnsupportedC(ts[p].line, "designated record initializers are not modeled");
+              return parseExpression(1);
+            };
+            while (!peek("}")) {
+              if (peek("{")) {
+                take("{");
+                const values: Expr[] = [];
+                while (!peek("}")) {
+                  values.push(recordValue());
+                  if (!peek(",")) break;
+                  take(",");
+                }
+                take("}");
+                if (!values.length) throw new UnsupportedC(start.line, "empty record initializers are not modeled");
+                entries.push(values);
+              } else entries.push(recordValue());
+              if (!peek(",")) break;
+              take(",");
+            }
+            if (!entries.length) throw new UnsupportedC(start.line, "empty record array initializers are not modeled");
+            aggregateRecords = [];
+            if (entries.every(Array.isArray)) aggregateRecords = entries as Expr[][];
+            else if (entries.some(Array.isArray))
+              throw new UnsupportedC(start.line, "use either one brace group per record or a flat list of integer values");
+            else for (let offset = 0; offset < entries.length; offset += recordFields.size)
+              aggregateRecords.push((entries as Expr[]).slice(offset, offset + recordFields.size));
+            if (aggregateRecords.some(record => record.length > recordFields.size))
+              throw new InvalidC(start.line, "too many values in a record initializer");
+          } else {
+            if (!pointer && type.startsWith("struct") && !fixedStructFields.has(type))
+              throw new UnsupportedC(start.line, "brace initialization of this struct is not modeled");
+            arrayInitializer = [];
+            while (!peek("}")) {
+              if (peek("{")) {
+                take("{");
+                while (!peek("}")) { arrayInitializer.push(parseExpression(1)); if (!peek(",")) break; take(","); }
+                take("}");
+              } else arrayInitializer.push(parseExpression(1));
+              if (!peek(",")) break;
+              take(",");
+            }
+          }
+          take("}");
+        } else init = parseExpression(1);
+      }
       // C permits a char array string initializer with optional braces.
       // Keep character literals distinct: 'x' is not an array initializer.
       const charArray = type.includes("char") && !pointer && arrayLengths.length === 1;
@@ -265,18 +323,24 @@ export function parse(source: string): Program {
         // Preserve [] as an inferred bound, distinct from an explicit zero.
         // Only the one-dimensional initializer forms modeled by this VM are inferred.
         const inferred = arrayLengths.length === 1
-          ? arrayInitializer?.length ?? (charArray && init?.kind === "literal" && init.literalKind === "string" && typeof init.value === "string" ? init.value.length + 1 : undefined)
+          ? aggregateRecords?.length ?? arrayInitializer?.length ?? (charArray && init?.kind === "literal" && init.literalKind === "string" && typeof init.value === "string" ? init.value.length + 1 : undefined)
           : undefined;
         if (inferred === undefined || inferred === 0)
           throw new Error(`line ${start.line}: unsupported omitted array bound; specify explicit positive dimensions or use a one-dimensional initializer`);
         arrayLengths[0] = { kind: "literal", value: inferred, line: start.line };
       }
-      declarations.push({ kind: "decl", type, pointer, ...(pointerDepth ? { pointerDepth } : {}), name: name.value, init, arrayLength: arrayLengths[0], arrayLengths: arrayLengths.length ? arrayLengths : undefined, arrayInitializer, line: start.line,
+      declarations.push({ kind: "decl", type, pointer, ...(pointerDepth ? { pointerDepth } : {}), name: name.value, init, arrayLength: arrayLengths[0], arrayLengths: arrayLengths.length ? arrayLengths : undefined, arrayInitializer, ...(aggregateRecords ? { aggregateRecords } : {}), line: start.line,
         ...(qualifiers.includes("static") ? { staticStorage: true } : {}), ...(qualifiers.includes("const") ? { readOnly: true } : {}) });
       if (!peek(",")) break;
       take(",");
     }
     take(";");
+    // A declaration such as `struct Term src[4] = {{...}}, dst[4];`
+    // uses the same local layout for both arrays. Other plain structs retain
+    // the existing backing model until supported in a separate change.
+    if (declarations.some(decl => decl.kind === "decl" && decl.aggregateRecords))
+      for (const decl of declarations)
+        if (decl.kind === "decl" && decl.arrayLength && !decl.pointer) decl.integerRecordArray = true;
     if (isTypedef) { const alias = declarations.at(-1); if (alias?.kind === "decl") { knownTypes.add(alias.name); aliasTypes.set(alias.name, type); } return { kind: "block", body: [], line: start.line }; }
     return declarations.length === 1 ? declarations[0] : { kind: "block", body: declarations, line: start.line, declarationGroup: true };
   };
@@ -341,5 +405,5 @@ export function parse(source: string): Program {
       } else { p = save; body.push(statement()); }
     } else if (peek(";")) take(";"); else body.push(statement());
   }
-  return { functions, structs, structPointerFields, adjacencyShapes, fixedStructFields, aliasedTreeStructs, body, constants, floatingConstants };
+  return { functions, structs, structPointerFields, adjacencyShapes, fixedStructFields, integerRecordFields, aliasedTreeStructs, body, constants, floatingConstants };
 }
