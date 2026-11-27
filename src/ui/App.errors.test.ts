@@ -214,7 +214,7 @@ it("distinguishes an unterminated block comment from a simulator limitation", ()
 it("offers Run inside the narrow-layout navigation as well as the header", () => {
   localStorage.setItem("memlens-code", "int main(void) { int n = 2; printf(\"%d\", n); return 0; }");
   act(() => root.render(createElement(App)));
-  expect(container.querySelector(".tour-welcome")?.textContent).toContain("Welcome to Memlens");
+  expect(container.querySelector(".tour-welcome")?.textContent).toContain("See your C code");
   act(() => container.querySelector<HTMLButtonElement>("nav .mobile-run")!.click());
   expect(container.textContent).toContain("step 1 of");
 });

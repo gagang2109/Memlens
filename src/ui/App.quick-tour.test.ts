@@ -46,7 +46,7 @@ afterEach(() => { act(() => root.unmount()); host.remove(); vi.useRealTimers(); 
 
 it("shows an optional welcome, exercises real Run and trace steps, and remembers completion", () => {
   mount();
-  expect(host.querySelector(".tour-welcome")?.textContent).toContain("Welcome to Memlens");
+  expect(host.querySelector(".tour-welcome")?.textContent).toContain("See your C code");
   expect(host.querySelector(".tour-hint")).toBeNull();
   click("Start quick tour");
   stage(1);
@@ -202,4 +202,34 @@ it("does not intercept speed keys in the editor, console, menu or browser zoom",
   expect(key(workspace(),"+",{ctrlKey:true}).defaultPrevented).toBe(false);
   expect(key(workspace(),"-",{metaKey:true}).defaultPrevented).toBe(false);
   expect(speed().value).toBe("1");
+});
+
+it("keeps a single accessible floating card outside the workspace panels", () => {
+  mount();
+  expect(host.querySelector<HTMLDialogElement>("dialog.tour-welcome")?.open).toBe(true);
+  click("Start quick tour");
+  const panel = host.querySelector(".workspace")!;
+  expect(panel.querySelector(".tour-hint")).toBeNull();
+  const card = host.querySelector(".tour-hint")!;
+  expect(card.getAttribute("aria-labelledby")).toBeTruthy();
+  expect(card.querySelector(".tour-progress")?.textContent).toContain("1 of 6");
+  expect(card.querySelectorAll(".tour-dots i")).toHaveLength(6);
+  click("Skip step"); stage(2);
+  expect(host.querySelector(".tour-key-rows")?.textContent).toContain("Shift+Enter");
+  click("Skip step"); stage(3);
+  click("Skip step"); stage(4);
+  expect(host.querySelector('[data-tour-target="changed-value"]')?.getAttribute("title")).toBe("[0]: 2 → 5");
+  click("Next"); stage(5);
+  click("Skip step"); stage(6);
+  click("Skip step"); stage(7);
+  click("Finish");
+  expect(source()).toBe(samples.requested.code);
+});
+
+it("lets Escape dismiss the first-visit dialog without starting the tour", () => {
+  mount();
+  const welcome = host.querySelector<HTMLDialogElement>("dialog")!;
+  act(() => welcome.dispatchEvent(new Event("cancel", {cancelable:true})));
+  expect(host.querySelector(".tour-welcome,.tour-hint")).toBeNull();
+  expect(localStorage.getItem(tourPreference)).toBe("yes");
 });

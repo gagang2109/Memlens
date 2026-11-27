@@ -318,7 +318,7 @@ export function App() {
         if (changed) {
           const [index, values] = changed;
           setPlaying(false);
-          setTourChange({ at: bounded, index, ...values });
+          setTourChange({ at: bounded, index, line: trace.steps[bounded].line, ...values });
           setTour(4);
         }
       }
@@ -507,19 +507,28 @@ export function App() {
     if ((next === 4 || next === 5) && tourChange) setCursor(tourChange.at);
     setTour(next);
   };
-  useEffect(() => {
-    if (!tour) return;
-    const task = requestAnimationFrame(() => {
-      const root = workspace.current;
-      if (!root) return;
-      const hint = root.querySelector<HTMLElement>(".tour-hint");
-      hint?.scrollIntoView?.({ block: window.innerWidth < 701 ? "center" : "nearest" });
-      if (tour === 3 || tour === 5) {
-        root.querySelector<HTMLElement>("[data-tour-target]")?.focus({ preventScroll: true });
-      } else if (tour !== 2) hint?.focus({ preventScroll: true });
-    });
-    return () => cancelAnimationFrame(task);
-  }, [tour]);
+  const skipTourStep = () => {
+    if (!tour || tour === 7) return;
+    if (tour === 2 && !trace) { runCode(); return; }
+    if (tour === 3 && trace) {
+      // A skipped forward step still lands on a real recorded change when
+      // available; never present an invented value or memory difference.
+      for (let index = 1; index < trace.steps.length; index++) {
+        const frame = trace.steps[index].frames.find(candidate => candidate.name === "main");
+        const delta = frame?.invocation === undefined ? undefined :
+          stepChanges(trace.steps[index-1], trace.steps[index]).frames.get(frame.invocation)?.get("values");
+        if (!delta || !("cells" in delta)) continue;
+        const changed = delta.cells.entries().next().value;
+        if (!changed) continue;
+        const [cell, values] = changed;
+        setPlaying(false); setCursor(index);
+        setTourChange({at:index,index:cell,line:trace.steps[index].line,...values}); setTour(4); return;
+      }
+      changeTourStep(6);
+      return;
+    }
+    changeTourStep((tour+1) as TourStep);
+  };
   const showTourWelcome = !tourSeen && !linkedSample && !loadedSharedSample.current && !tour;
   useEffect(() => {
     if (!showTourWelcome) return;
@@ -565,10 +574,11 @@ export function App() {
     savePreviousDraft(edited ? { code, setup } : undefined); } };
   const lines = useMemo(() => code.split(/\r?\n/), [code]);
   const spotlightDialog = spotlight && <Spotlight items={spotlightItems} onClose={closeSpotlight} onSelect={item => { if (item.action() !== false) closeSpotlight(); }} />;
-  const tourHint = tour && <QuickTourHint step={tour} change={tourChange}
-    triedPlay={tourTriedPlay} triedSpeed={tourTriedSpeed}
+  const tourHint = tour && !help && !spotlight && !quickLook && <QuickTourHint workspace={workspace} step={tour} change={tourChange}
+    triedPlay={tourTriedPlay} triedSpeed={tourTriedSpeed} anchorVersion={tour === 4 ? cursor : undefined}
+    onReveal={() => { if (tour === 4 && tourChange) setCursor(tourChange.at); }}
     onExit={() => finishTour()} onBack={() => changeTourStep((tour - 1) as TourStep)}
-    onNext={() => changeTourStep(tour === 4 ? 5 : 7)} />;
+    onNext={() => changeTourStep(tour === 4 ? 5 : 7)} onSkip={skipTourStep} />;
   const helpDialog = help && <WorkspaceHelp onClose={closeHelp} reportProblem={reportProblem} onQuickTour={startTour} />;
   return <main ref={workspace} data-tour-step={tour} tabIndex={-1} aria-label="Code execution workspace">
     <header><div className="brand"><img className="brand-mark" src="/memlens-mark.svg" width="36" height="36" alt="" aria-hidden="true" /> MEMLENS</div><div className="tag">Step through your C code and watch memory rewind.</div>
@@ -576,7 +586,7 @@ export function App() {
       <button type="button" className="spotlight-trigger" aria-keyshortcuts="Control+k Meta+k" onClick={event => { showSpotlight(); spotlightTrigger.current = event.currentTarget; }}>Spotlight <kbd>Ctrl / ⌘ K</kbd></button><button className="run" onClick={() => runCode()} title="Run code (Ctrl / ⌘ + Enter)" aria-keyshortcuts="Control+Enter Meta+Enter">Run</button></header>
     <SectionNavigation onOpenHelp={showHelp} helpOpen={help} onRun={() => runCode()} />
     {showTourWelcome && <QuickTourWelcome onStart={startTour} onSkip={useOwnCode} />}
-    {(tour === 2 || tour === 7) && tourHint}
+    {tourHint}
     {!trace && !error && !tour && (tourSeen || linkedSample || loadedSharedSample.current) && <p className="launch-quickstart">Paste your own C code or choose a sample. Select <strong>Run</strong>, then step forward or backward in <strong>Trace</strong>.</p>}
     {linkedSample && <section className="linked-sample" aria-label="Shared sample">
       <strong>{sampleLabels[linkedSample]}</strong>
@@ -594,7 +604,7 @@ export function App() {
     {code === samples.requested.code && <p className="step-explanation" role="note">This example intentionally reads a node after freeing it. Run it and step through the trace to see why this causes a use-after-free error. The error is in the example C program, not Memlens.</p>}
     {!stale && executionMode === "snippet" && trace && <p className="step-explanation" role="status">Snippet run · top-level statements execute in source order; no main() wrapper is added.</p>}
     {stale && <p className="step-explanation stale-results" role="status">Code or input changed. Memory, console, errors and trace below are from the previous run. Run again to update them.</p>}
-    <section className={`workspace ${inputMode === "interactive" ? "interactive-workspace" : ""}${effectiveFocus ? " has-focus" : ""}`} style={splitStyle}><div className="code-panel" id="code" tabIndex={-1} aria-label="Code section" hidden={Boolean(effectiveFocus && effectiveFocus !== "code")}><button className="pane-focus" type="button" onClick={() => toggleFocus("code")}>{focusPane === "code" ? "Restore workspace" : "Focus code"}</button><div className="panel-title">SOURCE <small>{lines.length} lines · edit a sample or paste your own C code</small></div><details className="starter-picker"><summary>Start from a scaffold</summary><StarterScaffolds onUse={useStarter} /></details><label className="input-mode">Program input <select aria-label="Input mode" value={inputMode} onChange={event => setInputMode(event.target.value as "ahead" | "interactive")}><option value="ahead">Input ahead (stdin)</option><option value="interactive">Interactive console</option></select></label>{previousDraft && !tour && <button type="button" className="restore-draft" onClick={restoreDraft}>Restore previous draft</button>}{tour === 1 && tourHint}<div data-tour-target={tour === 1 ? "editor" : undefined} onFocusCapture={event => { if (tour === 1 && (event.target as HTMLElement).matches(".cm-content")) setTour(2); }}><CodeEditor onRun={() => runCode()} onRunAndPlay={() => runCode(true)} value={code} currentLine={stale || (displayedSource.active && (view?.line ?? 0) >= displayedSource.setupStart) ? undefined : view?.line} onChange={value => { if (!tour || value === quickTourSource) setCode(value); else { const original = finishTour(false); if (original) savePreviousDraft(original); setCode(value); setSetup(""); } }} /></div>
+    <section className={`workspace ${inputMode === "interactive" ? "interactive-workspace" : ""}${effectiveFocus ? " has-focus" : ""}`} style={splitStyle}><div className="code-panel" id="code" tabIndex={-1} aria-label="Code section" hidden={Boolean(effectiveFocus && effectiveFocus !== "code")}><button className="pane-focus" type="button" onClick={() => toggleFocus("code")}>{focusPane === "code" ? "Restore workspace" : "Focus code"}</button><div className="panel-title">SOURCE <small>{lines.length} lines · edit a sample or paste your own C code</small></div><details className="starter-picker"><summary>Start from a scaffold</summary><StarterScaffolds onUse={useStarter} /></details><label className="input-mode">Program input <select aria-label="Input mode" value={inputMode} onChange={event => setInputMode(event.target.value as "ahead" | "interactive")}><option value="ahead">Input ahead (stdin)</option><option value="interactive">Interactive console</option></select></label>{previousDraft && !tour && <button type="button" className="restore-draft" onClick={restoreDraft}>Restore previous draft</button>}<div data-tour-target={tour === 1 ? "editor" : undefined} onFocusCapture={event => { if (tour === 1 && (event.target as HTMLElement).matches(".cm-content")) setTour(2); }}><CodeEditor onRun={() => runCode()} onRunAndPlay={() => runCode(true)} value={code} currentLine={stale || (displayedSource.active && (view?.line ?? 0) >= displayedSource.setupStart) ? undefined : view?.line} onChange={value => { if (!tour || value === quickTourSource) setCode(value); else { const original = finishTour(false); if (original) savePreviousDraft(original); setCode(value); setSetup(""); } }} /></div>
 
       <details className="practice-setup" open={setup.trim().length > 0 || undefined}>
         <summary>Test setup &amp; call (optional)</summary>
@@ -632,7 +642,7 @@ export function App() {
               className={`event-tick tick-${kind}`} style={{ left: `${trace.steps.length > 1 ? index / (trace.steps.length - 1) * 100 : 0}%` }}
               key={index} onMouseDown={event => event.preventDefault()} onClick={() => moveTo(index)} />;
           })}
-        </div>{(tour === 3 || tour === 5 || tour === 6) && tourHint}<div className="controls"><button data-playback-speed-keys="true" data-tour-target={tour === 6 && !tourTriedPlay ? "play" : undefined} aria-keyshortcuts="Space" disabled={(trace?.steps.length ?? 0) < 2} onClick={togglePlayback}>{playing ? "Pause" : "Play"} ▶</button><button data-step-navigation="true" data-playback-speed-keys="true" aria-keyshortcuts="ArrowLeft" disabled={(trace?.steps.length ?? 0) < 2} data-tour-target={tour === 5 ? "rewind" : undefined} onClick={() => moveTo(cursor - 1, "back")}>← step back</button><button data-step-navigation="true" data-playback-speed-keys="true" aria-keyshortcuts="ArrowRight" title="Use Left/Right arrow keys to step" disabled={(trace?.steps.length ?? 0) < 2} data-tour-target={tour === 3 ? "forward" : undefined} onClick={() => moveTo(cursor + 1, "forward")}>step forward →</button><select data-tour-target={tour === 6 && tourTriedPlay && !tourTriedSpeed ? "speed" : undefined} aria-label="Playback speed" value={speed} onChange={e => changePlaybackSpeed(Number(e.target.value))}>{playbackSpeeds.map(value => <option key={value} value={value}>{value}×</option>)}</select><label className="predict-toggle"><input type="checkbox" disabled={stale} checked={predictMode} onChange={e => { setPredictMode(e.target.checked); setPrediction(undefined); setPredictionResult(undefined); }} /> Predict</label>{(trace?.steps.length ?? 0) > 1 && timeline.events.length > 0 && <>
+        </div><div className="controls"><button data-playback-speed-keys="true" data-tour-target={tour === 6 && !tourTriedPlay ? "play" : undefined} aria-keyshortcuts="Space" disabled={(trace?.steps.length ?? 0) < 2} onClick={togglePlayback}>{playing ? "Pause" : "Play"} ▶</button><button data-step-navigation="true" data-playback-speed-keys="true" aria-keyshortcuts="ArrowLeft" disabled={(trace?.steps.length ?? 0) < 2} data-tour-target={tour === 5 ? "rewind" : undefined} onClick={() => moveTo(cursor - 1, "back")}>← step back</button><button data-step-navigation="true" data-playback-speed-keys="true" aria-keyshortcuts="ArrowRight" title="Use Left/Right arrow keys to step" disabled={(trace?.steps.length ?? 0) < 2} data-tour-target={tour === 3 ? "forward" : undefined} onClick={() => moveTo(cursor + 1, "forward")}>step forward →</button><select data-tour-target={tour === 6 && tourTriedPlay ? "speed" : undefined} aria-label="Playback speed" value={speed} onChange={e => changePlaybackSpeed(Number(e.target.value))}>{playbackSpeeds.map(value => <option key={value} value={value}>{value}×</option>)}</select><label className="predict-toggle"><input type="checkbox" disabled={stale} checked={predictMode} onChange={e => { setPredictMode(e.target.checked); setPrediction(undefined); setPredictionResult(undefined); }} /> Predict</label>{(trace?.steps.length ?? 0) > 1 && timeline.events.length > 0 && <>
           <button type="button" disabled={previousEvent === undefined} onClick={() => { if (previousEvent !== undefined) moveTo(previousEvent); }}>Previous event</button>
           <button type="button" disabled={nextEvent === undefined} onClick={() => { if (nextEvent !== undefined) moveTo(nextEvent); }}>Next event</button>
         </>}<span>{view ? `${location(view.line)} · ${view.event ?? "step"}` : emptyRun ? "Run finished · no recorded steps" : "No trace loaded"} · score {score} · streak {streak}</span></div><p className="speed-feedback" aria-live="polite" aria-atomic="true">{speedFeedback && `Playback speed: ${speedFeedback.value}×`}</p>{prediction && <div className="prediction"><b>Where will {prediction.label} point after this line?</b><button disabled={predictionResult !== undefined} onClick={() => answerPrediction(null)}>NULL</button>{predictionNodes.map(node => <button key={node.address} disabled={predictionResult !== undefined} onClick={() => answerPrediction(node.address)}>{`0x${node.address.toString(16)}`}{node.freeStep !== undefined ? " (freed)" : !allocations.some(allocation => allocation.address === node.address) ? " (new block)" : ""}</button>)}{predictionResult !== undefined && <strong className={predictionResult ? "correct" : "incorrect"}>{predictionResult ? "Correct!" : "Not quite"}</strong>}</div>}</div>
@@ -655,7 +665,7 @@ export function App() {
               : <div className="diagram-empty">{emptyRun ? "No heap activity was recorded." : "Run a program to visualize its structure."}</div>)}
             <div className="heap-summary">{allocations.filter(allocation => allocation.freeStep === undefined).length} live · {allocations.filter(allocation => allocation.freeStep !== undefined).length} freed{!customHeapMatrix && ` · ${model?.nodes.filter(node => node.orphaned).length ?? 0} orphaned`}</div>
           </div>
-          <div><h3>CALL STACK</h3><div className="stack-visual"><div className="stack-label">Active functions and local variables</div>{tour === 4 && tourHint}{view && <p className="view-guide">Matrices show rows and columns here. When a variable supports another view, use its <strong>View as</strong> button here.</p>}{view && view.frames.slice().reverse().map((frame, frameIndex) => <div key={frameKey(frame.invocation, frame.name, view.frames.length-1-frameIndex)} className="frame" data-invocation={frame.invocation}>
+          <div><h3>CALL STACK</h3><div className="stack-visual"><div className="stack-label">Active functions and local variables</div>{view && <p className="view-guide">Matrices show rows and columns here. When a variable supports another view, use its <strong>View as</strong> button here.</p>}{view && view.frames.slice().reverse().map((frame, frameIndex) => <div key={frameKey(frame.invocation, frame.name, view.frames.length-1-frameIndex)} className="frame" data-invocation={frame.invocation}>
               <small className="frame-name">{frame.invocation === -1 ? "File scope" : executionMode === "snippet" && frameIndex === view.frames.length - 1 ? "snippet" : `${frame.name}()`}</small>
               {Object.entries(frame.variables ?? {}).map(([key, variable]) => {
                 const change = frame.invocation === undefined ? undefined : changes.frames.get(frame.invocation)?.get(key);
