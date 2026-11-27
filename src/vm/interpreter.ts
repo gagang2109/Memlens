@@ -1003,7 +1003,9 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
         if (statement.pointer) current().set(statement.name, variable);
         variable.value = evaluate(statement.init);
       }
-      if (!variable.pointer && statement.type.startsWith("struct")) { const address = memory.malloc(16, steps, statement.line); heap.set(address, { address, fields: new Map(), type: statement.type }); variable.value = address; }
+      // Array declarations already allocated their slots (and, for value arrays,
+      // their elements). Do not create a second, unreachable scalar object.
+      if (!variable.array && !variable.pointer && statement.type.startsWith("struct")) { const address = memory.malloc(16, steps, statement.line); heap.set(address, { address, fields: new Map(), type: statement.type }); variable.value = address; }
       if (!variable.array && !variable.address) variable.address = nextStackAddress++;
       if (typeof variable.value === "number" && statement.pointer) { const allocation = memory.allocationAt(variable.value); if (allocation) {
         // Remember the structured display separately from runtime stride metadata.
