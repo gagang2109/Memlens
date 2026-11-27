@@ -192,7 +192,7 @@ export function App() {
   });
   const [setup, setSetup] = useState(() => { try { return localStorage.getItem("memlens-test-setup") ?? ""; } catch { return ""; } });
   const [tour, setTour] = useState<TourStep>();
-  const [tourSeen, setTourSeen] = useState(() => { try { return localStorage.getItem(tourPreference) === "yes"; } catch { return false; } });
+  const [tourSeen, setTourSeen] = useState(() => { try { return localStorage.getItem(tourPreference) !== null; } catch { return false; } });
   const tourDraft = useRef<(Draft & { inputMode: "ahead" | "interactive" })>();
   const tourChangeAt = useRef<number>();
   const loadedSharedSample = useRef(false);
@@ -464,6 +464,15 @@ export function App() {
     });
     return () => cancelAnimationFrame(task);
   }, [tour]);
+  const showTourWelcome = !tourSeen && !linkedSample && !loadedSharedSample.current && !tour;
+  useEffect(() => {
+    if (!showTourWelcome) return;
+    // Do not hide the current card. Only prevent an automatic offer in
+    // later visits, including a reload with no choice made.
+    try {
+      if (localStorage.getItem(tourPreference) === null) localStorage.setItem(tourPreference, "offered");
+    } catch { /* normal use and the Help entry still work */ }
+  }, [showTourWelcome]);
   const useOwnCode = () => {
     markTourSeen(); setFocusPane(undefined); revealEditor();
   };
@@ -506,7 +515,7 @@ export function App() {
       <select ref={samplesPicker} aria-label="Samples" value={selectedSample} onChange={e => { if (e.target.value !== "custom") selectSample(e.target.value as keyof typeof samples); }}><option value="custom" disabled>Custom code (current editor contents)</option>{Object.entries(sampleLabels).map(([key,label]) => <option key={key} value={key}>{label}</option>)}</select>
       <button type="button" className="spotlight-trigger" aria-keyshortcuts="Control+k Meta+k" onClick={event => { showSpotlight(); spotlightTrigger.current = event.currentTarget; }}>Spotlight <kbd>Ctrl / ⌘ K</kbd></button><button className="run" onClick={() => runCode()} title="Run code (Ctrl / ⌘ + Enter)" aria-keyshortcuts="Control+Enter Meta+Enter">Run</button></header>
     <SectionNavigation onOpenHelp={showHelp} helpOpen={help} onRun={() => runCode()} />
-    {!tourSeen && !linkedSample && !loadedSharedSample.current && !tour && <QuickTourWelcome onStart={startTour} onSkip={useOwnCode} />}
+    {showTourWelcome && <QuickTourWelcome onStart={startTour} onSkip={useOwnCode} />}
     {tour && <QuickTourHint step={tour} onExit={() => finishTour()} onBack={() => changeTourStep((tour - 1) as TourStep)} onNext={() => changeTourStep(5)} />}
     {!trace && !error && !tour && (tourSeen || linkedSample || loadedSharedSample.current) && <p className="launch-quickstart">Paste your own C code or choose a sample. Select <strong>Run</strong>, then step forward or backward in <strong>Trace</strong>.</p>}
     {linkedSample && <section className="linked-sample" aria-label="Shared sample">

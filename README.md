@@ -21,7 +21,7 @@ Memlens is a browser-based learning tool for C data structures and memory. Edit 
 
 ## Try it in a minute
 
-New to the workspace? Choose **Start quick tour** in the welcome card, or reopen it from **Help → Quick tour**. You can skip it or exit at any point; the tour uses a temporary example and restores your previous source and test setup.
+New to the workspace? Choose **Start quick tour** in the welcome card, or reopen it from **Help → Start tutorial**. You can skip it or exit at any point; the tour uses a temporary example and restores your previous source and test setup.
 
 1. Open the [main demo](https://memlensc.vercel.app) and paste your own C program into Source, or choose a sample.
 2. If your program uses `scanf`, enter its values in **Console → Program input**, or select **Interactive console** in the Source panel to answer prompts during execution.

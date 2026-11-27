@@ -68,7 +68,7 @@ it("asks before replacing custom code, skips midway, restores without altering t
   expect(localStorage.getItem("memlens-previous-draft")).toBe(other);
   expect(host.querySelector(".tour-welcome,.tour-hint")).toBeNull();
   act(() => host.querySelector<HTMLButtonElement>(".help-trigger")!.click());
-  click("Quick tour"); stage(1);
+  click("Start tutorial"); stage(1);
   expect(confirm).toHaveBeenCalledTimes(3);
   reload();
   expect(source()).toBe(draft); expect(currentSetup()).toBe(setup);
@@ -94,7 +94,33 @@ it("never opens over a shared sample, and requires permission before temporarily
   expect(source()).toBe(samples["tree-swap"].code);
   expect(host.querySelector(".tour-welcome")).toBeNull();
   act(() => host.querySelector<HTMLButtonElement>(".help-trigger")!.click());
-  click("Quick tour"); expect(source()).toBe(samples["tree-swap"].code);
-  click("Quick tour"); stage(1);
+  click("Start tutorial"); expect(source()).toBe(samples["tree-swap"].code);
+  click("Start tutorial"); stage(1);
   click("Exit tour"); expect(source()).toBe(samples["tree-swap"].code);
+});
+
+it("offers the welcome only once even if refreshed before making a choice", () => {
+  mount();
+  expect(host.querySelector(".tour-welcome")).not.toBeNull();
+  expect(localStorage.getItem(tourPreference)).toBe("offered");
+  reload();
+  expect(host.querySelector(".tour-welcome,.tour-hint")).toBeNull();
+  act(() => host.querySelector<HTMLButtonElement>(".help-trigger")!.click());
+  expect(host.querySelector(".help-tour")?.textContent).toContain("New to Memlens? Take the quick tour");
+  expect(host.querySelector(".tour-hint")).toBeNull();
+  click("Start tutorial"); stage(1);
+});
+
+it("keeps the workspace usable even if browser storage throws", () => {
+  vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("storage disabled"); });
+  vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("storage disabled"); });
+  mount();
+  click("Skip and start coding");
+  expect(host.querySelector(".tour-welcome")).toBeNull();
+  click("Run");
+  expect(host.querySelector('[aria-label="Timeline"]')?.getAttribute("aria-valuetext")).toContain("step 1");
+  act(() => host.querySelector<HTMLButtonElement>(".help-trigger")!.click());
+  click("Start tutorial"); stage(1);
+  click("Exit tour");
+  expect(host.querySelector(".tour-hint")).toBeNull();
 });

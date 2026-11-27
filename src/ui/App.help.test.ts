@@ -51,7 +51,7 @@ it("opens a single shortcuts and usage panel from ? or the Help button, with foc
   expect(report.href).toBe("https://github.com/gagang2109/Memlens/issues");
   expect(dialog()?.textContent).toContain("nothing is attached automatically");
   key(report, "Tab");
-  const quickTour = [...dialog()!.querySelectorAll("button")].find(button => button.textContent === "Quick tour")!;
+  const quickTour = [...dialog()!.querySelectorAll("button")].find(button => button.textContent === "Start tutorial")!;
   expect(document.activeElement).toBe(quickTour);
   key(quickTour, "Tab");
   expect(document.activeElement).toBe(dismiss());

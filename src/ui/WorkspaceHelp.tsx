@@ -72,7 +72,7 @@ export function WorkspaceHelp({ onClose, reportProblem, onQuickTour }: { onClose
           <p><a ref={report} href={reportProblem} target="_blank" rel="noopener noreferrer">Report a problem on GitHub ↗</a> · Issues are public. Share only the code and input you choose to include; nothing is attached automatically.</p>
         </section>
       </div>
-      <div className="help-actions"><button type="button" ref={quickTour} onClick={onQuickTour}>Quick tour</button><span><kbd>Esc</kbd> to close</span><button type="button" ref={dismiss} onClick={onClose}>Dismiss</button></div>
+      <div className="help-actions"><div className="help-tour"><strong>New to Memlens? Take the quick tour</strong><button type="button" ref={quickTour} onClick={onQuickTour}>Start tutorial</button></div><span><kbd>Esc</kbd> to close</span><button type="button" ref={dismiss} onClick={onClose}>Dismiss</button></div>
     </section>
   </div>;
 }

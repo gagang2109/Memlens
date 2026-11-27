@@ -434,3 +434,6 @@ footer{padding:16px 24px;font-size:10px}
 .tour-hint:focus-visible{border-color:#ffce73}
 @media(max-width:700px){.tour-welcome,.tour-hint{margin:8px 12px;padding:10px 12px}}
 @media(max-width:600px){.tour-hint{top:61px}.tour-actions button{min-height:44px}}
+.help-tour{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px}
+.help-actions:has(.help-tour){flex-wrap:wrap;gap:8px}
+@media(max-width:600px){.help-tour{flex:1 1 100%}}
