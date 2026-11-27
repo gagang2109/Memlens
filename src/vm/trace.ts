@@ -3,7 +3,7 @@ import type { TreeChildAliases } from "../lang/parser";
 export type EventKind = "step" | "alloc" | "free" | "error" | "warning" | "call" | "return";
 // Runtime string provenance is retained for display; numeric-looking strings are not addresses.
 export type ArraySnapshot = { base: number; dimensions: readonly number[]; cells: readonly (number | string | null)[] };
-export type FrameVariable = { type: string; value: string; pointer: boolean; stringPointer?: boolean; storage?: number; array?: ArraySnapshot };
+export type FrameVariable = { type: string; value: string; pointer: boolean; stringPointer?: boolean; heapIntRows?: true; storage?: number; array?: ArraySnapshot };
 export type FrameView = { invocation?: number; name: string; locals: Record<string, string>; variables?: Record<string, FrameVariable> };
 export type PointerArrow = { from: string; to: number; label: string; dangling: boolean };
 export type HeapView = { address: number; fields: Record<string, string>; type?: string; doublyLinked?: true; treeChildAliases?: TreeChildAliases };

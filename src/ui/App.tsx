@@ -4,6 +4,7 @@ import { GraphDiagram } from "./GraphDiagram";
 import { graphSize } from "../viz/graph";
 import { IndexedArray } from "./IndexedArray";
 import { readStructStack, StructStackDiagram } from "./StructStackDiagram";
+import { HeapMatrixDiagram, readHeapMatrix } from "./HeapMatrixDiagram";
 import { readCircularQueue, StructCircularQueueDiagram } from "./StructCircularQueueDiagram";
 import { canShowLinearQueue, readLinearQueue, StructQueueDiagram } from "./StructQueueDiagram";
 import { describeChange, frameKey, stepChanges, type VariableChange } from "./stepChanges";
@@ -196,6 +197,7 @@ export function App() {
   const selectedSample = codeSample !== "custom" && setup === (codeSample === "tree-height" ? treeHeightSetup : "") ? codeSample : "custom";
   const [previousDraft, setPreviousDraft] = useState<{ code: string; setup: string }>();
   const [runGeneration, setRunGeneration] = useState(0);
+  const [selectedHeapMatrix, setSelectedHeapMatrix] = useState<{ generation: number; base: number; name: string; invocation?: number }>();
   const [selectedGraph, setSelectedGraph] = useState<{ generation: number; base: number; name: string }>();
   const [selectedStack, setSelectedStack] = useState<{ generation: number; base: number; name: string; invocation?: number }>();
   const [selectedQueue, setSelectedQueue] = useState<{ generation: number; base: number; name: string; invocation?: number; mode: "linear" | "circular" }>();
@@ -226,6 +228,10 @@ export function App() {
   useEffect(() => { setQuickLook(undefined); }, [view]);
   const allocations = view?.memory.allocations ?? [];
   const model = view ? renderModel(view) : undefined;
+  const customHeapMatrix = selectedHeapMatrix?.generation === runGeneration ? selectedHeapMatrix : undefined;
+  const heapMatrixPointer = customHeapMatrix && view?.frames.find(frame => frame.invocation === customHeapMatrix.invocation)?.variables?.[customHeapMatrix.name];
+  const heapMatrix = customHeapMatrix && view && heapMatrixPointer?.heapIntRows && Number(heapMatrixPointer.value) === customHeapMatrix.base
+    ? readHeapMatrix(view.memory, customHeapMatrix.base) : undefined;
   const arrayStackStep = lastRun?.setup === ""
     && (lastRun.code === samples.stack.code || lastRun.code === starterScaffolds.stack.code) ? view : undefined;
   const customGraph = selectedGraph?.generation === runGeneration ? selectedGraph : undefined;
@@ -442,9 +448,10 @@ export function App() {
           <button type="button" disabled={previousEvent === undefined} onClick={() => { if (previousEvent !== undefined) moveTo(previousEvent); }}>Previous event</button>
           <button type="button" disabled={nextEvent === undefined} onClick={() => { if (nextEvent !== undefined) moveTo(nextEvent); }}>Next event</button>
         </>}<span>{view ? `${location(view.line)} · ${view.event ?? "step"}` : emptyRun ? "Run finished · no recorded steps" : "No trace loaded"} · score {score} · streak {streak}</span></div>{prediction && <div className="prediction"><b>Where will {prediction.label} point after this line?</b><button disabled={predictionResult !== undefined} onClick={() => answerPrediction(null)}>NULL</button>{predictionNodes.map(node => <button key={node.address} disabled={predictionResult !== undefined} onClick={() => answerPrediction(node.address)}>{`0x${node.address.toString(16)}`}{node.freeStep !== undefined ? " (freed)" : !allocations.some(allocation => allocation.address === node.address) ? " (new block)" : ""}</button>)}{predictionResult !== undefined && <strong className={predictionResult ? "correct" : "incorrect"}>{predictionResult ? "Correct!" : "Not quite"}</strong>}</div>}</div>
-        <div className={`columns${!model?.nodes.length && !arrayStackStep && !showGraph && !customQueue && !customStack ? " empty-heap" : ""}`}>
+        <div className={`columns${!model?.nodes.length && !arrayStackStep && !showGraph && !customQueue && !customStack && !customHeapMatrix ? " empty-heap" : ""}`}>
           <div className="heap-column">
-            <h3>{arrayStackStep || showGraph || customQueue || customStack ? "DATA STRUCTURE" : "HEAP STRUCTURE"} <small>{showGraph ? "graph" : customQueue ? "queue" : arrayStackStep || customStack ? "stack" : model?.shape ?? "ready"}</small></h3>
+            <h3>{arrayStackStep || showGraph || customQueue || customStack || customHeapMatrix ? "DATA STRUCTURE" : "HEAP STRUCTURE"} <small>{showGraph ? "graph" : customQueue ? "queue" : arrayStackStep || customStack ? "stack" : customHeapMatrix ? "matrix" : model?.shape ?? "ready"}</small></h3>
+            {customHeapMatrix && <HeapMatrixDiagram name={customHeapMatrix.name} matrix={heapMatrix} onClose={() => setSelectedHeapMatrix(undefined)} />}
             {arrayStackStep && <ArrayStackDiagram stack={readArrayStack(arrayStackStep)} />}
             {customStack && <StructStackDiagram name={customStack.name} stack={structStack} onClose={() => setSelectedStack(undefined)} />}
             {customQueue?.mode === "linear" && <StructQueueDiagram name={customQueue.name} queue={linearQueue} onClose={() => setSelectedQueue(undefined)} />}
@@ -454,10 +461,10 @@ export function App() {
               name={customGraph?.name ?? "g"} array={matrix} step={view}
               exactLab={labGraph && customGraph === undefined}
               onClose={customGraph ? () => setSelectedGraph(undefined) : undefined} />}
-            {((!arrayStackStep && !showGraph && !customQueue && !customStack) || Boolean(model?.nodes.length)) && (model
+            {((!arrayStackStep && !showGraph && !customQueue && !customStack && !customHeapMatrix) || Boolean(model?.nodes.length && !customHeapMatrix)) && (model
               ? <StructureDiagram model={model} highlighted={highlightedAddress} onHighlight={setHighlightedAddress} memoryViewRequest={memoryViewRequest} changedHeap={changes.heap} />
               : <div className="diagram-empty">{emptyRun ? "No heap activity was recorded." : "Run a program to visualize its structure."}</div>)}
-            <div className="heap-summary">{allocations.filter(allocation => allocation.freeStep === undefined).length} live · {allocations.filter(allocation => allocation.freeStep !== undefined).length} freed · {model?.nodes.filter(node => node.orphaned).length ?? 0} orphaned</div>
+            <div className="heap-summary">{allocations.filter(allocation => allocation.freeStep === undefined).length} live · {allocations.filter(allocation => allocation.freeStep !== undefined).length} freed{!customHeapMatrix && ` · ${model?.nodes.filter(node => node.orphaned).length ?? 0} orphaned`}</div>
           </div>
           <div><h3>CALL STACK</h3><div className="stack-visual"><div className="stack-label">Active functions and local variables</div>{view && view.frames.slice().reverse().map((frame, frameIndex) => <div key={frameKey(frame.invocation, frame.name, view.frames.length-1-frameIndex)} className="frame" data-invocation={frame.invocation}>
               <small className="frame-name">{executionMode === "snippet" && frameIndex === view.frames.length - 1 ? "snippet" : `${frame.name}()`}</small>
@@ -471,25 +478,36 @@ export function App() {
                   <span><b>{key}</b><small>{variable.type}</small></span>
                   <StackValue name={key} variable={variable} change={change} generation={runGeneration} />
                   {candidate && <button type="button" className="graph-trigger" aria-pressed={customGraph?.base === candidate.base}
-                    onClick={() => { setSelectedQueue(undefined); setSelectedStack(undefined); setSelectedGraph({generation:runGeneration, base:candidate.base, name:key}); }}>View {key} as graph</button>}
+                    onClick={() => { setSelectedQueue(undefined); setSelectedStack(undefined); setSelectedHeapMatrix(undefined); setSelectedGraph({generation:runGeneration, base:candidate.base, name:key}); }}>View {key} as graph</button>}
                   {variable.array && frame.variables && canShowLinearQueue(frame.variables, key) &&
                     <button type="button" className="graph-trigger" aria-pressed={customQueue?.mode === "linear" && customQueue.base === variable.array.base} onClick={() => {
                       setSelectedGraph(undefined);
+                      setSelectedHeapMatrix(undefined);
                       setSelectedStack(undefined);
                       setSelectedQueue({ generation:runGeneration, base:variable.array!.base, name:key, invocation:frame.invocation, mode:"linear" });
                     }}>View {key} as linear queue</button>}
                   {variable.array && frame.variables && readCircularQueue(frame.variables, key) &&
                     <button type="button" className="graph-trigger" aria-pressed={customQueue?.mode === "circular" && customQueue.base === variable.array.base} onClick={() => {
                       setSelectedGraph(undefined);
+                      setSelectedHeapMatrix(undefined);
                       setSelectedStack(undefined);
                       setSelectedQueue({ generation:runGeneration, base:variable.array!.base, name:key, invocation:frame.invocation, mode:"circular" });
                     }}>View {key} as circular queue</button>}
                   {variable.array && frame.variables && readStructStack(frame.variables, key) &&
                     <button type="button" className="graph-trigger" aria-pressed={customStack?.base === variable.array.base} onClick={() => {
                       setSelectedGraph(undefined);
+                      setSelectedHeapMatrix(undefined);
                       setSelectedQueue(undefined);
                       setSelectedStack({ generation:runGeneration, base:variable.array!.base, name:key, invocation:frame.invocation });
                     }}>View {key} as stack</button>}
+                  {variable.heapIntRows && <button type="button" className="graph-trigger"
+                    aria-pressed={customHeapMatrix?.name === key && customHeapMatrix.invocation === frame.invocation && customHeapMatrix.base === Number(variable.value)}
+                    onClick={() => {
+                      setSelectedGraph(undefined);
+                      setSelectedQueue(undefined);
+                      setSelectedStack(undefined);
+                      setSelectedHeapMatrix({generation:runGeneration, base:Number(variable.value), name:key, invocation:frame.invocation});
+                    }}>View {key} as heap matrix</button>}
                   {variable.pointer && <button className="quick-look-trigger" type="button" aria-label={`Quick Look pointer ${key}`} onClick={event => { event.stopPropagation(); setPlaying(false); setQuickLook({ name:key, variable, step:view, trigger:event.currentTarget }); }}>Quick Look</button>}
                 </div>;
               })}

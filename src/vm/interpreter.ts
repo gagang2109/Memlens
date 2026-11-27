@@ -87,6 +87,9 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
         return [[key, { type: `${variable.type}${variable.pointer ? " *" : ""}`,
           value: array ? `[${array.join(", ")}]` : String(variable.value), pointer: variable.pointer,
           ...(address !== undefined ? {storage:address} : {}), ...(snapshot ? {array:snapshot} : {}),
+          ...(variable.type === "int" && variable.pointerDepth === 2 && variable.pointer && !variable.matrixColumnCount
+            && typeof variable.value === "number" && memory.allocationAt(variable.value)?.address === variable.value
+            ? {heapIntRows: true as const} : {}),
           ...(variable.pointer && !array && typeof variable.value === "string" ? { stringPointer: true } : {}) }]];
       }));
       return { invocation: frame.invocation, name: frame.name, variables,
