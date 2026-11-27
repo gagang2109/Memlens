@@ -54,7 +54,7 @@ it.each([
   ["struct Q q={0};", /whole-struct initializer/],
   ["struct Q a[2]={0};", /whole-struct initializer/],
   ["static struct Q q;", /non-static/],
-  ["{ struct Q q; }", /directly in a function body/],
+  ["{ struct Q q[2]; }", /record arrays must be directly in a function body/],
   ["struct Q q; int x=q.items[0];", /uninitialized read/],
   ["struct Q q; q=3;", /record copy requires/],
   ["struct Q *q=malloc(sizeof(struct Q)); q->items[0]=1;", /only on local struct/],

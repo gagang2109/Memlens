@@ -9,11 +9,13 @@ type Value = number | string | null;
 type LocalArrayOwner = { vars: Map<string, RuntimeVariable>; name: string; variable: RuntimeVariable };
 type LocalArray = { values: Value[]; type: string; dimensions: number[];
   owner?: LocalArrayOwner; scanBufferOwner?: LocalArrayOwner };
-type RuntimeVariable = { value: Value; type: string; pointer: boolean; pointerDepth?: number; array?: Value[]; dimensions?: number[]; fixedArrayBounds?: boolean; matrixColumnCount?: number; elementSize?: number; arrayBase?: number; address?: number; fixedRecords?: FixedLocalStruct[]; borrowedRecords?: FixedLocalStruct[]; recordPointer?: true; initializedRecordPointer?: true; recordTarget?: FixedLocalStruct };
+type RuntimeVariable = { value: Value; type: string; pointer: boolean; pointerDepth?: number; array?: Value[]; dimensions?: number[]; fixedArrayBounds?: boolean; matrixColumnCount?: number; elementSize?: number; arrayBase?: number; address?: number; fixedRecords?: FixedLocalStruct[]; borrowedRecords?: FixedLocalStruct[]; recordPointer?: true; initializedRecordPointer?: true; recordTarget?: FixedLocalStruct; blockRecord?: true };
 type Ref = { get: () => Value; set: (value: Value) => void; address?: number; allocation?: Allocation; scanFloat?: (value: number, line: number) => void; scanCharMember?: (value: string, line: number) => void };
 type HeapObject = { address: number; fields: Map<string, Value>; type?: string };
-type FixedMember = { name: string; type: FixedStructField["type"]; stride: number; address: number; invocation: number; values?: Value[]; scalar: Value };
-type FixedLocalStruct = { type: string; address: number; invocation: number; members: Map<string, FixedMember> };
+type BlockRecordScope = { active: boolean; declared: Set<string>; shadowed: Map<string, RuntimeVariable | undefined> };
+type FixedLifetime = { invocation: number; scope?: BlockRecordScope };
+type FixedMember = FixedLifetime & { name: string; type: FixedStructField["type"]; stride: number; address: number; values?: Value[]; scalar: Value };
+type FixedLocalStruct = FixedLifetime & { type: string; address: number; members: Map<string, FixedMember> };
 type FlowSignal = "break" | "continue";
 
 export type RunResult = { executionMode?: "program" | "snippet"; trace: Trace; status: "ok" | "error" | "waiting"; waitingLine?: number; error?: MemoryFault; leaks: { address: number; line: number }[]; orphanedAtExit: number[] };
@@ -49,6 +51,14 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
   const main = program.functions.get("main");
   const separateFileScope = Boolean(main && program.body.some(statement => statement.kind !== "block" || statement.body.length > 0));
   const frames: { invocation: number; name: string; vars: Map<string, RuntimeVariable> }[] = [{ invocation: separateFileScope ? -1 : 0, name: separateFileScope ? "file scope" : "main", vars: new Map() }];
+  // A hidden outer name stops resolving by name but its storage is still live.
+  const hiddenStorage = new WeakMap<Map<string, RuntimeVariable>, Set<RuntimeVariable>>();
+  const ownsBinding = (vars: Map<string, RuntimeVariable>, name: string, variable: RuntimeVariable) =>
+    vars.get(name) === variable || hiddenStorage.get(vars)?.has(variable) === true;
+  const storageVariables = (vars: Map<string, RuntimeVariable>) => [...vars.values(), ...(hiddenStorage.get(vars) ?? [])];
+  let mainEntered = false;
+  const isFixedLive = (storage: FixedLifetime) =>
+    storage.scope?.active !== false && frames.some(frame => frame.invocation === storage.invocation);
   const fixedObjects = new Map<number, FixedLocalStruct>();
   const fixedArrays = new Map<number, FixedMember>();
   const fixedAddressStart = 0x100000;
@@ -142,7 +152,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
         locals: Object.fromEntries(Object.entries(variables).map(([key, variable]) => [key, variable.value])) };
     });
     previousArrays = arrays;
-    const pointers = frames.flatMap(frame => [...frame.vars].flatMap(([name, variable]) => variable.pointer && typeof variable.value === "number" ? [{ from: `${frame.name}.${name}`, to: variable.value, label: name, dangling: variable.recordTarget ? !frames.some(owner => owner.invocation === variable.recordTarget!.invocation) : Boolean(memory.allocations.find(a => a.address === variable.value)?.freeStep !== undefined) }] : []));
+    const pointers = frames.flatMap(frame => [...frame.vars].flatMap(([name, variable]) => variable.pointer && typeof variable.value === "number" ? [{ from: `${frame.name}.${name}`, to: variable.value, label: name, dangling: variable.recordTarget ? !isFixedLive(variable.recordTarget) : Boolean(memory.allocations.find(a => a.address === variable.value)?.freeStep !== undefined) }] : []));
     const arrayHeads = collectStructArrayHeads();
     for (const frame of frames) for (const [name, variable] of frame.vars) {
       for (const { index, address, dangling } of arrayHeads(variable)) {
@@ -181,7 +191,8 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
   };
   const runtimeError = (reason: string, line: number, allocation?: ReturnType<Memory["find"]>): never => { throw new MemoryFault(reason, line, steps, allocation); };
   const checkMemberLifetime = (member: FixedMember, line: number) => {
-    if (!frames.some(frame => frame.invocation === member.invocation)) runtimeError("struct member used after its function returned", line);
+    if (member.scope?.active === false) runtimeError("struct member used after its block ended", line);
+    if (!isFixedLive(member)) runtimeError("struct member used after its function returned", line);
   };
   const readIndexedRecord = (array: FixedLocalStruct[], indexOperand: Expr, line: number) => {
     if (!frames.some(frame => frame.invocation === array[0].invocation))
@@ -203,6 +214,10 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
     const record = local && !local.pointer && !local.fixedRecords && typeof local.value === "number" &&
       program.fixedStructFields.has(local.type) ? fixedObjects.get(local.value) : undefined;
     return record ? { type: record.type, read: () => record } : undefined;
+  };
+  const checkRecordPointerLifetime = (target: FixedLocalStruct, line: number) => {
+    if (target.scope?.active === false) runtimeError("record pointer used after its target block ended", line);
+    if (!isFixedLive(target)) runtimeError("record pointer used after its target function returned", line);
   };
   const bindRecordPointer = (variable: RuntimeVariable, source: Expr, line: number): Value => {
     if (source.kind === "call" && ["malloc", "calloc", "realloc"].includes(source.name))
@@ -231,8 +246,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
     }
     if (!record)
       return runtimeError("record pointer requires NULL, the direct address of a matching local record, or a matching record pointer", line);
-    if (!frames.some(frame => frame.invocation === record!.invocation))
-      return runtimeError("record pointer used after its target function returned", line);
+    checkRecordPointerLifetime(record, line);
     variable.recordTarget = record;
     variable.initializedRecordPointer = true;
     return variable.value = record.address;
@@ -299,7 +313,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
     if (!cell) return undefined;
     const { owner, array, index } = cell;
     const check = () => {
-      if (!frames.some(frame => frame.vars === owner.vars) || owner.vars.get(owner.name) !== owner.variable)
+      if (!frames.some(frame => frame.vars === owner.vars) || !ownsBinding(owner.vars, owner.name, owner.variable))
         runtimeError("local array cell used outside its lifetime", line);
     };
     return { address, get: () => { check(); return array.values[index]; }, set: value => { check(); array.values[index] = value; } };
@@ -374,7 +388,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       if (addressOnly && !variable.pointer && variable.type === "float") {
         const owner = frames.find(frame => frame.vars.get(expression.name) === variable);
         result.scanFloat = (value, line) => {
-          if (!owner || !frames.includes(owner) || owner.vars.get(expression.name) !== variable)
+          if (!owner || !frames.includes(owner) || !ownsBinding(owner.vars, expression.name, variable))
             return runtimeError("float input destination used outside its lifetime", line);
           variable.value = value;
         };
@@ -393,8 +407,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
         if (!ownerVariable.initializedRecordPointer) return runtimeError("uninitialized record pointer", expression.line);
         fixed = ownerVariable.recordTarget;
         if (!fixed) return runtimeError("null pointer dereference", expression.line);
-        if (!frames.some(frame => frame.invocation === fixed!.invocation))
-          return runtimeError("record pointer used after its target function returned", expression.line);
+        checkRecordPointerLifetime(fixed, expression.line);
       } else if (!expression.pointer) {
         fixed = recordOperand(operand)?.read();
       } else if (operand.kind === "unary" && operand.op === "&") {
@@ -559,13 +572,13 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       if (precision !== undefined && end - offset === precision) return text;
       return runtimeError(`unterminated string in struct member '${member.name}'`, line);
     }
-    const variable = [...frames].reverse().flatMap(frame => [...frame.vars.values()]).find(candidate => candidate.arrayBase === value);
+    const variable = [...frames].reverse().flatMap(frame => storageVariables(frame.vars)).find(candidate => candidate.arrayBase === value);
     if (variable?.array) return variable.array.map(item => typeof item === "number" ? String.fromCharCode(item & 255) : String(item ?? "\0")).join("").split("\0", 1)[0];
     // Interior pointers into live local char buffers refer to their suffix, not
     // the unrelated heap-cell map. Use live variables rather than stale refs.
     if (typeof value === "number" && !memory.allocationAt(value)) {
       for (const frame of [...frames].reverse()) {
-        for (const candidate of frame.vars.values()) {
+        for (const candidate of storageVariables(frame.vars)) {
           if (!candidate.array || candidate.arrayBase === undefined || candidate.type !== "char") continue;
           const offset = value - candidate.arrayBase;
           if (Number.isInteger(offset) && offset >= 0 && offset < candidate.array.length)
@@ -806,7 +819,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
         // its terminator, rather than an unrelated heap-cell entry.
         if (!memory.allocationAt(destination)) {
           for (const frame of [...frames].reverse()) {
-            for (const variable of frame.vars.values()) {
+            for (const variable of storageVariables(frame.vars)) {
               if (!variable.array || variable.arrayBase === undefined || variable.type !== "char") continue;
               const offset = destination - variable.arrayBase;
               if (!Number.isInteger(offset) || offset < 0 || offset >= variable.array.length) continue;
@@ -1005,7 +1018,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
                 if (scanset) {
                   const owner = array.scanBufferOwner;
                   if (!owner) return runtimeError("scanf scanset requires a writable one-dimensional character buffer declared directly in a function body", expression.line);
-                  if (!frames.some(frame => frame.vars === owner.vars) || owner.vars.get(owner.name) !== owner.variable)
+                  if (!frames.some(frame => frame.vars === owner.vars) || !ownsBinding(owner.vars, owner.name, owner.variable))
                     runtimeError("scanf scanset buffer used outside its lifetime", expression.line);
                 }
                 if (elementSize(array.type) === 1 && bytes > base + array.values.length - destination)
@@ -1212,14 +1225,48 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
   // at a function boundary rather than allowing them to control a caller's loop.
   class BreakSignal { readonly message: string; constructor(public readonly line: number) { this.message = `line ${line}: break outside loop or switch`; } }
   class ContinueSignal { readonly message: string; constructor(public readonly line: number) { this.message = `line ${line}: continue outside loop`; } }
-  const execute = (statement: Stmt, allowDirectLocal = false): void => {
+  const execute = (statement: Stmt, allowDirectLocal = false, blockScope?: BlockRecordScope): void => {
     if (steps >= stepLimit) runtimeError("step limit reached", statement.line);
     if (statement.kind === "block") {
-      for (const child of statement.body)
-        execute(child, allowDirectLocal && (child.kind !== "block" || child.declarationGroup === true));
+      const scoped = !statement.declarationGroup && !allowDirectLocal && (mainEntered || frames.at(-1)!.invocation > 0);
+      const scope: BlockRecordScope | undefined = scoped ? { active: true, declared: new Set(), shadowed: new Map() } : blockScope;
+      const vars = current();
+      let preserveFaultBindings = false;
+      try {
+        for (const child of statement.body) {
+          const sameBlock = child.kind !== "block" || child.declarationGroup === true;
+          execute(child, allowDirectLocal && sameBlock, sameBlock ? scope : undefined);
+        }
+      } catch (error) {
+        preserveFaultBindings = error instanceof Error;
+        throw error;
+      } finally {
+        // Keep the bindings at an actual fault for the final error snapshot.
+        // Normal control flow (including break, continue and return) ends their lives.
+        if (scoped && scope && !preserveFaultBindings) {
+          scope.active = false;
+          for (const [name, previous] of scope.shadowed) {
+            if (previous) {
+              hiddenStorage.get(vars)?.delete(previous);
+              vars.set(name, previous);
+            } else vars.delete(name);
+          }
+          scope.shadowed.clear();
+          scope.declared.clear();
+        }
+      }
       return;
     }
     if (statement.kind === "decl") {
+      const fixed = !statement.pointer && program.fixedStructFields.get(statement.type);
+      const scopedRecord = fixed && blockScope && !statement.arrayLength ? blockScope : undefined;
+      const previousBinding = current().get(statement.name);
+      if ((scopedRecord && scopedRecord.declared.has(statement.name)) ||
+          (blockScope?.shadowed.has(statement.name) && !scopedRecord))
+        throw new MemoryFault(`line ${statement.line}: duplicate declaration of '${statement.name}' in this block`, statement.line, steps, undefined, true, "invalid-c");
+      if (!scopedRecord && previousBinding?.blockRecord)
+        throw new MemoryFault(`line ${statement.line}: shadowing a block-local record with a different kind of declaration is not supported`, statement.line, steps, undefined, true, "unsupported-c");
+      blockScope?.declared.add(statement.name);
       const variable: RuntimeVariable = { value: null, type: statement.type, pointer: statement.pointer, pointerDepth: statement.pointerDepth, elementSize: elementSize(statement.type) };
       if (statement.pointerDepth === 1 && !statement.arrayLength && program.fixedStructFields.has(statement.type)) {
         if (statement.readOnly || statement.staticStorage)
@@ -1231,10 +1278,9 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
         record(statement.line);
         return;
       }
-      const fixed = !statement.pointer && program.fixedStructFields.get(statement.type);
       if (fixed) {
-        if (!allowDirectLocal || statement.staticStorage || statement.readOnly)
-          runtimeError("fixed array structs currently need a non-static, non-const declaration directly in a function body", statement.line);
+        if ((!allowDirectLocal && !scopedRecord) || statement.staticStorage || statement.readOnly)
+          throw new MemoryFault(`line ${statement.line}: fixed-field records need a non-static, non-const local declaration; record arrays must be directly in a function body`, statement.line, steps, undefined, true, "unsupported-c");
         if (statement.arrayInitializer || statement.arrayLength && statement.init)
           runtimeError("whole-struct initializers are not yet supported", statement.line);
         const origin = statement.init ? recordOperand(statement.init) : undefined;
@@ -1260,12 +1306,12 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
           const entryAddress = address + index * layout.bytes;
           const members = new Map<string, FixedMember>();
           for (const { name, type, length, offset, stride } of layout.members) {
-            const member: FixedMember = { name, type, stride, address: entryAddress + offset, invocation, scalar: null,
+            const member: FixedMember = { name, type, stride, address: entryAddress + offset, invocation, scope: scopedRecord, scalar: null,
               ...(length === null ? {} : { values: Array<Value>(length).fill(null) }) };
             if (member.values) fixedArrays.set(member.address, member);
             members.set(name, member);
           }
-          const record = { type: statement.type, address: entryAddress, invocation, members };
+          const record = { type: statement.type, address: entryAddress, invocation, scope: scopedRecord, members };
           fixedObjects.set(entryAddress, record);
           return record;
         });
@@ -1274,6 +1320,16 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
         variable.value = address;
         variable.address = address;
         if (origin) copyRecord(records[0], origin.read());
+        if (scopedRecord) {
+          scopedRecord.shadowed.set(statement.name, previousBinding);
+          if (previousBinding) {
+            const vars = current();
+            const hidden = hiddenStorage.get(vars) ?? new Set<RuntimeVariable>();
+            hidden.add(previousBinding);
+            hiddenStorage.set(vars, hidden);
+          }
+          variable.blockRecord = true;
+        }
         current().set(statement.name, variable);
         record(statement.line);
         return;
@@ -1391,13 +1447,14 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
     if (program.body.length) execute({ kind: "block", body: program.body, line: program.body[0].line });
     if (main) {
       if (separateFileScope) frames.push({ invocation: 0, name: "main", vars: new Map() });
+      mainEntered = true;
       record(main.line, "call"); execute(main.body, true); record(main.line, "return");
     } else if (!program.body.length) execute({ kind: "block", body: [], line: 1 });
   }
   catch (caught) { if (caught instanceof InputNeeded) return { executionMode: program.functions.has("main") ? "program" : "snippet", trace, status: "waiting", waitingLine: caught.line, leaks: [], orphanedAtExit: [] }; if (caught instanceof MemoryFault) { error = caught; record(caught.line, "error", caught.reason); } else if (!(caught instanceof ReturnSignal) && !(caught instanceof ExitSignal)) { const message = caught instanceof Error || caught instanceof BreakSignal || caught instanceof ContinueSignal ? caught.message : "unsupported construct"; const match = message.match(/line (\d+)/); const line = match ? Number(match[1]) : 1; error = new MemoryFault(message, line, steps); record(line, "error", message); } }
-  const roots = [...frames.flatMap(frame => [...frame.vars.values()].map(variable => variable.value))].filter((value): value is number => typeof value === "number");
+  const roots = [...frames.flatMap(frame => storageVariables(frame.vars).map(variable => variable.value))].filter((value): value is number => typeof value === "number");
   const arrayHeads = collectStructArrayHeads();
-  for (const frame of frames) for (const variable of frame.vars.values()) {
+  for (const frame of frames) for (const variable of storageVariables(frame.vars)) {
     for (const head of arrayHeads(variable)) if (!head.dangling) roots.push(head.address);
   }
   const reachable = new Set<number>(); const visit = (address: number) => { const allocation = memory.allocationAt(address); if (!allocation || allocation.freeStep !== undefined || reachable.has(allocation.address)) return; reachable.add(allocation.address); const object = heap.get(allocation.address); if (object) for (const value of object.fields.values()) if (typeof value === "number") visit(value); };
