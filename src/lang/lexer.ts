@@ -1,10 +1,15 @@
 export type TokenKind = "id" | "number" | "string" | "char" | "symbol" | "eof";
 export type Token = { kind: TokenKind; value: string; line: number; column: number };
 
+const decimalFloating = "(?:[0-9]+\\.[0-9]*|\\.[0-9]+)(?:[eE][+-]?[0-9]+)?[fF]?|[0-9]+[eE][+-]?[0-9]+[fF]?";
+const floatingLiteral = new RegExp("^[+-]?(?:" + decimalFloating + ")$");
+export const isDecimalFloatingLiteral = (source: string) => floatingLiteral.test(source);
+
 const two = new Set(["==", "!=", "<=", ">=", "++", "--", "->", "&&", "||", "+=", "-=", "*=", "/=", "%="]);
 export function lex(source: string): Token[] {
   const out: Token[] = []; let i = 0; let line = 1; let column = 1;
   const push = (kind: TokenKind, value: string, l: number, c: number) => out.push({ kind, value, line: l, column: c });
+  const floatingToken = new RegExp("(?:" + decimalFloating + ")(?![A-Za-z0-9_.])", "y");
   while (i < source.length) {
     const ch = source[i]; if (ch === " " || ch === "\t" || ch === "\r") { i++; column++; continue; }
     if (ch === "\n") { i++; line++; column = 1; continue; }
@@ -21,6 +26,11 @@ export function lex(source: string): Token[] {
     }
     const l = line, c = column;
     if (/[A-Za-z_]/.test(ch)) { let v = ch; i++; column++; while (i < source.length && /[A-Za-z0-9_]/.test(source[i])) { v += source[i++]; column++; } push("id", v, l, c); continue; }
+    if (/[0-9.]/.test(ch)) {
+      floatingToken.lastIndex = i;
+      const token = floatingToken.exec(source)?.[0];
+      if (token) { push("number", token, l, c); i += token.length; column += token.length; continue; }
+    }
     if (/[0-9]/.test(ch)) { let v = ch; i++; column++; while (i < source.length && /[0-9.]/.test(source[i])) { v += source[i++]; column++; } push("number", v, l, c); continue; }
     if (ch === '"' || ch === "'") {
       const quote = ch; let v = ""; i++; column++;

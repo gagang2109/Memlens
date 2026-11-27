@@ -1,4 +1,4 @@
-import { lex, type Token } from "./lexer";
+import { isDecimalFloatingLiteral, lex, type Token } from "./lexer";
 import { stripComments } from "./comments";
 
 export type Expr =
@@ -58,7 +58,7 @@ function parseNumberLiteral(text: string, line: number): number {
     if (!Number.isFinite(value)) throw new Error(`line ${line}: invalid numeric literal '${text}'`);
     return value;
   }
-  const value = Number(text);
+  const value = Number(isDecimalFloatingLiteral(text) ? text.replace(/[fF]$/, "") : text);
   if (!Number.isFinite(value)) throw new Error(`line ${line}: invalid numeric literal '${text}'`);
   return value;
 }
@@ -86,13 +86,13 @@ export function parse(source: string): Program {
         }
         const value = /^".*"$/.test(rawValue)
           ? rawValue.slice(1, -1)
-          : Number.isNaN(Number(rawValue)) && !/^[+-]?[0-9][0-9.]*$/.test(rawValue)
+          : Number.isNaN(Number(rawValue)) && !isDecimalFloatingLiteral(rawValue) && !/^[+-]?[0-9][0-9.]*$/.test(rawValue)
             ? rawValue
             : parseNumberLiteral(rawValue, valueLine + 1);
         constants.set(name, value);
         if (/^(?:[0-9]+|0[xX][0-9a-fA-F]+)$/.test(rawValue)) simplePositiveBounds.add(name);
         else simplePositiveBounds.delete(name);
-        if (typeof value === "number" && /^[+-]?(?:[0-9]+\.[0-9]*|\.[0-9]+|[0-9]+(?:\.[0-9]*)?[eE][+-]?[0-9]+)$/.test(rawValue)) floatingConstants.add(name);
+        if (typeof value === "number" && isDecimalFloatingLiteral(rawValue)) floatingConstants.add(name);
         else floatingConstants.delete(name);
       }
       lines.fill("", start, end + 1);
@@ -134,7 +134,7 @@ export function parse(source: string): Program {
           const bracket = take("[");
           if (!name || (base !== "int" && base !== "char") || depth) throw new Error(`line ${bracket.line}: only fixed int or char arrays in named structs are supported`);
           const bound = take();
-          const length = bound.kind === "number" && !/[.]/.test(bound.value)
+          const length = bound.kind === "number" && !isDecimalFloatingLiteral(bound.value)
             ? parseNumberLiteral(bound.value, bound.line)
             : bound.kind === "id" && simplePositiveBounds.has(bound.value) ? constants.get(bound.value) : undefined;
           if (typeof length !== "number" || !Number.isSafeInteger(length) || length <= 0)
@@ -196,7 +196,7 @@ export function parse(source: string): Program {
       left = { kind: "cast", type, pointer, expr: parseExpression(12), line: token.line };
     } else if (token.value === "(") { left = parseExpression(); take(")"); }
     else if (token.kind === "number") left = { kind: "literal", value: parseNumberLiteral(token.value, token.line), line: token.line,
-      ...(token.value.includes(".") ? { literalKind: "floating" as const } : {}) };
+      ...(isDecimalFloatingLiteral(token.value) ? { literalKind: "floating" as const } : {}) };
     else if (token.value === "struct" || token.value === "int" || token.value === "char" || token.value === "long" || knownTypes.has(token.value)) {
       const type = token.value === "struct" ? `struct ${take().value}` : aliasTypes.get(token.value);
       const fields = type && fixedStructFields.get(type);

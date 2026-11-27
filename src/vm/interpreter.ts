@@ -439,6 +439,34 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
     const type = scalarLvalueType(expr);
     return type !== undefined && promotedSignedInteger(type);
   };
+  // Classify the C expression rather than its JS value: 241 in a float is
+  // still floating point. Inspect types only, never execute operands twice.
+  const isFloatingType = (type: string | undefined) =>
+    type !== undefined && ["float", "double"].includes(signedBase(type));
+  const hasFloatingProvenance = (expr: Expr): boolean => {
+    switch (expr.kind) {
+      case "literal": return expr.literalKind === "floating";
+      case "name": {
+        const variable = findVariable(expr.name);
+        return variable ? isFloatingType(scalarLvalueType(expr)) : program.floatingConstants.has(expr.name);
+      }
+      case "call": {
+        const fn = program.functions.get(expr.name);
+        return Boolean(fn && !fn.returnsPointer && isFloatingType(fn.returnType));
+      }
+      case "cast": return !expr.pointer && isFloatingType(expr.type);
+      case "conditional": return hasFloatingProvenance(expr.yes) || hasFloatingProvenance(expr.no);
+      case "binary":
+        if (expr.op === ",") return hasFloatingProvenance(expr.right);
+        if (["=", "+=", "-="].includes(expr.op)) return isFloatingType(scalarLvalueType(expr.left));
+        return ["+", "-", "*", "/"].includes(expr.op) &&
+          (hasFloatingProvenance(expr.left) || hasFloatingProvenance(expr.right));
+      case "unary":
+        if (expr.op === "-") return hasFloatingProvenance(expr.expr);
+        if (["++", "--"].includes(expr.op)) return isFloatingType(scalarLvalueType(expr.expr));
+      default: return isFloatingType(scalarLvalueType(expr));
+    }
+  };
   const fitsSignedInt = (value: number) => Number.isInteger(value) && value >= -2147483648 && value <= 2147483647;
   const evaluate = (expression: Expr): Value => {
     if (expression.kind === "literal") return expression.value;
@@ -877,10 +905,14 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
         const pointer = pointerMeta(expression.left);
         if (pointer?.pointer) return a + (expression.op === "+" ? b : -b) * (pointer.elementSize ?? 1);
       }
-      if (expression.op === "/" && b === 0) runtimeError("division by zero", expression.line);
+      if (expression.op === "/") {
+        if (b === 0) runtimeError("division by zero", expression.line);
+        return hasFloatingProvenance(expression.left) || hasFloatingProvenance(expression.right)
+          ? a / b : Math.trunc(a / b);
+      }
       if (expression.op === "%" && b === 0) runtimeError("remainder by zero", expression.line);
       if (expression.op === "==" || expression.op === "!=") { const equal = typeof left === "string" || typeof right === "string" ? left === right : a === b; return expression.op === "==" ? (equal ? 1 : 0) : (equal ? 0 : 1); }
-      return ({ "+": a + b, "-": a - b, "*": a * b, "/": Math.trunc(a / b), "%": a % b, "<": a < b ? 1 : 0, ">": a > b ? 1 : 0, "<=": a <= b ? 1 : 0, ">=": a >= b ? 1 : 0 } as Record<string, number>)[expression.op] ?? 0;
+      return ({ "+": a + b, "-": a - b, "*": a * b, "%": a % b, "<": a < b ? 1 : 0, ">": a > b ? 1 : 0, "<=": a <= b ? 1 : 0, ">=": a >= b ? 1 : 0 } as Record<string, number>)[expression.op] ?? 0;
     }
     return null;
   };
