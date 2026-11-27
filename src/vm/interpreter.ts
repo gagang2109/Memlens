@@ -179,6 +179,59 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
     };
     return { address, get: () => { check(); return array.values[index]; }, set: value => { check(); array.values[index] = value; } };
   };
+  // Resolve types, not values or side effects, for the matrix forms rooted
+  // at a named heap-backed int**. General C pointer inference is separate.
+  const matrixPointerDepth = (expr: Expr): 0 | 1 | 2 | undefined => {
+    if (expr.kind === "name") {
+      const candidate = pointerMeta(expr);
+      return candidate?.pointerDepth === 2 && candidate.type === "int" && !candidate.array &&
+        !candidate.matrixColumnCount && typeof candidate.value === "number" &&
+        memory.allocationAt(candidate.value) !== undefined ? 2 : undefined;
+    }
+    if (expr.kind === "index" || expr.kind === "unary" && expr.op === "*") {
+      const depth = matrixPointerDepth(expr.kind === "index" ? expr.object : expr.expr);
+      return depth === 2 ? 1 : depth === 1 ? 0 : undefined;
+    }
+    if (expr.kind === "unary" && expr.op === "&") {
+      const depth = matrixPointerDepth(expr.expr);
+      return depth === 0 ? 1 : depth === 1 ? 2 : undefined;
+    }
+    if (expr.kind === "binary" && (expr.op === "+" || expr.op === "-")) {
+      const left = matrixPointerDepth(expr.left), right = matrixPointerDepth(expr.right);
+      if (left && !right) return left;
+      if (right && !left && expr.op === "+") return right;
+    }
+    return undefined;
+  };
+  const matrixRef = (base: number, index: number, depth: 1 | 2, line: number): Ref => {
+    const allocation = memory.allocationAt(base);
+    if (!allocation) return runtimeError(base === 0 ? "null matrix row pointer" : "invalid matrix row address", line);
+    const rowTable = depth === 2;
+    const stride = rowTable ? SIM_POINTER_BYTES : 4;
+    const address = base + index * stride;
+    if (allocation.freeStep !== undefined) runtimeError("use-after-free", line, allocation);
+    const label = rowTable ? "heap matrix row" : "heap matrix column";
+    if (!Number.isSafeInteger(index) || address < allocation.address ||
+        address + stride > allocation.address + allocation.size || (address - allocation.address) % stride !== 0)
+      runtimeError(`${label} index out of bounds (${index})`, line, allocation);
+    return { address, allocation,
+      get: () => {
+        if (allocation.freeStep !== undefined) runtimeError("use-after-free", line, allocation);
+        return cells.get(address) ?? memory.read(address, steps, line);
+      },
+      set: value => {
+        const number = asNum(value) | 0;
+        memory.writeInt32(address, number, steps, line);
+        cells.set(address, number);
+        if (rowTable && number !== 0) {
+          const row = memory.allocationAt(number);
+          if (row?.address === number && !row.type && row.freeStep === undefined) {
+            row.type = "int"; row.elementSize = 4; row.elementType = "int";
+          }
+        }
+      },
+    };
+  };
   const ref = (expression: Expr, addressOnly = false): Ref => {
     if (expression.kind === "name") {
       const variable = findVariable(expression.name); if (!variable) throw new Error(`line ${expression.line}: unknown variable ${expression.name}`);
@@ -262,41 +315,8 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
         if (addressOnly) rememberArrayCell(base, index, variable);
         return { get: () => baseArray.values[index], set: value => { baseArray.values[index] = value; }, address: base + index * (variable?.elementSize ?? elementSize(baseArray.type)) };
       }
-      const isHeapIntRows = (candidate?: RuntimeVariable) => candidate?.pointerDepth === 2 &&
-        candidate.type === "int" && !candidate.array && !candidate.matrixColumnCount &&
-        typeof candidate.value === "number" && memory.allocationAt(candidate.value) !== undefined;
-      const rowTable = isHeapIntRows(variable);
-      const rowCell = expression.object.kind === "index" && isHeapIntRows(pointerMeta(expression.object.object));
-      if (rowTable || rowCell) {
-        // Array-of-pointers matrices have two distinct objects to bound:
-        // the pointer table, then the specific separately allocated row.
-        const allocation = memory.allocationAt(base);
-        if (!allocation)
-          return runtimeError(base === 0 ? "null matrix row pointer" : "invalid matrix row address", expression.line);
-        const label = rowTable ? "heap matrix row" : "heap matrix column";
-        const stride = rowTable ? SIM_POINTER_BYTES : 4;
-        const address = base + index * stride;
-        if (allocation.freeStep !== undefined) runtimeError("use-after-free", expression.line, allocation);
-        if (!Number.isSafeInteger(index) || index < 0 || address + stride > allocation.address + allocation.size)
-          runtimeError(`${label} index out of bounds (${index})`, expression.line, allocation);
-        return { address, allocation,
-          get: () => {
-            if (allocation.freeStep !== undefined) runtimeError("use-after-free", expression.line, allocation);
-            return cells.get(address) ?? memory.read(address, steps, expression.line);
-          },
-          set: value => {
-            const number = asNum(value) | 0;
-            memory.writeInt32(address, number, steps, expression.line);
-            cells.set(address, number);
-            if (rowTable && number !== 0) {
-              const row = memory.allocationAt(number);
-              if (row?.address === number && !row.type && row.freeStep === undefined) {
-                row.type = "int"; row.elementSize = 4; row.elementType = "int";
-              }
-            }
-          },
-        };
-      }
+      const depth = matrixPointerDepth(expression.object);
+      if (depth === 1 || depth === 2) return matrixRef(base, index, depth, expression.line);
       const size = variable?.elementSize ?? memory.allocationAt(base)?.elementSize ?? 1; const address = base + index * size; const allocation = memory.allocationAt(address);
       if (!allocation || address < allocation.address || address + size > allocation.address + allocation.size) runtimeError(`pointer index out of bounds (${index})`, expression.line, allocation);
       return {
@@ -309,7 +329,10 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       };
     }
     if (expression.kind === "unary" && expression.op === "*") {
-      const address = asNum(evaluate(expression.expr)); const allocation = memory.find(address);
+      const depth = matrixPointerDepth(expression.expr);
+      const address = asNum(evaluate(expression.expr));
+      if (depth === 1 || depth === 2) return matrixRef(address, 0, depth, expression.line);
+      const allocation = memory.find(address);
       const location = locations.get(address);
       if (location) return liveRef(location, expression.line);
       const localCell = addressedCellRef(address, expression.line);
@@ -597,7 +620,10 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       if (expression.name === "scanf") {
         const format = readString(evaluate(args[0]), expression.line).split("\0", 1)[0];
         // Evaluate every destination once, before scanning, as with ordinary calls.
-        const destinations = args.slice(1).map(argument => asNum(evaluate(argument)));
+        const destinations = args.slice(1).map(argument => ({
+          matrixInt: matrixPointerDepth(argument) === 1,
+          address: asNum(evaluate(argument)),
+        }));
         let assigned = 0; let destinationIndex = 0; let inputFailure = false;
         const write = (address: number, value: Value) => {
           const allocation = memory.find(address);
@@ -657,9 +683,13 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
           }
           stdinCursor += token.length;
           if (suppressed) continue;
-          const destination = destinations[destinationIndex++];
-          if (destination === undefined) runtimeError("missing scanf destination", expression.line);
-          if (specifier === "d") write(destination, Number(token));
+          const target = destinations[destinationIndex++];
+          if (target === undefined) return runtimeError("missing scanf destination", expression.line);
+          const { address: destination, matrixInt } = target;
+          if (specifier === "d") {
+            if (matrixInt) matrixRef(destination, 0, 1, expression.line).set(Number(token));
+            else write(destination, Number(token));
+          }
           else {
             // Validate the entire conversion against its starting buffer. Checking
             // each byte independently can silently spill into an adjacent object.
@@ -830,7 +860,23 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       // C logical operators evaluate the right operand only when needed.
       if (expression.op === "&&") return asNum(evaluate(expression.left)) ? (asNum(evaluate(expression.right)) ? 1 : 0) : 0;
       if (expression.op === "||") return asNum(evaluate(expression.left)) ? 1 : (asNum(evaluate(expression.right)) ? 1 : 0);
-      const left = evaluate(expression.left); const right = evaluate(expression.right); const a = asNum(left); const b = asNum(right); if (["+", "-"].includes(expression.op)) { const pointer = pointerMeta(expression.left); if (pointer?.pointer) return a + (expression.op === "+" ? b : -b) * (pointer.elementSize ?? 1); }
+      const arithmetic = expression.op === "+" || expression.op === "-";
+      const leftDepth = arithmetic ? matrixPointerDepth(expression.left) : undefined;
+      const rightDepth = arithmetic ? matrixPointerDepth(expression.right) : undefined;
+      const left = evaluate(expression.left); const right = evaluate(expression.right);
+      const a = asNum(left), b = asNum(right);
+      if (arithmetic) {
+        // Keep address formation inside its original allocation. One-past
+        // addresses need provenance not modeled by this numeric VM path.
+        if (leftDepth && rightDepth)
+          return runtimeError("arithmetic between two matrix pointers is not supported", expression.line);
+        if (leftDepth)
+          return matrixRef(a, expression.op === "+" ? b : -b, leftDepth, expression.line).address!;
+        if (rightDepth && !leftDepth && expression.op === "+")
+          return matrixRef(b, a, rightDepth, expression.line).address!;
+        const pointer = pointerMeta(expression.left);
+        if (pointer?.pointer) return a + (expression.op === "+" ? b : -b) * (pointer.elementSize ?? 1);
+      }
       if (expression.op === "/" && b === 0) runtimeError("division by zero", expression.line);
       if (expression.op === "%" && b === 0) runtimeError("remainder by zero", expression.line);
       if (expression.op === "==" || expression.op === "!=") { const equal = typeof left === "string" || typeof right === "string" ? left === right : a === b; return expression.op === "==" ? (equal ? 1 : 0) : (equal ? 0 : 1); }
