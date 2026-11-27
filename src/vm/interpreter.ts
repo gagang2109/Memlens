@@ -393,26 +393,30 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
     }
     throw new Error(`line ${expression.line}: expression is not assignable (${expression.kind})`);
   };
+  const fixedCharacterBuffer = (address: number, line: number) => {
+    if (!Number.isSafeInteger(address))
+      return runtimeError("string address is not inside a struct character array", line);
+    let member = fixedArrays.get(address);
+    if (!member) {
+      // The member map follows ascending address order. Resolve an interior
+      // character pointer to its owning array, not to the containing struct.
+      for (const candidate of fixedArrays.values()) {
+        if (candidate.address >= address) break;
+        if (candidate.type === "char" && address - candidate.address < candidate.values!.length) {
+          member = candidate;
+          break;
+        }
+      }
+    }
+    if (!member || member.type !== "char")
+      return runtimeError("string address is not inside a struct character array", line);
+    checkMemberLifetime(member, line);
+    return { member, chars: member.values!, offset: address - member.address };
+  };
   const readString = (value: Value, line: number, precision?: number) => {
     if (typeof value === "string") return value.split("\0", 1)[0];
     if (typeof value === "number" && inFixedStorage(value)) {
-      let member = fixedArrays.get(value);
-      if (!member) {
-        // The member map follows ascending address order. Only character
-        // arrays can contain an interior address passed as a string.
-        for (const candidate of fixedArrays.values()) {
-          if (candidate.address >= value) break;
-          if (candidate.type === "char" && value - candidate.address < candidate.values!.length) {
-            member = candidate;
-            break;
-          }
-        }
-      }
-      if (!member || member.type !== "char" || !Number.isSafeInteger(value))
-        return runtimeError("string address is not inside a struct character array", line);
-      checkMemberLifetime(member, line);
-      const chars = member.values!;
-      const offset = value - member.address;
+      const { member, chars, offset } = fixedCharacterBuffer(value, line);
       const end = Math.min(chars.length, offset + (precision ?? Infinity));
       let text = "";
       for (let index = offset; index < end; index++) {
@@ -791,6 +795,15 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
             // each byte independently can silently spill into an adjacent object.
             const terminate = specifier === "s" || scanset !== undefined;
             const bytes = token.length + Number(terminate);
+            if (inFixedStorage(destination)) {
+              const { member, chars, offset } = fixedCharacterBuffer(destination, expression.line);
+              if (bytes > chars.length - offset)
+                return runtimeError("scanf exceeds struct character array bounds", expression.line);
+              for (let i = 0; i < token.length; i++) fixedCell(member, offset + i, expression.line).set(token[i]);
+              if (terminate) fixedCell(member, offset + token.length, expression.line).set("\0");
+              assigned++;
+              continue;
+            }
             const allocation = memory.find(destination);
             if (allocation?.freeStep !== undefined) runtimeError("use-after-free", expression.line, allocation);
             // Match write()'s existing dispatch order. Simulated stack and heap
