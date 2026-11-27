@@ -42,7 +42,8 @@ export function fixedStructLayout(fields: FixedStructFields) {
 export const fixedStructBytes = (fields: FixedStructFields) => fixedStructLayout(fields).bytes;
 const treeChildPairs = [["lchild", "rchild"], ["llink", "rlink"]] as const;
 export type TreeChildAliases = typeof treeChildPairs[number];
-export type Program = { functions: Map<string, FunctionDef>; structs: Map<string, string[]>; structPointerFields: Map<string, ReadonlySet<string>>; fixedStructFields: Map<string, FixedStructFields>; aliasedTreeStructs: Map<string, TreeChildAliases>; body: Stmt[]; constants: Map<string, number | string>; floatingConstants: Set<string> };
+export type AdjacencyShape = { destination: string; next: "next" };
+export type Program = { functions: Map<string, FunctionDef>; structs: Map<string, string[]>; structPointerFields: Map<string, ReadonlySet<string>>; adjacencyShapes: Map<string, AdjacencyShape>; fixedStructFields: Map<string, FixedStructFields>; aliasedTreeStructs: Map<string, TreeChildAliases>; body: Stmt[]; constants: Map<string, number | string>; floatingConstants: Set<string> };
 
 // The teaching VM stores pointers in four-byte slots; this is not the host ABI.
 export const SIM_POINTER_BYTES = 4;
@@ -101,6 +102,7 @@ export function parse(source: string): Program {
   }
   const ts = lex(lines.join("\n")); let p = 0;
   const structs = new Map<string, string[]>(); const aliasedTreeStructs = new Map<string, TreeChildAliases>(); const structPointerFields = new Map<string, ReadonlySet<string>>(); const knownTypes = new Set(["int", "char", "long", "void"]); const aliasTypes = new Map<string, string>();
+  const adjacencyShapes = new Map<string, AdjacencyShape>();
   const fixedStructFields = new Map<string, FixedStructFields>();
   const functions = new Map<string, FunctionDef>(); const body: Stmt[] = [];
   const peek = (value?: string) => value === undefined ? ts[p] : (ts[p]?.kind === "symbol" || ts[p]?.kind === "id") && ts[p]?.value === value;
@@ -163,6 +165,10 @@ export function parse(source: string): Program {
       // A threaded tree can use the same pointer names for successors.
       // Leave known flag-marked layouts to a future thread-aware renderer.
       const threadMarker = fields.some(label => /^(?:[lr](?:tag|flag|bit|thread)|(?:left|right)(?:tag|flag|bit|thread)|threaded|isthreaded|thread)$/.test(label.toLowerCase().replace(/_/g, "")));
+      const destinations = ["to", "dest", "vertex"].filter(label => fixedFields.get(label)?.length === null);
+      if (name && selfPointers.has("next") && destinations.length === 1)
+        adjacencyShapes.set(structType, { destination: destinations[0], next: "next" });
+      else adjacencyShapes.delete(structType);
       const childPairs = treeChildPairs.filter(pair => pair.every(label => selfPointers.has(label)));
       if (name && childPairs.length === 1 && !threadMarker &&
           !fields.includes("left") && !fields.includes("right")) aliasedTreeStructs.set(structType, childPairs[0]);
@@ -327,5 +333,5 @@ export function parse(source: string): Program {
       } else { p = save; body.push(statement()); }
     } else if (peek(";")) take(";"); else body.push(statement());
   }
-  return { functions, structs, structPointerFields, fixedStructFields, aliasedTreeStructs, body, constants, floatingConstants };
+  return { functions, structs, structPointerFields, adjacencyShapes, fixedStructFields, aliasedTreeStructs, body, constants, floatingConstants };
 }

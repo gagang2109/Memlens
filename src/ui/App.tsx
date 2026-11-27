@@ -198,7 +198,7 @@ export function App() {
   const [previousDraft, setPreviousDraft] = useState<{ code: string; setup: string }>();
   const [runGeneration, setRunGeneration] = useState(0);
   const [selectedHeapMatrix, setSelectedHeapMatrix] = useState<{ generation: number; base: number; name: string; invocation?: number }>();
-  const [selectedGraph, setSelectedGraph] = useState<{ generation: number; base: number; name: string }>();
+  const [selectedGraph, setSelectedGraph] = useState<{ generation: number; base: number; name: string; kind?: "list"; invocation?: number }>();
   const [selectedStack, setSelectedStack] = useState<{ generation: number; base: number; name: string; invocation?: number }>();
   const [selectedQueue, setSelectedQueue] = useState<{ generation: number; base: number; name: string; invocation?: number; mode: "linear" | "circular" }>();
   const session = useRef<InteractiveRun>();
@@ -237,7 +237,7 @@ export function App() {
   const customGraph = selectedGraph?.generation === runGeneration ? selectedGraph : undefined;
   const labGraph = lastRun?.code === samples["graph-traversal"].code && lastRun.setup === "";
   const matrix = customGraph
-    ? view?.frames.flatMap(frame => Object.values(frame.variables ?? {})).find(item => item.array?.base === customGraph.base)?.array
+    ? customGraph.kind === "list" ? undefined : view?.frames.flatMap(frame => Object.values(frame.variables ?? {})).find(item => item.array?.base === customGraph.base)?.array
     : labGraph ? view?.frames.find(frame => frame.name === "main")?.variables?.g?.array : undefined;
   const showGraph = Boolean(view && (customGraph || matrix && labGraph));
   const customStack = selectedStack?.generation === runGeneration ? selectedStack : undefined;
@@ -459,6 +459,7 @@ export function App() {
             {showGraph && view && <GraphDiagram
               key={`${runGeneration}:${customGraph?.base ?? "lab"}`}
               name={customGraph?.name ?? "g"} array={matrix} step={view}
+              listSelection={customGraph?.kind === "list" ? customGraph : undefined}
               exactLab={labGraph && customGraph === undefined}
               onClose={customGraph ? () => setSelectedGraph(undefined) : undefined} />}
             {((!arrayStackStep && !showGraph && !customQueue && !customStack && !customHeapMatrix) || Boolean(model?.nodes.length && !customHeapMatrix)) && (model
@@ -479,6 +480,12 @@ export function App() {
                   <StackValue name={key} variable={variable} change={change} generation={runGeneration} />
                   {candidate && <button type="button" className="graph-trigger" aria-pressed={customGraph?.base === candidate.base}
                     onClick={() => { setSelectedQueue(undefined); setSelectedStack(undefined); setSelectedHeapMatrix(undefined); setSelectedGraph({generation:runGeneration, base:candidate.base, name:key}); }}>View {key} as graph</button>}
+                  {variable.array && variable.adjacencyShape && <button type="button" className="graph-trigger"
+                    aria-pressed={customGraph?.kind === "list" && customGraph.base === variable.array.base && customGraph.invocation === frame.invocation}
+                    onClick={() => {
+                      setSelectedQueue(undefined); setSelectedStack(undefined); setSelectedHeapMatrix(undefined);
+                      setSelectedGraph({generation:runGeneration, base:variable.array!.base, name:key, invocation:frame.invocation, kind:"list"});
+                    }}>View {key} as adjacency list</button>}
                   {variable.array && frame.variables && canShowLinearQueue(frame.variables, key) &&
                     <button type="button" className="graph-trigger" aria-pressed={customQueue?.mode === "linear" && customQueue.base === variable.array.base} onClick={() => {
                       setSelectedGraph(undefined);

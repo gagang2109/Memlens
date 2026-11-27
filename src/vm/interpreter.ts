@@ -109,7 +109,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
         return [[key, { type: `${variable.type}${variable.pointer ? " *" : ""}`,
           value: array ? `[${array.join(", ")}]` : String(variable.value), pointer: variable.pointer,
           ...(address !== undefined ? {storage:address} : {}), ...(snapshot ? {array:snapshot} : {}),
-          ...(structArrayPointee(variable) ? {arrayPointee: variable.type} : {}),
+          ...(structArrayPointee(variable) ? {arrayPointee: variable.type, adjacencyShape: program.adjacencyShapes.get(variable.type)} : {}),
           ...(variable.type === "int" && variable.pointerDepth === 2 && variable.pointer && !variable.matrixColumnCount
             && typeof variable.value === "number" && memory.allocationAt(variable.value)?.address === variable.value
             ? {heapIntRows: true as const} : {}),
@@ -137,7 +137,14 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
         if (label === "prev" && value === 0) continue;
         pointers.push({ from: `0x${object.address.toString(16)}.${label}`, to: value, label, dangling: Boolean(memory.allocations.find(a => a.address === value)?.freeStep !== undefined) });
       }
-      return { address: object.address, type: object.type, fields: Object.fromEntries([...object.fields].map(([key, value]) => [key, String(value)])), ...(doublyLinked ? {doublyLinked:true as const} : {}), ...(treeChildAliases ? { treeChildAliases } : {}) };
+      const shape = object.type && program.adjacencyShapes.get(object.type);
+      const destination = shape ? object.fields.get(shape.destination) : undefined;
+      const next = shape ? object.fields.get(shape.next) : undefined;
+      const adjacencyFields = shape ? {
+        destination: typeof destination === "number" ? destination : undefined,
+        next: next === undefined || next === null || typeof next === "number" ? next : "invalid" as const,
+      } : undefined;
+      return { address: object.address, type: object.type, ...(adjacencyFields ? { adjacencyFields } : {}), fields: Object.fromEntries([...object.fields].map(([key, value]) => [key, String(value)])), ...(doublyLinked ? {doublyLinked:true as const} : {}), ...(treeChildAliases ? { treeChildAliases } : {}) };
     });
     trace.add({ line, stdout, memory: memory.snapshot(), frames: visible, heap: heapViews, pointers, event, message });
     steps++;

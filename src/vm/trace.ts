@@ -1,12 +1,12 @@
 import type { MemorySnapshot } from "./memory";
-import type { TreeChildAliases } from "../lang/parser";
+import type { AdjacencyShape, TreeChildAliases } from "../lang/parser";
 export type EventKind = "step" | "alloc" | "free" | "error" | "warning" | "call" | "return";
 // Runtime string provenance is retained for display; numeric-looking strings are not addresses.
 export type ArraySnapshot = { base: number; dimensions: readonly number[]; cells: readonly (number | string | null)[] };
-export type FrameVariable = { type: string; value: string; pointer: boolean; stringPointer?: boolean; heapIntRows?: true; storage?: number; array?: ArraySnapshot; arrayPointee?: string };
+export type FrameVariable = { type: string; value: string; pointer: boolean; stringPointer?: boolean; heapIntRows?: true; storage?: number; array?: ArraySnapshot; arrayPointee?: string; adjacencyShape?: AdjacencyShape };
 export type FrameView = { invocation?: number; name: string; locals: Record<string, string>; variables?: Record<string, FrameVariable> };
 export type PointerArrow = { from: string; to: number; label: string; dangling: boolean };
-export type HeapView = { address: number; fields: Record<string, string>; type?: string; doublyLinked?: true; treeChildAliases?: TreeChildAliases };
+export type HeapView = { address: number; fields: Record<string, string>; type?: string; doublyLinked?: true; treeChildAliases?: TreeChildAliases; adjacencyFields?: { destination?: number; next?: number | null | "invalid" } };
 export type TraceStep = { index: number; line: number; stdout: string; memory: MemorySnapshot; frames: FrameView[]; heap?: HeapView[]; pointers?: PointerArrow[]; event?: EventKind; message?: string };
 export class Trace {
   steps: TraceStep[] = []; current = 0;
