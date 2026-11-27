@@ -1,4 +1,4 @@
-import { fixedStructBytes, fixedStructLayout, parse, type Expr, type FunctionDef, type Program, type Stmt } from "../lang/parser";
+import { SIM_POINTER_BYTES, fixedStructBytes, fixedStructLayout, parse, type Expr, type FunctionDef, type Program, type Stmt } from "../lang/parser";
 import { Memory, MemoryFault, type Allocation } from "./memory";
 import { Trace, type ArraySnapshot, type FrameVariable, type FrameView } from "./trace";
 import { parseScanset } from "./scanfScanset";
@@ -258,6 +258,41 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
         if (!Number.isInteger(index) || index < 0 || index >= baseArray.values.length) runtimeError(`pointer index out of bounds (${index})`, expression.line);
         if (addressOnly) rememberArrayCell(base, index, variable);
         return { get: () => baseArray.values[index], set: value => { baseArray.values[index] = value; }, address: base + index * (variable?.elementSize ?? elementSize(baseArray.type)) };
+      }
+      const isHeapIntRows = (candidate?: RuntimeVariable) => candidate?.pointerDepth === 2 &&
+        candidate.type === "int" && !candidate.array && !candidate.matrixColumnCount &&
+        typeof candidate.value === "number" && memory.allocationAt(candidate.value) !== undefined;
+      const rowTable = isHeapIntRows(variable);
+      const rowCell = expression.object.kind === "index" && isHeapIntRows(pointerMeta(expression.object.object));
+      if (rowTable || rowCell) {
+        // Array-of-pointers matrices have two distinct objects to bound:
+        // the pointer table, then the specific separately allocated row.
+        const allocation = memory.allocationAt(base);
+        if (!allocation)
+          return runtimeError(base === 0 ? "null matrix row pointer" : "invalid matrix row address", expression.line);
+        const label = rowTable ? "heap matrix row" : "heap matrix column";
+        const stride = rowTable ? SIM_POINTER_BYTES : 4;
+        const address = base + index * stride;
+        if (allocation.freeStep !== undefined) runtimeError("use-after-free", expression.line, allocation);
+        if (!Number.isSafeInteger(index) || index < 0 || address + stride > allocation.address + allocation.size)
+          runtimeError(`${label} index out of bounds (${index})`, expression.line, allocation);
+        return { address, allocation,
+          get: () => {
+            if (allocation.freeStep !== undefined) runtimeError("use-after-free", expression.line, allocation);
+            return cells.get(address) ?? memory.read(address, steps, expression.line);
+          },
+          set: value => {
+            const number = asNum(value) | 0;
+            memory.writeInt32(address, number, steps, expression.line);
+            cells.set(address, number);
+            if (rowTable && number !== 0) {
+              const row = memory.allocationAt(number);
+              if (row?.address === number && !row.type && row.freeStep === undefined) {
+                row.type = "int"; row.elementSize = 4; row.elementType = "int";
+              }
+            }
+          },
+        };
       }
       const size = variable?.elementSize ?? memory.allocationAt(base)?.elementSize ?? 1; const address = base + index * size; const allocation = memory.allocationAt(address);
       if (!allocation || address < allocation.address || address + size > allocation.address + allocation.size) runtimeError(`pointer index out of bounds (${index})`, expression.line, allocation);
@@ -881,7 +916,12 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
           if (index < variable.array!.length) variable.array![index] = character;
         });
       }
-      else if (statement.init) variable.value = evaluate(statement.init);
+      else if (statement.init) {
+        // The declared pointer's type is in scope in its own initializer,
+        // for example int **rows = malloc(n * sizeof *rows).
+        if (statement.pointer) current().set(statement.name, variable);
+        variable.value = evaluate(statement.init);
+      }
       if (!variable.pointer && statement.type.startsWith("struct")) { const address = memory.malloc(16, steps, statement.line); heap.set(address, { address, fields: new Map(), type: statement.type }); variable.value = address; }
       if (!variable.array && !variable.address) variable.address = nextStackAddress++;
       if (typeof variable.value === "number" && statement.pointer) { const allocation = memory.allocationAt(variable.value); if (allocation) {

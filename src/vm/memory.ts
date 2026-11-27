@@ -29,6 +29,17 @@ export class Memory {
     this.snapshotData = undefined;
     this.bytes[address] = value & 255; this.shadows[address] = "initialized";
   }
+  /** Record one teaching-VM 32-bit scalar at its full width, little endian. */
+  writeInt32(address: number, value: number, step: number, line: number) {
+    const allocation = this.find(address, 4);
+    if (!allocation) throw new MemoryFault("invalid pointer dereference", line, step);
+    if (allocation.freeStep !== undefined) throw new MemoryFault("use-after-free", line, step, allocation);
+    this.snapshotData = undefined;
+    for (let offset = 0; offset < 4; offset++) {
+      this.bytes[address + offset] = (value >>> (offset * 8)) & 255;
+      this.shadows[address + offset] = "initialized";
+    }
+  }
   copyAllocationState(source: number, destination: number, size: number, step: number, line: number) {
     for (const address of [source, destination]) {
       const allocation = this.find(address, size);
