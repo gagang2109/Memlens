@@ -9,7 +9,7 @@ type LocalArrayOwner = { vars: Map<string, RuntimeVariable>; name: string; varia
 type LocalArray = { values: Value[]; type: string; dimensions: number[];
   owner?: LocalArrayOwner; scanBufferOwner?: LocalArrayOwner };
 type RuntimeVariable = { value: Value; type: string; pointer: boolean; pointerDepth?: number; array?: Value[]; dimensions?: number[]; fixedArrayBounds?: boolean; matrixColumnCount?: number; elementSize?: number; arrayBase?: number; address?: number; fixedRecords?: FixedLocalStruct[]; borrowedRecords?: FixedLocalStruct[] };
-type Ref = { get: () => Value; set: (value: Value) => void; address?: number; allocation?: Allocation; floatRecordField?: true };
+type Ref = { get: () => Value; set: (value: Value) => void; address?: number; allocation?: Allocation; scanFloat?: (value: number, line: number) => void };
 type HeapObject = { address: number; fields: Map<string, Value>; type?: string };
 type FixedMember = { name: string; type: FixedStructField["type"]; stride: number; address: number; invocation: number; values?: Value[]; scalar: Value };
 type FixedLocalStruct = { type: string; address: number; invocation: number; members: Map<string, FixedMember> };
@@ -334,7 +334,18 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       }
       if (variable.array) return { get: () => variable.array![0], set: () => runtimeError("array is not assignable", expression.line), address: variable.arrayBase };
       if (!variable.address) variable.address = nextStackAddress++;
-      const result = { get: () => variable.value, set: (value: Value) => { variable.value = value; }, address: variable.address };
+      const result: Ref = { get: () => variable.value, set: (value: Value) => { variable.value = value; }, address: variable.address };
+      if (addressOnly && !variable.pointer && variable.type === "float") {
+        const owner = frames.find(frame => frame.vars.get(expression.name) === variable);
+        result.scanFloat = (value, line) => {
+          if (!owner || !frames.includes(owner) || owner.vars.get(expression.name) !== variable)
+            return runtimeError("float input destination used outside its lifetime", line);
+          variable.value = value;
+        };
+      } else {
+        // Resolving the same scalar again must not drop existing address metadata.
+        result.scanFloat = locations.get(variable.address)?.scanFloat;
+      }
       locations.set(variable.address, result); return result;
     }
     if (expression.kind === "member") {
@@ -348,7 +359,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
         if (!member) return runtimeError(`unknown struct member '${expression.name}'`, expression.line);
         checkMemberLifetime(member, expression.line);
         if (member.values) return { get: () => member.address, set: () => runtimeError("array member is not assignable", expression.line), address: member.address };
-        const result: Ref = { address: member.address, ...(member.type === "float" ? { floatRecordField: true } : {}), get: () => {
+        const result: Ref = { address: member.address, get: () => {
           checkMemberLifetime(member, expression.line);
           if (member.scalar === null) runtimeError(`uninitialized read of '${member.name}'`, expression.line);
           return member.scalar;
@@ -360,6 +371,10 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
             member.scalar = number;
           } else member.scalar = asNum(value) | 0;
         } };
+        if (member.type === "float") result.scanFloat = (value, line) => {
+          checkMemberLifetime(member, line);
+          member.scalar = value;
+        };
         if (addressOnly) locations.set(member.address, result);
         return result;
       }
@@ -828,7 +843,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
             if (stdin[stdinCursor] !== literal) break;
             stdinCursor++; continue;
           }
-          const conversion = format.slice(i).match(/^%(\*)?(\d*)([dcs\[])/);
+          const conversion = format.slice(i).match(/^%(\*)?(\d*)([dfcs\[])/);
           if (!conversion) runtimeError("unsupported scanf conversion", expression.line);
           const [, suppressed, widthText, specifier] = conversion!;
           i += conversion![0].length - 1;
@@ -839,7 +854,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
           }
           const width = widthText ? Number(widthText) : specifier === "c" ? 1 : Infinity;
           if (width < 1) runtimeError("invalid scanf field width", expression.line);
-          if (specifier === "d" || specifier === "s") while (stdinCursor < stdin.length && /\s/.test(stdin[stdinCursor])) stdinCursor++;
+          if (specifier === "d" || specifier === "f" || specifier === "s") while (stdinCursor < stdin.length && /\s/.test(stdin[stdinCursor])) stdinCursor++;
           if (stdinCursor >= stdin.length) { if (inputOpen) needInput(expression.line); inputFailure = true; break; }
           const remaining = stdin.slice(stdinCursor, Number.isFinite(width) ? stdinCursor + width : undefined);
           let token: string | undefined;
@@ -847,6 +862,19 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
             let matched = 0;
             while (matched < remaining.length && scanset.includes(remaining[matched])) matched++;
             token = remaining.slice(0, matched);
+          } else if (specifier === "f") {
+            if (/^[+-]?(?:0x|inf|nan)/i.test(remaining))
+              return runtimeError("scanf %f supports finite decimal input only", expression.line);
+            const item = remaining.match(/^[+-]?(?:(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d*)?|\.?)/)?.[0] ?? "";
+            if (inputOpen && stdinCursor + item.length === stdin.length && item.length < width)
+              needInput(expression.line);
+            // An exponent marker or a bare sign/dot without digits is a
+            // matching failure, never a write of a truncated prefix.
+            if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(item)) {
+              stdinCursor += item.length;
+              break;
+            }
+            token = item;
           } else {
             token = specifier === "d" ? remaining.match(/^[+-]?\d+/)?.[0] : specifier === "s" ? remaining.match(/^\S+/)?.[0] : remaining;
           }
@@ -866,9 +894,15 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
           const target = destinations[destinationIndex++];
           if (target === undefined) return runtimeError("missing scanf destination", expression.line);
           const { address: destination, matrixInt } = target;
-          if (specifier === "d") {
-            if (locations.get(destination)?.floatRecordField)
-              return runtimeError("scanf %d cannot read into a float record field; %f input is not supported yet", expression.line);
+          const floatTarget = locations.get(destination)?.scanFloat;
+          if (specifier === "f") {
+            if (!floatTarget) return runtimeError("scanf %f needs the address of a writable float scalar or record field", expression.line);
+            const number = Math.fround(Number(token));
+            if (!Number.isFinite(number)) return runtimeError("scanf %f value is outside the supported finite float range", expression.line);
+            floatTarget(number, expression.line);
+          } else if (floatTarget) {
+            return runtimeError(`scanf %${specifier} cannot read into a float; use %f`, expression.line);
+          } else if (specifier === "d") {
             if (matrixInt) matrixRef(destination, 0, 1, expression.line).set(Number(token));
             else write(destination, Number(token));
           }

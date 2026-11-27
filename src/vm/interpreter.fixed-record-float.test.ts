@@ -41,8 +41,8 @@ it("stores single-precision values and preserves them through a whole-record cop
 it.each([
   ['printf("%f", row.marks);', "uninitialized read"],
   ["row.marks = 3.5e38;", "outside the supported finite float range"],
-  ['scanf("%d", &row.marks);', "cannot read into a float record field"],
-  ['scanf("%f", &row.marks);', "unsupported scanf conversion"],
+  ['scanf("%d", &row.marks);', "cannot read into a float"],
+  ['scanf("%lf", &row.marks);', "unsupported scanf conversion"],
 ])("keeps unsupported uses explicit: %s", (body, diagnostic) => {
   const result = run(`struct Row { char name[4]; float marks; };
     int main(void) { struct Row row; ${body} return 0; }`, 100000, 100, "19");
