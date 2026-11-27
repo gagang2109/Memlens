@@ -40,7 +40,7 @@ export function QuickTourWelcome({ onStart, onSkip }: { onStart: () => void; onS
       <div className="tour-illustration-trace"><span /><span /><b /><span /><span /></div>
     </div>
     <div className="tour-welcome-actions">
-      <button ref={primary} className="tour-primary" type="button" onClick={onStart}>Start quick tour</button>
+      <button ref={primary} className="tour-primary" type="button" aria-label="Start quick tour" onClick={onStart}>Start quick tour</button>
       <button className="tour-quiet" type="button" onClick={onSkip}>Skip and start coding</button>
     </div>
   </dialog>;
@@ -52,9 +52,14 @@ const pad = (r: TourRect): TourRect => ({ left:r.left-5, top:r.top-4, right:r.ri
 const screen = () => ({ width: document.documentElement.clientWidth || window.innerWidth, height: document.documentElement.clientHeight || window.innerHeight });
 const onScreen = (r: TourRect, width: number, height: number) =>
   r.right > 0 && r.left < width && r.bottom > 0 && r.top < height && r.right > r.left && r.bottom > r.top;
-const targetFor = (workspace: HTMLElement, step: TourStep) =>
-  [...workspace.querySelectorAll<HTMLElement>(step === 2 ? "header .run, .mobile-run" : "[data-tour-target]")]
-    .find(e => e.getClientRects().length > 0);
+const targetFor = (workspace: HTMLElement, step: TourStep) => {
+  // The header Run still exists on phones. Point to the sticky, always
+  // reachable Run control rather than the first matching node in DOM order.
+  const candidates = step === 2
+    ? [workspace.querySelector<HTMLElement>(".mobile-run"), workspace.querySelector<HTMLElement>("header .run")]
+    : [...workspace.querySelectorAll<HTMLElement>("[data-tour-target]")];
+  return candidates.find((element): element is HTMLElement => Boolean(element?.getClientRects().length));
+};
 const reveal = (target: HTMLElement, narrow: boolean) => target.scrollIntoView?.({block:narrow ? "start" : "center", inline:"nearest", behavior:"instant"});
 
 export function QuickTourHint({ workspace, step, change, triedPlay, triedSpeed, onExit, onBack, onNext, onSkip, anchorVersion, onReveal }: {
@@ -88,15 +93,29 @@ export function QuickTourHint({ workspace, step, change, triedPlay, triedSpeed, 
         return r;
       };
       let anchor = spotlight();
-      let extra = codeLine && onScreen(rect(codeLine), frame.width, frame.height) ? [rect(codeLine)] : [];
-      let position = anchor ? placeTourCard(anchor, size, frame, extra) : undefined;
-      const sticky = small && step !== 2 ? root.querySelector(".section-navigation")?.getBoundingClientRect().bottom ?? 0 : 0;
-      if (first && target && anchor && (anchor.top < Math.max(8, sticky + 3) || anchor.bottom > frame.height - 8 || position?.side === "none")) {
+      const nav = small ? root.querySelector(".section-navigation") : null;
+      const guards = () => [
+        ...(codeLine && onScreen(rect(codeLine), frame.width, frame.height) ? [rect(codeLine)] : []),
+        ...(nav ? [rect(nav)] : []),
+        ...(step === 1 && small && target ? [rect(target)] : []),
+      ];
+      const sticky = nav?.getBoundingClientRect().bottom ?? 0;
+      let position = anchor ? placeTourCard(anchor, size, frame, guards()) : undefined;
+      if (first && target && anchor && step === 1 && small) {
+        // A tall editor cannot fit beside a card in a short phone viewport.
+        // If they would overlap, bring its first lines into view below the
+        // card instead of letting the card intercept taps inside the editor.
+        const desiredTop = Math.min(frame.height - 60, Math.max(0, sticky) + size.height + 22);
+        if (anchor.top < desiredTop - 1 || anchor.top > frame.height - 48)
+          window.scrollBy({top:anchor.top-desiredTop, behavior:"instant"});
+        anchor = spotlight();
+        position = anchor ? placeTourCard(anchor, size, frame, guards()) : undefined;
+      } else if (first && target && anchor && (anchor.top < (step === 2 ? 0 : Math.max(8, sticky + 3)) || anchor.bottom > frame.height - 8 || position?.side === "none")) {
         reveal(target, small);
         anchor = spotlight();
-        extra = codeLine && onScreen(rect(codeLine), frame.width, frame.height) ? [rect(codeLine)] : [];
-        position = anchor ? placeTourCard(anchor, size, frame, extra) : undefined;
+        position = anchor ? placeTourCard(anchor, size, frame, guards()) : undefined;
       }
+      const extra = codeLine && onScreen(rect(codeLine), frame.width, frame.height) ? [rect(codeLine)] : [];
       first = false;
       const visible = !!anchor && onScreen(anchor, frame.width, frame.height);
       const fallback = { left: Math.max(8,(frame.width-size.width)/2), top:Math.max(8,frame.height-size.height-14), side:"none" as const, arrow:0 };
@@ -163,8 +182,12 @@ export function QuickTourHint({ workspace, step, change, triedPlay, triedSpeed, 
         <div className="tour-actions">
           {step > 1 && step < 7 && <button className="tour-quiet" type="button" onClick={onBack}>Back</button>}
           {step < 7 && !nextAvailable && <button className="tour-quiet" type="button" onClick={onSkip}>Skip step</button>}
-          <button className={step === 7 ? "tour-primary" : "tour-quiet tour-exit"} type="button" onClick={onExit}>{step === 7 ? "Finish" : "Exit tour"}</button>
-          {nextAvailable && <button className="tour-primary" type="button" onClick={onNext}>Next</button>}
+          <button className={step === 7 ? "tour-primary" : "tour-quiet tour-exit"} type="button" aria-label={step === 7 ? "Finish" : "Exit tour"} onClick={onExit}>{step === 7 ? "Finish" : "Exit tour"}</button>
+          {step === 1 && <button className="tour-primary" type="button" aria-label="Focus editor" onClick={() => {
+            const editor = workspace.current?.querySelector<HTMLElement>(".cm-content");
+            editor?.focus({preventScroll:true});
+          }}>Focus editor</button>}
+          {nextAvailable && <button className="tour-primary" type="button" aria-label="Next" onClick={onNext}>Next</button>}
         </div>
       </div>
     </section>

@@ -233,3 +233,10 @@ it("lets Escape dismiss the first-visit dialog without starting the tour", () =>
   expect(host.querySelector(".tour-welcome,.tour-hint")).toBeNull();
   expect(localStorage.getItem(tourPreference)).toBe("yes");
 });
+
+it("provides a keyboard-usable editor action in the floating card", () => {
+  mount();
+  click("Start quick tour"); stage(1);
+  click("Focus editor"); stage(2);
+  expect(document.activeElement).toBe(host.querySelector(".cm-content"));
+});
