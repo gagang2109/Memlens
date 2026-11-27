@@ -427,13 +427,27 @@ footer{padding:16px 24px;font-size:10px}
 .tour-actions{display:flex;gap:8px;flex-wrap:wrap}
 .tour-actions button{margin:0;border-radius:6px;min-height:38px;padding:6px 11px}
 .tour-actions .tour-primary{background:#7fe0ad;color:#102018;border-color:#7fe0ad;font-weight:700}
-.tour-hint{position:sticky;top:52px;z-index:9;outline:none;box-shadow:0 4px 14px #0004}
 .tour-message small{display:block;color:#8ce4ff;font-weight:700;margin-bottom:3px}
 [data-tour-target],main[data-tour-step="2"] header .run,main[data-tour-step="2"] .mobile-run{outline:2px solid #ffce73;outline-offset:3px}
 [data-tour-target]{scroll-margin-block:160px 26px}
 .tour-hint:focus-visible{border-color:#ffce73}
 @media(max-width:700px){.tour-welcome,.tour-hint{margin:8px 12px;padding:10px 12px}}
-@media(max-width:600px){.tour-hint{top:61px}.tour-actions button{min-height:44px}}
+@media(max-width:600px){.tour-actions button{min-height:44px}}
 .help-tour{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px}
 .help-actions:has(.help-tour){flex-wrap:wrap;gap:8px}
 @media(max-width:600px){.help-tour{flex:1 1 100%}}
+
+/* Tour cards live in document flow beside their targets, never on top of them. */
+.tour-hint{position:relative;top:auto;z-index:auto;display:block;box-sizing:border-box;max-inline-size:400px;margin:0 0 9px;padding:10px 12px;border-inline-start:3px solid #ffce73;scroll-margin-top:72px;outline:none}
+main>.tour-hint{margin:8px 24px 10px auto}
+.tour-hint h2{font-size:14px}.tour-hint p{font-size:12px}.tour-hint .tour-actions{margin-top:7px}
+.tour-hint .tour-actions button{min-height:32px;padding:4px 8px;font-size:12px}
+.tour-hint kbd{display:inline-block;padding:1px 4px;border:1px solid #66859f;border-radius:4px;background:#111b25;white-space:nowrap}
+.tour-speed-keys{display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-top:5px}
+[data-tour-target]{scroll-margin-block:72px 12px}
+[data-tour-target="changed-value"]{outline-offset:0}
+.speed-feedback{margin:6px 0 0;color:var(--cyan);font-size:12px}
+.speed-feedback:empty{margin:0}
+@media(max-width:700px){main>.tour-hint{margin:8px 12px 10px auto}.tour-hint{width:100%}.tour-hint .tour-actions button{min-height:44px}}
+.speed-feedback:not(:empty){position:fixed;z-index:12;inset-inline-start:50%;bottom:max(14px,env(safe-area-inset-bottom));transform:translateX(-50%);pointer-events:none;background:#1f3345;border:1px solid #66859f;border-radius:7px;padding:7px 11px}
+@media(max-width:700px){main>.tour-hint{width:calc(100% - 24px)}}

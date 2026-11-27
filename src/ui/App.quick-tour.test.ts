@@ -22,13 +22,27 @@ const source = () => editor().state.doc.toString();
 const currentSetup = () => host.querySelector<HTMLTextAreaElement>("#test-setup")!.value;
 const stage = (n: number) => expect(host.querySelector("main")!.dataset.tourStep).toBe(String(n));
 
+const key = (target: EventTarget, value: string, modifiers: KeyboardEventInit = {}) => {
+  const event = new KeyboardEvent("keydown", { key: value, bubbles: true, cancelable: true, ...modifiers });
+  act(() => target.dispatchEvent(event)); return event;
+};
+const speed = () => host.querySelector<HTMLSelectElement>('[aria-label="Playback speed"]')!;
+const setSpeed = (value: string) => act(() => { speed().value = value; speed().dispatchEvent(new Event("change", { bubbles: true })); });
+const workspace = () => host.querySelector("main")!;
+const timeline = () => host.querySelector<HTMLInputElement>('[aria-label="Timeline"]')!;
+const currentCell = () => host.querySelector('[data-array="values"] [data-cell="[0]"]');
+function forwardUntilChange(advance: () => void) {
+  for (let i = 0; i < 16 && workspace().dataset.tourStep === "3"; i++) advance();
+  stage(4);
+}
+
 beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   localStorage.clear();
   window.history.replaceState(null, "", "/");
   host = document.body.appendChild(document.createElement("div"));
 });
-afterEach(() => { act(() => root.unmount()); host.remove(); vi.restoreAllMocks(); localStorage.clear(); window.history.replaceState(null, "", "/"); });
+afterEach(() => { act(() => root.unmount()); host.remove(); vi.useRealTimers(); vi.restoreAllMocks(); localStorage.clear(); window.history.replaceState(null, "", "/"); });
 
 it("shows an optional welcome, exercises real Run and trace steps, and remembers completion", () => {
   mount();
@@ -39,12 +53,14 @@ it("shows an optional welcome, exercises real Run and trace steps, and remembers
   expect(source()).toBe(quickTourSource);
   act(() => editor().focus()); stage(2);
   click("Run"); stage(3);
-  click("step forward →"); stage(3);
-  click("step forward →"); stage(4);
-  expect(host.querySelector('[data-tour-target="changed-value"] code')?.getAttribute("title")).toBe("2 → 5");
+  forwardUntilChange(() => click("step forward →"));
+  expect(host.querySelector('[data-tour-target="changed-value"]')?.getAttribute("title")).toBe("[0]: 2 → 5");
+  expect(host.querySelector(".tour-hint")?.textContent).toContain("values[0] changed from 2 to 5");
   click("Next"); stage(5);
   click("← step back"); stage(6);
-  expect([...host.querySelectorAll(".stack-slot code")].some(e => e.textContent === "2")).toBe(true);
+  expect(currentCell()?.textContent).toBe("[0]2");
+  click("Play ▶"); expect(host.textContent).toContain("Pause");
+  setSpeed("2"); click("Next"); stage(7);
   click("Finish");
   expect(source()).toBe(samples.requested.code);
   expect(localStorage.getItem(tourPreference)).toBe("yes");
@@ -123,4 +139,67 @@ it("keeps the workspace usable even if browser storage throws", () => {
   click("Start tutorial"); stage(1);
   click("Exit tour");
   expect(host.querySelector(".tour-hint")).toBeNull();
+});
+
+
+it.each([false, true])("accepts editor keyboard run/play, arrows, and Space (auto=%s)", auto => {
+  mount();
+  click("Start quick tour"); act(() => editor().focus()); stage(2);
+  const content = host.querySelector(".cm-content")!;
+  key(content, "Enter", auto ? { shiftKey: true } : { ctrlKey: true }); stage(3);
+  expect(host.textContent).toContain(auto ? "Pause" : "Play");
+  forwardUntilChange(() => key(workspace(), "ArrowRight"));
+  click("Next"); key(workspace(), "ArrowLeft"); stage(6);
+  key(workspace(), " "); expect(host.textContent).toContain("Pause");
+  expect(key(workspace(), "+", {code:"Equal",shiftKey:true}).defaultPrevented).toBe(true);
+  expect(speed().value).toBe("2");
+  click("Next"); stage(7); click("Finish");
+  expect(speed().value).toBe("1");
+});
+
+it("restores a previously recorded trace, speed and layout after a tour", () => {
+  mount(); click("Run"); click("step forward →"); const priorPosition = timeline().value;
+  setSpeed("4");
+  const layout = host.querySelector<HTMLSelectElement>("#workspace-layout")!;
+  const chooseLayout = (name: string) => act(() => { layout.value = name; layout.dispatchEvent(new Event("change", { bubbles: true })); });
+  chooseLayout("balanced");
+  click("Start quick tour"); expect(speed().value).toBe("1");
+  chooseLayout("writing"); setSpeed("0.5");
+  click("Exit tour");
+  expect(speed().value).toBe("4"); expect(layout.value).toBe("balanced");
+  expect(timeline().value).toBe(priorPosition);
+});
+
+it("changes speed in-place during playback without starting it while paused", () => {
+  vi.useFakeTimers();
+  localStorage.setItem("memlens-code", quickTourSource);
+  mount(); click("Run"); expect(timeline().value).toBe("0");
+  expect(key(workspace(), "+", {shiftKey: true, code: "Equal"}).defaultPrevented).toBe(true);
+  expect(speed().value).toBe("2");
+  expect(host.querySelector(".speed-feedback")?.textContent).toBe("Playback speed: 2×");
+  act(() => vi.advanceTimersByTime(900)); expect(timeline().value).toBe("0");
+  click("Play ▶"); const play = host.querySelector<HTMLButtonElement>('[data-playback-speed-keys]')!;
+  key(play, "+", { code: "NumpadAdd" });
+  expect(speed().value).toBe("4"); expect(timeline().value).toBe("0");
+  act(() => vi.advanceTimersByTime(249)); expect(timeline().value).toBe("0");
+  act(() => vi.advanceTimersByTime(1)); expect(timeline().value).toBe("1");
+  key(workspace(), "="); expect(speed().value).toBe("1"); expect(timeline().value).toBe("1");
+  act(() => vi.advanceTimersByTime(999)); expect(timeline().value).toBe("1");
+  act(() => vi.advanceTimersByTime(1)); expect(timeline().value).toBe("2");
+  click("Pause ▶"); key(workspace(), "-", {code:"NumpadSubtract"}); key(workspace(), "-");
+  expect(speed().value).toBe("0.5");
+  act(() => vi.advanceTimersByTime(1700));
+  expect(timeline().value).toBe("2");
+  expect(host.querySelector(".speed-feedback")?.textContent).toBe("");
+});
+
+it("does not intercept speed keys in the editor, console, menu or browser zoom", () => {
+  mount();
+  for (const selector of [".cm-content", '#test-setup', '[aria-label="Standard input"]', '[aria-label="Playback speed"]']) {
+    const target=host.querySelector(selector)!;
+    for (const value of ["+","-","="]) expect(key(target,value).defaultPrevented).toBe(false);
+  }
+  expect(key(workspace(),"+",{ctrlKey:true}).defaultPrevented).toBe(false);
+  expect(key(workspace(),"-",{metaKey:true}).defaultPrevented).toBe(false);
+  expect(speed().value).toBe("1");
 });

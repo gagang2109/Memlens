@@ -27,6 +27,18 @@ export function useVisualizerFullscreen() {
     try { await document.exitFullscreen(); }
     catch { /* Keep the active state until fullscreenchange; Esc still works. */ }
   };
+  const restorePresentation = (wasFullscreen: boolean, wasExpanded: boolean) => {
+    const target = panel.current;
+    if (!target) return;
+    setExpanded(wasExpanded);
+    if (!wasFullscreen && document.fullscreenElement === target) void exitFullscreen();
+    else if (wasFullscreen && document.fullscreenElement !== target) {
+      // Fullscreen can require a browser gesture. Preserve the expanded view
+      // if a keyboard-triggered exit cannot re-enter native fullscreen.
+      if (!target.requestFullscreen || document.fullscreenEnabled === false) setExpanded(true);
+      else void target.requestFullscreen().catch(() => setExpanded(true));
+    }
+  };
   const toggle = async () => {
     if (expanded) { closeExpanded(); return; }
     if (busy) return;
@@ -43,5 +55,5 @@ export function useVisualizerFullscreen() {
     finally { setBusy(false); }
     setExpanded(true);
   };
-  return { panel, button, fullscreen, expanded, busy, toggle, closeExpanded, exitFullscreen };
+  return { panel, button, fullscreen, expanded, busy, toggle, closeExpanded, exitFullscreen, restorePresentation };
 }

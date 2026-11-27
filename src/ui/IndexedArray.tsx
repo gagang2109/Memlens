@@ -9,7 +9,7 @@ type WindowStart = { row: number; column: number };
 const range = (start: number, count: number) => Array.from({ length: count }, (_, offset) => start + offset);
 const pageStart = (index: number, size: number) => Math.floor(index / size) * size;
 
-export function IndexedArray({ name, array, change }: { name: string; array: ArraySnapshot; change?: VariableChange }) {
+export function IndexedArray({ name, array, change, tourCell }: { name: string; array: ArraySnapshot; change?: VariableChange; tourCell?: number }) {
   const matrix = array.dimensions.length === 2;
   const [rows, columns] = matrix ? array.dimensions : [1, array.cells.length];
   const width = matrix ? matrixPageSize : stripPageSize;
@@ -44,6 +44,7 @@ export function IndexedArray({ name, array, change }: { name: string; array: Arr
       props: {
         className: `array-cell${delta ? " step-changed-cell" : ""}`,
         "data-cell": address,
+        "data-tour-target": delta && index === tourCell ? "changed-value" : undefined,
         title: delta ? `${address}: ${describeChange(delta)}` : undefined,
       },
       value: <>{delta && <small className="step-value-before">{delta.before} →</small>}{showCell(array.cells[index])}</>,

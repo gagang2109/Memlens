@@ -9,7 +9,9 @@ const shortcuts = {
   ],
   Playback: [
     ["Step backward / forward", "← / →"],
-    ["Play or pause", "Space"],
+    ["Play or pause (outside text fields and controls)", "Space"],
+    ["Faster / slower playback", "+ / -"],
+    ["Reset playback speed to 1×", "="],
     ["First / last step", "Home / End"],
     ["Jump to an exact call, return, allocation, free, warning or error", "Previous / Next event"],
   ],

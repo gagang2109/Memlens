@@ -74,6 +74,8 @@ The bundled BST sample during inorder traversal, with the diagram zoomed out to 
 | Workspace outside text fields | `?` (Shift + / on US keyboards) or **Help** | Open keyboard shortcuts and usage help; dismiss with Esc |
 | Playback | `←` / `→` | Step backward / forward |
 | Playback | `Space` | Play / pause |
+| Playback | `+` / `-` | Increase / decrease speed between 0.5× and 4× |
+| Playback | `=` | Reset playback speed to 1× |
 | Playback | `Home` / `End` | Jump to the first / last step |
 | Playback | **Previous event** / **Next event** | Jump to calls, returns, allocations, frees, warnings and errors |
 | Memory view | `−` / `+`, **Fit width**, **Reset view** | Adjust the diagram from 25% to 300% zoom |

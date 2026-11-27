@@ -11,7 +11,7 @@ import { describeChange, frameKey, stepChanges, type VariableChange } from "./st
 import { useVisualizerFullscreen } from "./visualizerFullscreen";
 import { PointerQuickLook } from "./PointerQuickLook";
 import { SplitDivider, balancedSplit, type SplitSizes } from "./SplitDivider";
-import { QuickTourHint, QuickTourWelcome, quickTourSource, tourPreference, type TourStep } from "./QuickTour";
+import { QuickTourHint, QuickTourWelcome, quickTourSource, tourPreference, type TourChange, type TourStep } from "./QuickTour";
 import { WorkspaceHelp } from "./WorkspaceHelp";
 import { Spotlight, type SpotlightItem } from "./Spotlight";
 import { readSampleLink, SampleShare } from "./SampleShare";
@@ -33,7 +33,7 @@ import { CodeEditor } from "./CodeEditor";
 import { readSavedCount, saveCount } from "./storage";
 import { explainStep } from "./stepExplanation";
 import { SectionNavigation } from "./SectionNavigation";
-import { shouldHandlePlaybackShortcut, shouldOpenWorkspaceHelp, workspaceRunShortcut } from "./shortcuts";
+import { playbackSpeedShortcut, playbackSpeeds, stepPlaybackSpeed, shouldHandlePlaybackShortcut, shouldOpenWorkspaceHelp, workspaceRunShortcut } from "./shortcuts";
 import { checkPrediction, nextPointerPrediction, type PointerPrediction } from "../vm/predict";
 
 type Draft = { code: string; setup: string };
@@ -47,8 +47,8 @@ function readPreviousDraft(): Draft | undefined {
   } catch { /* storage is optional */ }
 }
 
-function StackValue({ name, variable, change, generation }: { name: string; variable: FrameVariable; change?: VariableChange; generation: number }) {
-  if (variable.array) return <IndexedArray key={`${generation}:${variable.array.base}`} name={name} array={variable.array} change={change} />;
+function StackValue({ name, variable, change, generation, tourCell }: { name: string; variable: FrameVariable; change?: VariableChange; generation: number; tourCell?: number }) {
+  if (variable.array) return <IndexedArray key={`${generation}:${variable.array.base}`} name={name} array={variable.array} change={change} tourCell={tourCell} />;
   const delta = change && "before" in change ? change : undefined;
   return <code title={delta ? describeChange(delta) : undefined}>
     {delta && <small className="step-value-before">{delta.before} → </small>}
@@ -193,8 +193,10 @@ export function App() {
   const [setup, setSetup] = useState(() => { try { return localStorage.getItem("memlens-test-setup") ?? ""; } catch { return ""; } });
   const [tour, setTour] = useState<TourStep>();
   const [tourSeen, setTourSeen] = useState(() => { try { return localStorage.getItem(tourPreference) !== null; } catch { return false; } });
-  const tourDraft = useRef<(Draft & { inputMode: "ahead" | "interactive" })>();
-  const tourChangeAt = useRef<number>();
+  const tourDraft = useRef<(Draft & { restorePreferences: () => void; restoreExecution: () => void })>();
+  const [tourChange, setTourChange] = useState<TourChange>();
+  const [tourTriedPlay, setTourTriedPlay] = useState(false);
+  const [tourTriedSpeed, setTourTriedSpeed] = useState(false);
   const loadedSharedSample = useRef(false);
   const [linkedSample, setLinkedSample] = useState(() => readSampleLink(window.location.hash));
   useEffect(() => {
@@ -231,6 +233,22 @@ export function App() {
   const stale = Boolean(lastRun && (code !== lastRun.code || (inputMode === "ahead" && stdin !== lastRun.stdin) || setup !== lastRun.setup || inputMode !== lastRun.inputMode));
   const [trace, setTrace] = useState<Trace | undefined>(); const [cursor, setCursor] = useState(0); const [error, setError] = useState(""); const [fault, setFault] = useState<ReturnType<typeof run>["error"]>(); const [leaks, setLeaks] = useState<ReturnType<typeof run>["leaks"]>([]); const [highlightedAddress, setHighlightedAddress] = useState<number>();
   const [playing, setPlaying] = useState(false); const [speed, setSpeed] = useState(1); const [predictMode, setPredictMode] = useState(false); const [prediction, setPrediction] = useState<PointerPrediction>(); const [predictionResult, setPredictionResult] = useState<boolean>(); const [predictionTarget, setPredictionTarget] = useState(0);
+  const [speedFeedback, setSpeedFeedback] = useState<{ value: number }>();
+  useEffect(() => {
+    if (!speedFeedback) return;
+    const timer = window.setTimeout(() => setSpeedFeedback(undefined), 1600);
+    return () => window.clearTimeout(timer);
+  }, [speedFeedback]);
+  const changePlaybackSpeed = (value: number) => {
+    setSpeed(value);
+    setSpeedFeedback({ value });
+    if (tour === 6 && value !== speed) setTourTriedSpeed(true);
+  };
+  const togglePlayback = () => {
+    if (tour === 6) setTourTriedPlay(true);
+    if (trace && !playing && cursor >= trace.steps.length - 1 && tour === 6) setCursor(tourChange ? Math.max(0, tourChange.at - 1) : 0);
+    setPlaying(!playing);
+  };
   const [score, setScore] = useState(() => readSavedCount("memlens-predict-score")); const [streak, setStreak] = useState(() => readSavedCount("memlens-predict-streak"));
   const emptyRun = Boolean(trace && trace.steps.length === 0);
   const traceLabel = trace ? (emptyRun ? "0 recorded steps" : `step ${stepNumber(cursor)} of ${trace.steps.length}`) : "ready";
@@ -292,12 +310,20 @@ export function App() {
     setPrediction(undefined); setCursor(bounded);
     if (!tour || stale) return;
     if (tour === 3 && action === "forward" && bounded === cursor + 1) {
-      const valueAt = (index: number) => trace.steps[index]?.frames.find(frame => frame.name === "main")?.variables?.count?.value;
-      if (valueAt(cursor) === "2" && valueAt(bounded) === "5") {
-        tourChangeAt.current = bounded;
-        setTour(4);
+      const mainFrame = trace.steps[bounded].frames.find(frame => frame.name === "main");
+      const delta = mainFrame?.invocation === undefined ? undefined :
+        stepChanges(trace.steps[cursor], trace.steps[bounded]).frames.get(mainFrame.invocation)?.get("values");
+      if (delta && "cells" in delta) {
+        const changed = delta.cells.entries().next().value;
+        if (changed) {
+          const [index, values] = changed;
+          setPlaying(false);
+          setTourChange({ at: bounded, index, ...values });
+          setTour(4);
+        }
       }
-    } else if (tour === 5 && action === "back" && cursor === tourChangeAt.current && bounded === cursor - 1) {
+    } else if (tour === 5 && action === "back" && cursor === tourChange?.at && bounded === cursor - 1) {
+      setPlaying(false);
       setTour(6);
     }
   };
@@ -329,7 +355,7 @@ export function App() {
       if (interactive) session.current = new InteractiveRun(prepared.source);
       const result = session.current?.result ?? run(prepared.source, 100000, 100, stdin);
       // Keep a waiting console on its latest step so it can accept input.
-      const startPlayback = !tour && autoPlay && result.status !== "waiting" && result.trace.steps.length > 1;
+      const startPlayback = autoPlay && result.status !== "waiting" && result.trace.steps.length > 1;
       applyRun(result, interactive && !startPlayback);
       if (tour === 2 && result.status === "ok" && result.trace.steps.length > 2) {
         focusStepsAfterRun.current = false;
@@ -382,20 +408,26 @@ export function App() {
       }
       const runAction = workspaceRunShortcut(event);
       if (runAction) { event.preventDefault(); runCode(runAction === "run-and-play"); return; }
+      const speedAction = playbackSpeedShortcut(event);
+      if (speedAction !== undefined) {
+        event.preventDefault();
+        changePlaybackSpeed(stepPlaybackSpeed(speed, speedAction));
+        return;
+      }
       if (!trace || trace.steps.length < 2 || !shouldHandlePlaybackShortcut(event)) return;
       if (!["ArrowLeft", "ArrowRight", " ", "Home", "End"].includes(event.key)) return;
       // A playback action replaces the key's native page-scroll behavior.
       event.preventDefault();
       if (event.key === "ArrowLeft") moveTo(cursor - 1, "back");
       else if (event.key === "ArrowRight") moveTo(cursor + 1, "forward");
-      else if (event.key === " " && !event.repeat) setPlaying(value => !value);
+      else if (event.key === " " && !event.repeat) togglePlayback();
       else if (event.key === "Home") moveTo(0);
       else if (event.key === "End") moveTo(trace.steps.length - 1);
     };
     window.addEventListener("keydown", onSpotlight, true);
     window.addEventListener("keydown", onKey);
     return () => { window.removeEventListener("keydown", onSpotlight, true); window.removeEventListener("keydown", onKey); };
-  }, [trace, cursor, predictMode, stale, code, stdin, setup, inputMode, spotlight, focusPane, quickLook, help, visualizer.expanded, visualizer.fullscreen, tour]);
+  }, [trace, cursor, predictMode, stale, code, stdin, setup, inputMode, spotlight, focusPane, quickLook, help, visualizer.expanded, visualizer.fullscreen, tour, tourChange, speed, playing]);
   useEffect(() => { if (tour) return; try { localStorage.setItem("memlens-code", code); } catch { /* storage is optional */ } }, [code, tour]);
   useEffect(() => { if (tour) return; try { localStorage.setItem("memlens-test-setup", setup); } catch { /* storage is optional */ } }, [setup, tour]);
   const replaceDraft = (nextCode: string, nextSetup: string) => {
@@ -424,8 +456,12 @@ export function App() {
   const finishTour = (focusEditor = true) => {
     const original = tourDraft.current;
     tourDraft.current = undefined;
-    tourChangeAt.current = undefined;
-    if (original) { replaceDraft(original.code, original.setup); setInputMode(original.inputMode); }
+    setTourChange(undefined);
+    if (original) {
+      replaceDraft(original.code, original.setup);
+      original.restorePreferences();
+      if (focusEditor) original.restoreExecution();
+    }
     setTour(undefined);
     markTourSeen();
     if (focusEditor) revealEditor();
@@ -436,7 +472,27 @@ export function App() {
     if ((selectedSample === "custom" || linkedSample || loadedSharedSample.current) &&
         !window.confirm("Temporarily show the tour example? Your code and test setup will return when you exit or reload.")) return;
     // Leave the stored draft alone. Reloading mid-tour returns directly to it.
-    tourDraft.current = { code, setup, inputMode };
+    const previousSession = session.current;
+    tourDraft.current = {
+      code, setup,
+      restorePreferences: () => {
+        setInputMode(inputMode); setStdin(stdin); setSpeed(speed); setSpeedFeedback(undefined); setPredictMode(predictMode);
+        setSplitSizes(splitSizes); setActiveLayout(activeLayout); setFocusPane(focusPane);
+        setOutputExpanded(outputExpanded);
+        visualizer.restorePresentation(visualizer.fullscreen, visualizer.expanded);
+      },
+      restoreExecution: () => {
+        session.current = previousSession;
+        setTrace(trace); setCursor(cursor); setLastRun(lastRun); setExecutionMode(executionMode);
+        setFault(fault); setError(error); setLeaks(leaks); setWaiting(waiting); setTranscript(transcript);
+        setConsoleError(consoleError); setRunGeneration(runGeneration); setPlaying(playing);
+        setPrediction(prediction); setPredictionResult(predictionResult); setPredictionTarget(predictionTarget);
+        setSelectedGraph(selectedGraph); setSelectedStack(selectedStack); setSelectedQueue(selectedQueue); setSelectedHeapMatrix(selectedHeapMatrix);
+        setHighlightedAddress(highlightedAddress);
+      },
+    };
+    setTourTriedPlay(false); setTourTriedSpeed(false); setSpeedFeedback(undefined);
+    setSpeed(1);
     if (visualizer.expanded) visualizer.closeExpanded(false);
     if (visualizer.fullscreen) void visualizer.exitFullscreen();
     setFocusPane(undefined);
@@ -447,8 +503,8 @@ export function App() {
   };
   const changeTourStep = (next: TourStep) => {
     setPlaying(false);
-    if (next === 3 && tourChangeAt.current !== undefined) setCursor(Math.max(0, tourChangeAt.current - 1));
-    if ((next === 4 || next === 5) && tourChangeAt.current !== undefined) setCursor(tourChangeAt.current);
+    if (next === 3 && tourChange) setCursor(Math.max(0, tourChange.at - 1));
+    if ((next === 4 || next === 5) && tourChange) setCursor(tourChange.at);
     setTour(next);
   };
   useEffect(() => {
@@ -456,11 +512,11 @@ export function App() {
     const task = requestAnimationFrame(() => {
       const root = workspace.current;
       if (!root) return;
-      const selectors = tour === 2 ? ".mobile-run, header .run" : "[data-tour-target]";
-      const target = [...root.querySelectorAll<HTMLElement>(selectors)].find(el => el.getClientRects().length);
-      (target ?? root.querySelector<HTMLElement>(".tour-hint"))?.scrollIntoView?.({ block: "center" });
-      if (tour === 3 || tour === 5) target?.focus({ preventScroll: true });
-      if (tour === 1 || tour === 4 || tour === 6) root.querySelector<HTMLElement>(".tour-hint")?.focus({ preventScroll: true });
+      const hint = root.querySelector<HTMLElement>(".tour-hint");
+      hint?.scrollIntoView?.({ block: window.innerWidth < 701 ? "center" : "nearest" });
+      if (tour === 3 || tour === 5) {
+        root.querySelector<HTMLElement>("[data-tour-target]")?.focus({ preventScroll: true });
+      } else if (tour !== 2) hint?.focus({ preventScroll: true });
     });
     return () => cancelAnimationFrame(task);
   }, [tour]);
@@ -503,12 +559,16 @@ export function App() {
     })),
   ];
   const useStarter = (key: StarterKey) => { const original = tour ? finishTour(false) : undefined; if (original) savePreviousDraft(original); else if (!previousDraft || selectedSample === "custom") savePreviousDraft({ code, setup }); replaceDraft(starterScaffolds[key].code, ""); };
-  const restoreDraft = () => { if (tour) { finishTour(); return; } if (previousDraft) { // Swap edited source rather than throwing it away on Restore.
+  const restoreDraft = () => { if (previousDraft) { // Swap edited source rather than throwing it away on Restore.
     const edited = selectedSample === "custom" && !Object.values(starterScaffolds).some(starter => starter.code === code && setup === "");
     replaceDraft(previousDraft.code, previousDraft.setup);
     savePreviousDraft(edited ? { code, setup } : undefined); } };
   const lines = useMemo(() => code.split(/\r?\n/), [code]);
   const spotlightDialog = spotlight && <Spotlight items={spotlightItems} onClose={closeSpotlight} onSelect={item => { if (item.action() !== false) closeSpotlight(); }} />;
+  const tourHint = tour && <QuickTourHint step={tour} change={tourChange}
+    triedPlay={tourTriedPlay} triedSpeed={tourTriedSpeed}
+    onExit={() => finishTour()} onBack={() => changeTourStep((tour - 1) as TourStep)}
+    onNext={() => changeTourStep(tour === 4 ? 5 : 7)} />;
   const helpDialog = help && <WorkspaceHelp onClose={closeHelp} reportProblem={reportProblem} onQuickTour={startTour} />;
   return <main ref={workspace} data-tour-step={tour} tabIndex={-1} aria-label="Code execution workspace">
     <header><div className="brand"><img className="brand-mark" src="/memlens-mark.svg" width="36" height="36" alt="" aria-hidden="true" /> MEMLENS</div><div className="tag">Step through your C code and watch memory rewind.</div>
@@ -516,7 +576,7 @@ export function App() {
       <button type="button" className="spotlight-trigger" aria-keyshortcuts="Control+k Meta+k" onClick={event => { showSpotlight(); spotlightTrigger.current = event.currentTarget; }}>Spotlight <kbd>Ctrl / ⌘ K</kbd></button><button className="run" onClick={() => runCode()} title="Run code (Ctrl / ⌘ + Enter)" aria-keyshortcuts="Control+Enter Meta+Enter">Run</button></header>
     <SectionNavigation onOpenHelp={showHelp} helpOpen={help} onRun={() => runCode()} />
     {showTourWelcome && <QuickTourWelcome onStart={startTour} onSkip={useOwnCode} />}
-    {tour && <QuickTourHint step={tour} onExit={() => finishTour()} onBack={() => changeTourStep((tour - 1) as TourStep)} onNext={() => changeTourStep(5)} />}
+    {(tour === 2 || tour === 7) && tourHint}
     {!trace && !error && !tour && (tourSeen || linkedSample || loadedSharedSample.current) && <p className="launch-quickstart">Paste your own C code or choose a sample. Select <strong>Run</strong>, then step forward or backward in <strong>Trace</strong>.</p>}
     {linkedSample && <section className="linked-sample" aria-label="Shared sample">
       <strong>{sampleLabels[linkedSample]}</strong>
@@ -534,7 +594,7 @@ export function App() {
     {code === samples.requested.code && <p className="step-explanation" role="note">This example intentionally reads a node after freeing it. Run it and step through the trace to see why this causes a use-after-free error. The error is in the example C program, not Memlens.</p>}
     {!stale && executionMode === "snippet" && trace && <p className="step-explanation" role="status">Snippet run · top-level statements execute in source order; no main() wrapper is added.</p>}
     {stale && <p className="step-explanation stale-results" role="status">Code or input changed. Memory, console, errors and trace below are from the previous run. Run again to update them.</p>}
-    <section className={`workspace ${inputMode === "interactive" ? "interactive-workspace" : ""}${effectiveFocus ? " has-focus" : ""}`} style={splitStyle}><div className="code-panel" id="code" tabIndex={-1} aria-label="Code section" hidden={Boolean(effectiveFocus && effectiveFocus !== "code")}><button className="pane-focus" type="button" onClick={() => toggleFocus("code")}>{focusPane === "code" ? "Restore workspace" : "Focus code"}</button><div className="panel-title">SOURCE <small>{lines.length} lines · edit a sample or paste your own C code</small></div><details className="starter-picker"><summary>Start from a scaffold</summary><StarterScaffolds onUse={useStarter} /></details><label className="input-mode">Program input <select aria-label="Input mode" value={inputMode} onChange={event => setInputMode(event.target.value as "ahead" | "interactive")}><option value="ahead">Input ahead (stdin)</option><option value="interactive">Interactive console</option></select></label>{previousDraft && <button type="button" className="restore-draft" onClick={restoreDraft}>Restore previous draft</button>}<div data-tour-target={tour === 1 ? "editor" : undefined} onFocusCapture={event => { if (tour === 1 && (event.target as HTMLElement).matches(".cm-content")) setTour(2); }}><CodeEditor onRun={() => runCode()} onRunAndPlay={() => runCode(true)} value={code} currentLine={stale || (displayedSource.active && (view?.line ?? 0) >= displayedSource.setupStart) ? undefined : view?.line} onChange={value => { if (!tour || value === quickTourSource) setCode(value); else { const original = finishTour(false); if (original) savePreviousDraft(original); setCode(value); setSetup(""); } }} /></div>
+    <section className={`workspace ${inputMode === "interactive" ? "interactive-workspace" : ""}${effectiveFocus ? " has-focus" : ""}`} style={splitStyle}><div className="code-panel" id="code" tabIndex={-1} aria-label="Code section" hidden={Boolean(effectiveFocus && effectiveFocus !== "code")}><button className="pane-focus" type="button" onClick={() => toggleFocus("code")}>{focusPane === "code" ? "Restore workspace" : "Focus code"}</button><div className="panel-title">SOURCE <small>{lines.length} lines · edit a sample or paste your own C code</small></div><details className="starter-picker"><summary>Start from a scaffold</summary><StarterScaffolds onUse={useStarter} /></details><label className="input-mode">Program input <select aria-label="Input mode" value={inputMode} onChange={event => setInputMode(event.target.value as "ahead" | "interactive")}><option value="ahead">Input ahead (stdin)</option><option value="interactive">Interactive console</option></select></label>{previousDraft && !tour && <button type="button" className="restore-draft" onClick={restoreDraft}>Restore previous draft</button>}{tour === 1 && tourHint}<div data-tour-target={tour === 1 ? "editor" : undefined} onFocusCapture={event => { if (tour === 1 && (event.target as HTMLElement).matches(".cm-content")) setTour(2); }}><CodeEditor onRun={() => runCode()} onRunAndPlay={() => runCode(true)} value={code} currentLine={stale || (displayedSource.active && (view?.line ?? 0) >= displayedSource.setupStart) ? undefined : view?.line} onChange={value => { if (!tour || value === quickTourSource) setCode(value); else { const original = finishTour(false); if (original) savePreviousDraft(original); setCode(value); setSetup(""); } }} /></div>
 
       <details className="practice-setup" open={setup.trim().length > 0 || undefined}>
         <summary>Test setup &amp; call (optional)</summary>
@@ -572,10 +632,10 @@ export function App() {
               className={`event-tick tick-${kind}`} style={{ left: `${trace.steps.length > 1 ? index / (trace.steps.length - 1) * 100 : 0}%` }}
               key={index} onMouseDown={event => event.preventDefault()} onClick={() => moveTo(index)} />;
           })}
-        </div><div className="controls"><button disabled={(trace?.steps.length ?? 0) < 2} onClick={() => setPlaying(value => !value)}>{playing ? "Pause" : "Play"} ▶</button><button data-step-navigation="true" aria-keyshortcuts="ArrowLeft" disabled={(trace?.steps.length ?? 0) < 2} data-tour-target={tour === 5 ? "rewind" : undefined} onClick={() => moveTo(cursor - 1, "back")}>← step back</button><button data-step-navigation="true" aria-keyshortcuts="ArrowRight" title="Use Left/Right arrow keys to step" disabled={(trace?.steps.length ?? 0) < 2} data-tour-target={tour === 3 ? "forward" : undefined} onClick={() => moveTo(cursor + 1, "forward")}>step forward →</button><select aria-label="Playback speed" value={speed} onChange={e => setSpeed(Number(e.target.value))}><option value="0.5">0.5x</option><option value="1">1x</option><option value="2">2x</option><option value="4">4x</option></select><label className="predict-toggle"><input type="checkbox" disabled={stale} checked={predictMode} onChange={e => { setPredictMode(e.target.checked); setPrediction(undefined); setPredictionResult(undefined); }} /> Predict</label>{(trace?.steps.length ?? 0) > 1 && timeline.events.length > 0 && <>
+        </div>{(tour === 3 || tour === 5 || tour === 6) && tourHint}<div className="controls"><button data-playback-speed-keys="true" data-tour-target={tour === 6 && !tourTriedPlay ? "play" : undefined} aria-keyshortcuts="Space" disabled={(trace?.steps.length ?? 0) < 2} onClick={togglePlayback}>{playing ? "Pause" : "Play"} ▶</button><button data-step-navigation="true" data-playback-speed-keys="true" aria-keyshortcuts="ArrowLeft" disabled={(trace?.steps.length ?? 0) < 2} data-tour-target={tour === 5 ? "rewind" : undefined} onClick={() => moveTo(cursor - 1, "back")}>← step back</button><button data-step-navigation="true" data-playback-speed-keys="true" aria-keyshortcuts="ArrowRight" title="Use Left/Right arrow keys to step" disabled={(trace?.steps.length ?? 0) < 2} data-tour-target={tour === 3 ? "forward" : undefined} onClick={() => moveTo(cursor + 1, "forward")}>step forward →</button><select data-tour-target={tour === 6 && tourTriedPlay && !tourTriedSpeed ? "speed" : undefined} aria-label="Playback speed" value={speed} onChange={e => changePlaybackSpeed(Number(e.target.value))}>{playbackSpeeds.map(value => <option key={value} value={value}>{value}×</option>)}</select><label className="predict-toggle"><input type="checkbox" disabled={stale} checked={predictMode} onChange={e => { setPredictMode(e.target.checked); setPrediction(undefined); setPredictionResult(undefined); }} /> Predict</label>{(trace?.steps.length ?? 0) > 1 && timeline.events.length > 0 && <>
           <button type="button" disabled={previousEvent === undefined} onClick={() => { if (previousEvent !== undefined) moveTo(previousEvent); }}>Previous event</button>
           <button type="button" disabled={nextEvent === undefined} onClick={() => { if (nextEvent !== undefined) moveTo(nextEvent); }}>Next event</button>
-        </>}<span>{view ? `${location(view.line)} · ${view.event ?? "step"}` : emptyRun ? "Run finished · no recorded steps" : "No trace loaded"} · score {score} · streak {streak}</span></div>{prediction && <div className="prediction"><b>Where will {prediction.label} point after this line?</b><button disabled={predictionResult !== undefined} onClick={() => answerPrediction(null)}>NULL</button>{predictionNodes.map(node => <button key={node.address} disabled={predictionResult !== undefined} onClick={() => answerPrediction(node.address)}>{`0x${node.address.toString(16)}`}{node.freeStep !== undefined ? " (freed)" : !allocations.some(allocation => allocation.address === node.address) ? " (new block)" : ""}</button>)}{predictionResult !== undefined && <strong className={predictionResult ? "correct" : "incorrect"}>{predictionResult ? "Correct!" : "Not quite"}</strong>}</div>}</div>
+        </>}<span>{view ? `${location(view.line)} · ${view.event ?? "step"}` : emptyRun ? "Run finished · no recorded steps" : "No trace loaded"} · score {score} · streak {streak}</span></div><p className="speed-feedback" aria-live="polite" aria-atomic="true">{speedFeedback && `Playback speed: ${speedFeedback.value}×`}</p>{prediction && <div className="prediction"><b>Where will {prediction.label} point after this line?</b><button disabled={predictionResult !== undefined} onClick={() => answerPrediction(null)}>NULL</button>{predictionNodes.map(node => <button key={node.address} disabled={predictionResult !== undefined} onClick={() => answerPrediction(node.address)}>{`0x${node.address.toString(16)}`}{node.freeStep !== undefined ? " (freed)" : !allocations.some(allocation => allocation.address === node.address) ? " (new block)" : ""}</button>)}{predictionResult !== undefined && <strong className={predictionResult ? "correct" : "incorrect"}>{predictionResult ? "Correct!" : "Not quite"}</strong>}</div>}</div>
         <div className={`columns${!model?.nodes.length && !arrayStackStep && !showGraph && !customQueue && !customStack && !customHeapMatrix ? " empty-heap" : ""}`}>
           <div className="heap-column">
             <h3>{arrayStackStep || showGraph || customQueue || customStack || customHeapMatrix ? "DATA STRUCTURE" : "HEAP STRUCTURE"} <small>{showGraph ? "graph" : customQueue ? "queue" : arrayStackStep || customStack ? "stack" : customHeapMatrix ? "matrix" : model?.shape ?? "ready"}</small></h3>
@@ -595,17 +655,17 @@ export function App() {
               : <div className="diagram-empty">{emptyRun ? "No heap activity was recorded." : "Run a program to visualize its structure."}</div>)}
             <div className="heap-summary">{allocations.filter(allocation => allocation.freeStep === undefined).length} live · {allocations.filter(allocation => allocation.freeStep !== undefined).length} freed{!customHeapMatrix && ` · ${model?.nodes.filter(node => node.orphaned).length ?? 0} orphaned`}</div>
           </div>
-          <div><h3>CALL STACK</h3><div className="stack-visual"><div className="stack-label">Active functions and local variables</div>{view && <p className="view-guide">Matrices show rows and columns here. When a variable supports another view, use its <strong>View as</strong> button here.</p>}{view && view.frames.slice().reverse().map((frame, frameIndex) => <div key={frameKey(frame.invocation, frame.name, view.frames.length-1-frameIndex)} className="frame" data-invocation={frame.invocation}>
+          <div><h3>CALL STACK</h3><div className="stack-visual"><div className="stack-label">Active functions and local variables</div>{tour === 4 && tourHint}{view && <p className="view-guide">Matrices show rows and columns here. When a variable supports another view, use its <strong>View as</strong> button here.</p>}{view && view.frames.slice().reverse().map((frame, frameIndex) => <div key={frameKey(frame.invocation, frame.name, view.frames.length-1-frameIndex)} className="frame" data-invocation={frame.invocation}>
               <small className="frame-name">{frame.invocation === -1 ? "File scope" : executionMode === "snippet" && frameIndex === view.frames.length - 1 ? "snippet" : `${frame.name}()`}</small>
               {Object.entries(frame.variables ?? {}).map(([key, variable]) => {
                 const change = frame.invocation === undefined ? undefined : changes.frames.get(frame.invocation)?.get(key);
                 const candidate = !labGraph && variable.array && graphSize(variable.array) > 0 ? variable.array : undefined;
-                return <div className={`stack-slot ${variable.pointer ? "pointer-slot" : ""}${change ? " step-changed-slot" : ""}`} key={key} data-tour-target={tour === 4 && cursor === tourChangeAt.current && key === "count" && change ? "changed-value" : undefined}
+                return <div className={`stack-slot ${variable.pointer ? "pointer-slot" : ""}${change ? " step-changed-slot" : ""}`} key={key}
                   title={`${variable.type} ${key}`}
                   onMouseEnter={() => variable.pointer && setHighlightedAddress(!variable.stringPointer && variable.value !== "null" ? Number(variable.value) : undefined)}
                   onClick={() => variable.pointer && setHighlightedAddress(!variable.stringPointer && variable.value !== "null" ? Number(variable.value) : undefined)}>
                   <span><b>{key}</b><small>{variable.type}</small></span>
-                  <StackValue name={key} variable={variable} change={change} generation={runGeneration} />
+                  <StackValue name={key} variable={variable} change={change} generation={runGeneration} tourCell={tour === 4 && cursor === tourChange?.at && key === "values" ? tourChange.index : undefined} />
                   {candidate && <button type="button" className="graph-trigger" aria-pressed={customGraph?.base === candidate.base}
                     onClick={() => { setSelectedQueue(undefined); setSelectedStack(undefined); setSelectedHeapMatrix(undefined); setSelectedGraph({generation:runGeneration, base:candidate.base, name:key}); }}>View {key} as graph</button>}
                   {variable.array && variable.adjacencyShape && <button type="button" className="graph-trigger"
