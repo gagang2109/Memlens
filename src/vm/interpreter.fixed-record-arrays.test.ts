@@ -79,7 +79,7 @@ it.each([
   ["int n = 2; struct Row other[n];", "fixed one-dimensional"],
   ["struct Row other[2][2];", "fixed one-dimensional"],
   ["struct Row other[33];", "32 records"],
-  ["consume(rows);", "direct indexed member access"],
+  ["printf(\"%p\", rows);", "direct indexed member access"],
 ])("retains a diagnostic for unsupported form %s", (body, reason) => {
   expect(run(source(body).replace("int main", "void consume(struct Row *p) {} int main")).error?.reason).toContain(reason);
 });

@@ -8,7 +8,7 @@ type Value = number | string | null;
 type LocalArrayOwner = { vars: Map<string, RuntimeVariable>; name: string; variable: RuntimeVariable };
 type LocalArray = { values: Value[]; type: string; dimensions: number[];
   owner?: LocalArrayOwner; scanBufferOwner?: LocalArrayOwner };
-type RuntimeVariable = { value: Value; type: string; pointer: boolean; pointerDepth?: number; array?: Value[]; dimensions?: number[]; fixedArrayBounds?: boolean; matrixColumnCount?: number; elementSize?: number; arrayBase?: number; address?: number; fixedRecords?: FixedLocalStruct[] };
+type RuntimeVariable = { value: Value; type: string; pointer: boolean; pointerDepth?: number; array?: Value[]; dimensions?: number[]; fixedArrayBounds?: boolean; matrixColumnCount?: number; elementSize?: number; arrayBase?: number; address?: number; fixedRecords?: FixedLocalStruct[]; borrowedRecords?: FixedLocalStruct[] };
 type Ref = { get: () => Value; set: (value: Value) => void; address?: number; allocation?: Allocation };
 type HeapObject = { address: number; fields: Map<string, Value>; type?: string };
 type FixedMember = { name: string; type: "char" | "int"; stride: number; address: number; invocation: number; values?: Value[]; scalar: Value };
@@ -67,9 +67,10 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
     ((!main || separateFileScope) ? frames[0].vars.get(name) : undefined);
   const sizeofContext = { constants: program.constants, floatingConstants: program.floatingConstants, functions: program.functions, lookup: findVariable };
   const pointerMeta = (expression: Expr) => expression.kind === "name" ? findVariable(expression.name) : undefined;
+  const recordBacking = (variable: RuntimeVariable | undefined) => variable?.fixedRecords ?? variable?.borrowedRecords;
   const indexedRecordArray = (expression: Expr) => {
     const variable = expression.kind === "index" ? pointerMeta(expression.object) : undefined;
-    return variable?.fixedRecords ? variable : undefined;
+    return recordBacking(variable) ? variable : undefined;
   };
   const structArrayPointee = (variable: RuntimeVariable) =>
     variable.array && variable.dimensions?.length === 1 && variable.pointerDepth === 1 &&
@@ -181,6 +182,8 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
     if (!frames.some(frame => frame.invocation === member.invocation)) runtimeError("struct member used after its function returned", line);
   };
   const readIndexedRecord = (array: FixedLocalStruct[], indexOperand: Expr, line: number) => {
+    if (!frames.some(frame => frame.invocation === array[0].invocation))
+      return runtimeError("record array used after its function returned", line);
     checkRecordIndexType(indexOperand, line);
     const value = evaluate(indexOperand);
     const index = value === null ? NaN : asNum(value);
@@ -190,8 +193,8 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
   };
   const recordOperand = (expression: Expr): { type: string; read: () => FixedLocalStruct } | undefined => {
     const variable = indexedRecordArray(expression);
-    if (expression.kind === "index" && variable?.fixedRecords) {
-      const array = variable.fixedRecords;
+    const array = recordBacking(variable);
+    if (expression.kind === "index" && variable && array) {
       return { type: variable.type, read: () => readIndexedRecord(array, expression.index, expression.line) };
     }
     const local = pointerMeta(expression);
@@ -322,6 +325,8 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
   const ref = (expression: Expr, addressOnly = false): Ref => {
     if (expression.kind === "name") {
       const variable = findVariable(expression.name); if (!variable) throw new Error(`line ${expression.line}: unknown variable ${expression.name}`);
+      if (variable.borrowedRecords)
+        return runtimeError("borrowed record array parameters support indexed members and forwarding only", expression.line);
       if (variable.fixedRecords)
         return runtimeError("record arrays currently need direct indexed member access", expression.line);
       if (!variable.pointer && program.fixedStructFields.has(variable.type) && typeof variable.value === "number") {
@@ -334,7 +339,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
     }
     if (expression.kind === "member") {
       const operand = expression.object;
-      const records = indexedRecordArray(operand)?.fixedRecords;
+      const records = recordBacking(indexedRecordArray(operand));
       const object = records && operand.kind === "index"
         ? readIndexedRecord(records, operand.index, operand.line).address : evaluate(operand);
       const fixed = fixedObjects.get(asNum(object));
@@ -576,6 +581,8 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
     if (expression.kind === "literal") return expression.value;
     if (expression.kind === "name") {
       const variable = findVariable(expression.name);
+      if (variable?.borrowedRecords)
+        return runtimeError("borrowed record array parameters support indexed members and forwarding only", expression.line);
       if (variable?.fixedRecords)
         return runtimeError("record arrays currently need direct indexed member access", expression.line);
       if (variable) return variable.array ? variable.arrayBase ?? 0 : variable.value;
@@ -965,11 +972,21 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
       if ((!fn.returnsPointer && program.fixedStructFields.has(fn.returnType)) ||
           fn.params.some(param => !param.pointer && program.fixedStructFields.has(param.type)))
         runtimeError("structs with fixed array members cannot be passed or returned by value yet", expression.line);
-      const values = args.map(argument => evaluate(argument));
+      const values = args.map((argument, index) => {
+        const source = pointerMeta(argument);
+        const records = recordBacking(source);
+        if (!records) return { value: evaluate(argument) };
+        const parameter = fn.params[index];
+        if (parameter.pointerDepth !== 1 || parameter.matrixColumns || parameter.type !== source?.type)
+          return runtimeError("record arrays require a matching single-pointer parameter", expression.line);
+        if (!frames.some(frame => frame.invocation === records[0].invocation))
+          return runtimeError("record array used after its function returned", expression.line);
+        return { value: records[0].address, borrowedRecords: records };
+      });
       const vars = new Map<string, RuntimeVariable>();
       fn.params.forEach((parameter, index) => {
         if (parameter.name !== undefined) {
-          const value = values[index] ?? null;
+          const { value, borrowedRecords } = values[index];
           let matrixColumnCount: number | undefined;
           if (parameter.matrixColumns) {
             if (!["int", "char"].includes(parameter.type) || !isFixedArrayBound(parameter.matrixColumns, sizeofContext))
@@ -982,7 +999,7 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
               runtimeError("matrix argument must be a two-dimensional local array with matching columns and element type", expression.line);
           }
           vars.set(parameter.name, { value, type: parameter.type, pointer: parameter.pointer,
-            pointerDepth: parameter.pointerDepth, elementSize: elementSize(parameter.type), matrixColumnCount });
+            pointerDepth: parameter.pointerDepth, elementSize: elementSize(parameter.type), matrixColumnCount, borrowedRecords });
         }
       });
       frames.push({ invocation: nextInvocation++, name: fn.name, vars });
