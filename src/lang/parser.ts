@@ -3,7 +3,7 @@ import { isDecimalFloatingLiteral, lex, type Token } from "./lexer";
 import { stripComments } from "./comments";
 
 export type Expr =
-  | { kind: "literal"; value: number | string | null; line: number; literalKind?: "string" | "char" | "floating" }
+  | { kind: "literal"; value: number | string | null; line: number; literalKind?: "string" | "char" | "floating"; float32?: true; typeSize?: true }
   | { kind: "name"; name: string; line: number }
   | { kind: "binary"; op: string; left: Expr; right: Expr; line: number }
   | { kind: "conditional"; test: Expr; yes: Expr; no: Expr; line: number }
@@ -208,11 +208,13 @@ export function parse(source: string): Program {
       left = { kind: "cast", type, pointer, expr: parseExpression(12), line: token.line };
     } else if (token.value === "(") { left = parseExpression(); take(")"); }
     else if (token.kind === "number") left = { kind: "literal", value: parseNumberLiteral(token.value, token.line), line: token.line,
-      ...(isDecimalFloatingLiteral(token.value) ? { literalKind: "floating" as const } : {}) };
+      ...(isDecimalFloatingLiteral(token.value)
+        ? { literalKind: "floating" as const, ...(/[fF]$/.test(token.value) ? { float32: true as const } : {}) }
+        : {}) };
     else if (token.value === "struct" || token.value === "int" || token.value === "char" || token.value === "long" || knownTypes.has(token.value)) {
       const type = token.value === "struct" ? `struct ${take().value}` : aliasTypes.get(token.value);
       const fields = type && fixedStructFields.get(type);
-      left = { kind: "literal", value: fields ? fixedStructBytes(fields) : token.value === "char" ? 1 : token.value === "int" ? 4 : 16, line: token.line };
+      left = { kind: "literal", value: fields ? fixedStructBytes(fields) : token.value === "char" ? 1 : token.value === "int" ? 4 : 16, line: token.line, typeSize: true };
     }
     else if (token.value === "NULL") left = { kind: "literal", value: null, line: token.line };
     else if (token.value === "sizeof") {

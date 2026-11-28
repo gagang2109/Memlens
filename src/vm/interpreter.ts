@@ -841,7 +841,28 @@ export function run(source: string, stepLimit = 100000, recursionLimit = 100, st
             if (type === "int" || type === "char") return elementSize(type);
           }
         }
-        if (argument?.kind === "literal") return argument.value;
+        // Bare type operands carry a simulator byte count; actual literals
+        // must be sized from their C type without using their runtime value.
+        const literal = argument?.kind === "unary" && argument.op === "-"
+          ? argument.expr.kind === "literal" && !argument.expr.typeSize &&
+            typeof argument.expr.value === "number" ? argument.expr : undefined
+          : argument?.kind === "literal" ? argument : undefined;
+        if (literal) {
+          if (literal.typeSize) return literal.value;
+          if (literal.literalKind === "char") return elementSize("int");
+          if (literal.literalKind === "floating") return literal.float32 ? 4 : 8;
+          if (literal.literalKind === "string" && typeof literal.value === "string") {
+            if (/[^\x00-\x7f]/.test(literal.value))
+              throw new MemoryFault("sizeof a string with non-ASCII bytes is not modeled", expression.line, steps, undefined, true, "unsupported-c");
+            return literal.value.length + 1;
+          }
+          if (literal.value === null) return SIM_POINTER_BYTES;
+          if (typeof literal.value === "number") {
+            if (literal.value > 0x7fffffff || !Number.isSafeInteger(literal.value))
+              throw new MemoryFault("sizeof an integer literal outside the supported int range is not modeled", expression.line, steps, undefined, true, "unsupported-c");
+            return elementSize("int");
+          }
+        }
         if (argument?.kind === "name" && argument.name === "char") return 1;
         if (argument?.kind === "name" && argument.name === "int") return 4;
         if (argument?.kind === "unary" && argument.expr.kind === "name") {
