@@ -17,6 +17,12 @@ const { InteractiveRun } = require(path.join(baseline, "src/vm/interactive.ts"))
 const { renderModel } = require(path.join(baseline, "src/viz/model.ts"));
 const { readGraph } = require(path.join(baseline, "src/viz/graph.ts"));
 
+const recordLines = ["Jun 27 C 88.625", "Tara 4 A 88.125", "Milo 16 B 88.875"];
+const inputs = {
+  interactive: "4\n2.125\n",
+  "record-console": recordLines.join("\n") + "\n",
+};
+
 const cases = {
   arrays: "-4 -1 0 3 3 8 12 | first 3=3\n",
   "linked-list": "forward=4,16 backward=16,4\n",
@@ -25,6 +31,7 @@ const cases = {
   tree: "height=4 sum=83\n",
   graph: "0:0 1:1 2:1 4:2 3:2 5:3 | parent(5)=3\n",
   interactive: "Count?\nWeight?\nWeighted sum: 8.50\n",
+  "record-console": "Record 1?\nRecord 2?\nRecord 3?\n4 Tara A 88.125\n16 Milo B 88.875\n27 Jun C 88.625\nBest: Milo\n",
 };
 const final = result => result.trace.steps.at(-1);
 const variables = step => step.frames.find(f => f.name === "main")?.variables ?? {};
@@ -116,6 +123,65 @@ const checks = {
       assert.deepEqual(cells(s, "q").slice(0, Number(value(s, "rear"))), before ? [0] : [0,1,2,4,3,5]);
     });
   },
+  "record-console"(result, code, native) {
+    const before = checkpoint(result, 1);
+    const after = checkpoint(result, 2);
+    const fields = ["name", "seat", "section", "mark"];
+    const labels = (i, field) => `scores[${i}].${field}`;
+    const addresses = step => [0,1,2].map(i => fields.map(field => {
+      const storage = variables(step)[labels(i, field)]?.storage;
+      assert.equal(typeof storage, "number");
+      return storage;
+    }));
+    const originalAddresses = addresses(before);
+    assert.equal(new Set(originalAddresses.flat()).size, 12);
+    const tuple = (step, i) => [
+      cells(step, labels(i, "name")).slice(0, 4),
+      value(step, labels(i, "seat")),
+      value(step, labels(i, "section")),
+      value(step, labels(i, "mark")),
+    ];
+    const jun = [Array.from("Jun\0"), "27", "C", "88.625"];
+    const tara = [Array.from("Tara"), "4", "A", "88.125"];
+    const milo = [Array.from("Milo"), "16", "B", "88.875"];
+    rewind(result, before, after, (s, earlier) => {
+      assert.deepEqual(addresses(s), originalAddresses);
+      assert.deepEqual([0,1,2].map(i => tuple(s, i)), earlier ? [jun,tara,milo] : [tara,milo,jun]);
+    });
+    assert.equal(value(final(result), "best"), String(originalAddresses[1][0]));
+    const session = new InteractiveRun(code);
+    const waiting = [session.result];
+    assert.equal(waiting[0].status, "waiting");
+    assert.equal(final(waiting[0]).stdout, "Record 1?\n");
+    for (const [index, line] of recordLines.entries()) {
+      const next = session.submitLine(line);
+      if (index < 2) {
+        assert.equal(next.status, "waiting");
+        assert.equal(final(next).stdout, Array.from({ length: index + 2 }, (_, i) => `Record ${i + 1}?\n`).join(""));
+        waiting.push(next);
+      } else {
+        assert.equal(next.status, "ok", next.error?.reason);
+        assert.equal(final(next).stdout, native(inputs["record-console"]));
+        for (const [i, expected] of [tara,milo,jun].entries()) {
+          assert.deepEqual(tuple(final(next), i), expected);
+        }
+      }
+    }
+    assert.equal(session.transcript, inputs["record-console"]);
+    assert.equal(final(waiting[0]).stdout, "Record 1?\n");
+    assert.equal(final(waiting[1]).stdout, "Record 1?\nRecord 2?\n");
+    const early = new InteractiveRun(code);
+    assert.equal(early.submitLine(recordLines[0]).status, "waiting");
+    const closed = early.sendEOF();
+    assert.equal(closed.status, "ok", closed.error?.reason);
+    assert.equal(final(closed).stdout, native(recordLines[0] + "\n"));
+    assert.equal(final(closed).stdout, "Record 1?\nRecord 2?\nIncomplete record\n");
+    const invalid = new InteractiveRun(code);
+    const rejected = invalid.submitLine("Jun absent C 88.625");
+    assert.equal(rejected.status, "ok", rejected.error?.reason);
+    assert.equal(final(rejected).stdout, native("Jun absent C 88.625\n"));
+    assert.equal(final(rejected).stdout, "Record 1?\nIncomplete record\n");
+  },
   interactive(result, code, native) {
     assert.equal(value(final(result), "weight"), "2.125");
     const session = new InteractiveRun(code);
@@ -159,7 +225,7 @@ try {
   for (const [name, expected] of Object.entries(cases)) {
     const file = path.join(__dirname, "fixtures", name + ".c");
     const code = fs.readFileSync(file, "utf8");
-    const stdin = name === "interactive" ? "4\n2.125\n" : "";
+    const stdin = inputs[name] ?? "";
     const bin = path.join(temp, name);
     execFileSync("gcc", ["-std=c17", "-Wall", "-Wextra", "-Werror", "-pedantic", "-fsanitize=undefined", "-fno-sanitize-recover=undefined", file, "-o", bin], { timeout: 10000 });
     const native = input => execFileSync(bin, { encoding: "utf8", input, timeout: 3000 });
