@@ -575,6 +575,8 @@ export function App() {
     if (!linkedSample || (selectedSample === "custom" && !window.confirm("Replace the current code and test setup with this sample?"))) return;
     if (linkedSample !== selectedSample) selectSample(linkedSample);
     loadedSharedSample.current = true;
+    // An explicit choice to load a sample should stay ahead of onboarding on reload.
+    if (!tourSeen) markTourSeen();
     dismissSampleLink();
   };
   const spotlightItems: SpotlightItem[] = [

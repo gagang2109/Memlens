@@ -176,3 +176,22 @@ it("shows all three tree swap states and keeps the same memory addresses on rewi
   expect(locate(".console-output pre")?.textContent).toBe("Before: left=2, right=6\nAfter: left=6, right=2\n");
   expect(locate(".leak-report")).toBeNull();
 });
+
+it("treats loading a shared sample as starting without the tour across reload", () => {
+  route("/#sample=tree-swap");
+  render();
+  expect(locate(".tour-welcome")).toBeNull();
+  click("Load sample");
+  expect(locate(".tour-welcome")).toBeNull();
+  act(() => root.unmount());
+  root = createRoot(host);
+  render();
+  expect(locate("[data-editor]")?.textContent).toBe(samples["tree-swap"].code);
+  expect(locate(".tour-welcome")).toBeNull();
+  act(() => locate<HTMLButtonElement>(".help-trigger")!.click());
+  expect(locate(".tour-hint")).toBeNull();
+  click("Start tutorial");
+  expect(locate(".tour-hint")).not.toBeNull();
+  click("Exit tour");
+  expect(locate("[data-editor]")?.textContent).toBe(samples["tree-swap"].code);
+});
